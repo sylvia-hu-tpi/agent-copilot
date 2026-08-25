@@ -67,9 +67,11 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 框架 | **Nuxt 4** | 需要 BFF 層保護憑證與集中 prompt；Nitro 讓前後端同一份專案，免維護兩個 repo |
 | 渲染模式 | **`ssr: false` + `nuxt build`（node-server preset）** | 登入後才用的內部工具，零 SEO、資料全動態，SSR 無收益卻帶來 hydration 與 token 同步的麻煩 |
 | 認證 | **OTP 取得 access token，存於 BFF session** | 憑證不進瀏覽器；JOIN／回覆能正確歸屬到個別客服，保留稽核軌跡 |
-| 即時機制 | **第一版輪詢 + SSE；一週後換 webhook** | iMBrace SDK 目前無公開推播機制。以 provider 抽象隔離，換來源時上層不動 |
-| AI 來源 | 🔴 **待定** —— 見 `docs/PLATFORM_CAPABILITY.md` | ⚠️ **2026-08-25 實測**：`ai.complete()`、`ai.embed()`、`messageSuggestion` **三個端點皆回 404**（API Key 與 access token 皆然）。唯一存在的推論路徑是 `aiAgent.streamChat`（綁定預設 agent），但組織內 27 個 agent 目前全部無法執行。**已列為對 iMBrace 的第一優先確認事項（§0）** |
-| 知識庫 | 🔴 **待定** —— `KnowledgeProvider` 抽象不變 | ⚠️ **2026-08-25 實測**：無任何語意檢索端點；原規劃的 `ai.embed()` 自建路線亦因 404 不成立。平台已有 311 個 RAG 檔案與 20 個 Knowledge Hub，但只能由 AI Agent 內部消費。**能力邊界待 iMBrace 回覆 §0-3** |
+| 即時機制 | **第一版輪詢 + SSE；webhook 規格到位後替換** | iMBrace SDK 目前無公開推播機制。以 provider 抽象隔離，換來源時上層不動 |
+| 輪詢頻率 | **前景 3s／背景 30s**（§9.2 修訂表） | ⚠️ **2026-08-25 實測**：`since`／`after`／`since_id` **全部被忽略**，每次都是全量取回；回應中**無任何 rate limit 標頭**可自我調節。取保守值，待書面規格再定案 |
+| Presence | **自家 SSE + `u_` 前綴反推**，兩來源合併（§10.2） | ⚠️ **2026-08-25 實測**：`Conversation.users[]` **12/12 全為空**，即使該對話確有 `u_` 客服發言 → **此欄位不可用**。盲區由 §10.4 送出前檢查兜底 |
+| AI 來源 | 🟡 **iMBrace AI Agent（第一階段）**，介面留待替換 | **2026-08-25 實測修正**：`ai.complete()`、`ai.embed()`、`messageSuggestion` 確實 404，但 **`aiAgent.streamChat` 有 11/27 個 agent 可用**，且 JSON 結構化輸出 4/4 次可解析。原記載「27 個全部無法執行」為抽測外推的錯誤結論 |
+| 知識庫 | 🟡 **透過掛知識庫的 AI Agent**，`KnowledgeProvider` 抽象不變 | **2026-08-25 實測修正**：無**獨立**檢索端點（此結論不變），但 agent 的 SSE `tool-output-available` 事件會吐出 `RAGknowledge` 工具輸出，**含檔名與 chunk 原文** → 引用來源拿得到。仍缺：**相關度分數**、**檢索品質調校手段**（實測問「電梯困人」未命中同名 SOP 檔） |
 | 持久層 | **iMBrace Data Boards（業務資料）+ 記憶體／Redis（熱狀態）** | Boards 是 CRM 資料庫，不適合高頻寫入的 session 狀態 |
 | 分散式狀態 | **介面 day-1 設計為 async，M4 換 Redis 實作** | SSE 連線表、presence、輪詢鎖在多副本下必須共享 |
 | 多對話 | **分頁籤切換，背景持續監控但只跑輕量分析** | 完整 AI 分析僅在前景聚焦的對話執行，成本自然收斂 |
@@ -647,34 +649,64 @@ export interface EventBus {
 
 ### 9.2 自適應頻率
 
-| 對話狀態 | 輪詢間隔 |
-|---|---|
-| 前景聚焦 + 已 JOIN | **1.5s**（防撞單，此處不可省） |
-| 前景聚焦 + 觀察中 | 3s |
-| 背景 + 已 JOIN | 5s |
-| 背景 + 觀察中 | 10s |
-| 連續 5 次無新訊息 | 指數退避，上限 15s |
-| **出現新訊息** | **立刻跳回最快檔** |
-| 瀏覽器分頁 `hidden` | 全部降至 10s 以上 |
+> **2026-08-25 修訂：下表已依實測放寬。** 原表是在「支援 `since` 增量拉取」的假設下訂的，
+> 但實測 `since`／`after`／`since_id` **全部被忽略**（回傳筆數與全量相同），
+> 且回應中**沒有任何 rate limit 標頭**可供自我調節。
+> 每次輪詢都是全量取回，因此不能沿用原本的頻率。
 
-### 9.3 成本評估
+| 對話狀態 | 輪詢間隔 | ~~原值~~ |
+|---|---|---|
+| 前景聚焦 + 已 JOIN | **3s** | ~~1.5s~~ |
+| 前景聚焦 + 觀察中 | **5s** | ~~3s~~ |
+| 背景 + 已 JOIN | **15s** | ~~5s~~ |
+| 背景 + 觀察中 | **30s** | ~~10s~~ |
+| 連續 5 次無新訊息 | 指數退避，上限 **60s** | ~~15s~~ |
+| **出現新訊息** | **立刻跳回最快檔** | 不變 |
+| 瀏覽器分頁 `hidden` | 全部降至 **30s** 以上 | ~~10s~~ |
 
-20 位客服 × 平均 3 個對話 = 60 個活躍對話，共享訂閱後約 **12 req/s**。
+**為何前景 JOIN 從 1.5s 放寬到 3s：**
 
-**輪詢不是瓶頸，AI 呼叫才是。** 見 §11.2 的前景／背景分級策略。
+撞單防護的有效性不靠輪詢頻率 —— 真正有效的是 §10.4 的**送出前樂觀併發檢查**，
+那一層在按下送出的當下才比對版本，不受輪詢延遲影響。
+輪詢頻率只影響「畫面上多久看到同事的訊息」，3 秒對此完全足夠，
+而 API 壓力少一半。**寧可把預算留給真正需要即時的地方。**
 
-補充最佳化：
-- **增量拉取** —— 只取 `since lastMessageId` 之後的訊息，不做全量
-- **並發控制** —— 同時 in-flight 請求上限 5，避免瞬間尖峰觸發 rate limit
+> ⚠️ 此表為**暫定值**，待 iMBrace 提供書面 rate limit 規格後定案。
+> 在那之前的原則是「取保守值」—— 撞到未知上限的後果（429 或被封）
+> 遠比慢 1.5 秒嚴重。
 
-> ⚠️ **2026-08-25：上述成本評估的前提尚未成立。**
->
-> `@imbrace/sdk@1.4.0` 的 `messages.list()` 簽章是 `{ type?, q?, limit?, skip? }` ——
-> **既沒有 `conversation_id`，也沒有 `since`**（見 §19 #19）。
->
-> 三種候選取數策略已實作於 `server/sources/message-fetch.ts`，由 `scripts/spike/03-incremental.ts` 實測。
-> **若最終只能「全量取回、本地過濾」，本節的 12 req/s 與整張 §9.2 頻率表都必須重算。**
-> 屆時的緩解方向：加大輪詢間隔、改以 `limit + sort=desc` 只取最新 N 則再比對 `lastMessageId`。
+### 9.3 成本評估（2026-08-25 依實測重算）
+
+**取數方式已確定**：`GET /v1/conversation_messages?conversation_id=<id>` ——
+後端**強制要求** `conversation_id`（不帶會 400），只是 SDK 的 `messages.list()` 未公開此參數。
+實作見 `server/sources/message-fetch.ts` 的 `raw-conversation-id` 策略。
+
+**但不支援增量拉取**，每次都是全量。
+
+以 §9.2 修訂後的頻率估算：
+
+| 情境 | 對話數 | 間隔 | req/s |
+|---|---|---|---|
+| 前景聚焦（每位客服 1 個） | 20 | 3s | ≈ 6.7 |
+| 背景已 JOIN | 40 | 15s | ≈ 2.7 |
+| **合計**（20 位客服 × 平均 3 對話，共享訂閱後） | 60 | — | **≈ 9.4 req/s** |
+
+比原估的 12 req/s 更低，但**每個請求的 payload 大得多**（全量而非增量）。
+實測單一對話最多 398 則訊息 —— 這才是真正的成本所在。
+
+**必要的緩解措施（M1 就要做，不可延後）：**
+
+1. **`limit + sort=desc` 只取最新 N 則**（建議 N=50），而非整串對話
+   —— 首次載入才取全量，之後只比對最新的一小段
+2. **本地以 `lastMessageId` 比對**，只把新增的部分推給前端（SSE payload 仍是增量的）
+3. **並發控制** —— 同時 in-flight 請求上限 5，避免瞬間尖峰觸發未知的 rate limit
+4. **`ETag` / `If-None-Match` 探測** —— 若後端支援，可省下大量重複傳輸；尚未實測
+
+> **輪詢仍不是瓶頸，AI 呼叫才是。** 見 §11.2 的前景／背景分級策略。
+> 實測 AI 單次呼叫中位數 **5.0 秒**、最慢 **12.2 秒**，與輪詢完全不在同一量級。
+
+> ⚠️ 上述全部為暫定值。待 iMBrace 提供 rate limit 規格與增量拉取的正確參數後重新定案。
+> 對應追問項見 `IMBRACE_QUESTIONS.md` B-2b、G-2。
 
 ### 9.4 換成 webhook 後仍要保留對帳輪詢
 
@@ -722,7 +754,46 @@ type PresenceState = 'viewing' | 'composing' | 'joined'
 
 走自家 SSE，延遲 < 200ms，不依賴 iMBrace。
 
-> ⚠️ **盲區**：presence 只看得到「有開 AgentCopilot 的人」。同事若在官方介面 JOIN，需等 webhook 才知道。因此已在 `IMBRACE_QUESTIONS.md` 中要求 webhook payload 包含**完整 operator 清單**，而非僅觸發者。
+#### 2026-08-25 決策：`Conversation.users[]` 不可作為 presence 來源
+
+原本規劃以 `users[]` 補齊「不在 AgentCopilot 但已 JOIN 的同事」。**實測後此路不通。**
+
+| 實測 | 結果 |
+|---|---|
+| 掃 12 個對話的 `users[]` | **12/12 全為空陣列** |
+| 同一批對話的訊息中的 `u_` 前綴發言 | 確實存在（398 則中有 9 則） |
+
+也就是說：**有客服講過話，但 `users[]` 是空的。** 這個欄位無法反映實際參與者。
+
+> ⚠️ 這同時是 `mappers.ts` 初版的致命錯誤來源 —— 舊版靠比對 `users[]` 反推發送者，
+> 會把所有 `u_` 客服誤判為 AI，撞單防護直接失效。已改為前綴判別（見 `senderTypeOf`）。
+
+**M1 採用的 presence 策略（三來源合併，不等任何外部回覆）：**
+
+| # | 來源 | 涵蓋 | 延遲 | 可信度 |
+|---|---|---|---|---|
+| ① | **自家 SSE 上報**（誰在 AgentCopilot 開著這個對話） | 只涵蓋我方使用者 | < 200ms | 高 |
+| ② | **訊息 `u_` 前綴反推**（最近 N 分鐘發言過的客服） | 涵蓋官方介面的同事 | 一個輪詢週期 | 高，但只在對方發言後才可見 |
+| ③ | JOIN/LEAVE webhook | 全涵蓋 | 即時 | 待規格（M4） |
+
+`N` 預設 **10 分鐘**，可設定。
+
+**UI 必須誠實標示來源差異** —— 這是這個設計唯一的風險點：
+
+```
+王大明 正在輸入…              ← ① 即時，確定在線
+李小華 3 分鐘前回覆過          ← ② 推測，可能已離開
+```
+
+不可把 ② 顯示成「正在檢視」。②「曾經發言」不等於「現在還在」，
+誤導客服以為有人守著而實際沒人，比不顯示更糟。
+
+**空狀態是常態，不是例外。** 目前資料下 ① 在單人使用時為空、② 在無人發言時為空，
+PresenceBar 大多數時候會是空的 —— 設計上要讓「無人／未知」看起來正常，而不是壞掉。
+
+> **盲區（三來源都補不了）**：同事在官方介面 JOIN 但**尚未發言**時，我方完全看不到。
+> 這正是 `IMBRACE_QUESTIONS.md` 要求 webhook payload 附帶**完整 operator 清單**的原因。
+> 在 webhook 到位前，此盲區以 §10.4 的送出前檢查兜底 —— 那一層本來就是真正有效的防線。
 
 ### 10.3 第二層：JOIN 意圖廣播（advisory lock）
 
@@ -1492,20 +1563,28 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 
 **內容**
 - 對話列表、訊息流（虛擬滾動）、Composer、join / leave
-- Presence 上報與顯示
+- **Presence 三來源合併**（自家 SSE + `u_` 前綴反推；webhook 留待 M4）—— 見 §10.2
 - SSE 管線 + 自動重連
-- `MessageSource` 抽象 + `PollingMessageSource` + 共享訂閱 + 自適應頻率
+- `MessageSource` 抽象 + `PollingMessageSource` + 共享訂閱 + 自適應頻率（§9.2 修訂表）
+- **只取最新 N 則 + 本地 `lastMessageId` 比對**（無增量拉取的緩解，§9.3）
 - **送出前樂觀併發檢查**
 - JOIN 雙路徑去重
 
 **驗收**
-- [ ] 兩個瀏覽器開同一對話：A 送出後 B 在 **2 秒內**看到
+- [ ] 兩個瀏覽器開同一對話：A 送出後 B 在 **4 秒內**看到（前景輪詢 3s + 傳輸餘裕）
 - [ ] B 帶入草稿準備送出時，若 A 已回覆，**必須被攔截並提示**
 - [ ] 三個瀏覽器檢視同一對話時，該對話**只被輪詢一次**
-- [ ] 分頁切至背景後，輪詢頻率確實下降
+- [ ] 分頁切至背景後，輪詢頻率確實下降至 30s 以上
 - [ ] SSE 斷線後能自動重連並補齊斷線期間的訊息
+- [ ] 單次輪詢**不會**每次都取回整串對話（以 398 則的對話驗證）
+- [ ] PresenceBar 在**無人**時顯示正常空狀態，不是壞掉的樣子
+- [ ] `u_` 反推的同事標示為「N 分鐘前回覆過」，**不可**標示成「正在檢視」
 
 **外部依賴**：無
+
+> **本階段刻意接受的暫行方案**（皆不阻塞，待 iMBrace 回覆後再定案）：
+> presence 有盲區（同事在官方介面 JOIN 但未發言時看不到，由 §10.4 兜底）、
+> 輪詢頻率取保守值、附件僅顯示檔名無法預覽。
 
 ---
 
@@ -1591,24 +1670,27 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 
 | # | 風險 | 狀態 | 影響 | 因應 |
 |---|---|---|---|---|
-| 1 | **Knowledge / DocIQ 無查詢 API** | 🔵 **已確認** | 建議卡的 SOP 引用與信心度無法直接取得 | 全套 `.d.ts` 只有 `processEmbedding`（建立），無任何 query／retrieve。**改採自建向量檢索**：`ai.embed()` 已公開，SOP 量小可在記憶體／Redis 算 cosine，分數完全自控。見 SDK_FINDINGS §4 |
+| 1 | **無獨立的知識檢索 API** | 🔵 **已確認（部分緩解）** | 檢索只能透過 agent 間接觸發 | 無 query／retrieve 端點。~~改採自建向量檢索~~ **`ai.embed()` 亦 404，自建路線不成立**。**改為：agent 的 SSE `tool-output-available` 事件解析 `RAGknowledge` 輸出**，可取得檔名與 chunk 原文（見 PLATFORM_CAPABILITY §3③） |
 | 2 | **Webhook payload 規格未定** | ⚪ | JOIN 偵測的精確度 | `PollingEventSource` 過渡；`WebhookEventSource` 骨架先備 |
-| 3 | ~~Webhook 若無 operator 完整清單~~ | ✅ **已解除** | ~~Presence 永久盲區~~ | **`Conversation.users[]` 已提供完整 operator 清單**（`{id, display_name, avatar_url}`），輪詢路徑即可自行取得，不必依賴 webhook。已實作於 `mappers.diffOperators()`。**A-1 從 P0 降級** |
+| 3 | **Presence 無可靠來源** | 🔴 **風險回歸（原判定有誤）** | 同事在官方介面 JOIN 但未發言時完全看不到 | ~~已解除：`users[]` 提供完整 operator 清單~~ ⚠️ **實測 12/12 全為空**，即使該對話確有 `u_` 客服發言 → **此欄位不可用**，`mappers.diffOperators()` 失去輸入。**改為 §10.2 的三來源合併**（自家 SSE + `u_` 前綴反推 + 未來 webhook）。**A-1 重新升回 P1**，盲區由 §10.4 送出前檢查兜底 |
 | 4 | **Webhook 簽章機制未知** | ⚪ | 無法驗簽 = 任何人可偽造 JOIN 事件 | 上線前必須取得規格，否則 endpoint 不得對外開放 |
 | 5 | **SDK 無訊息層級推播** | 🔵 已確認 | 依賴輪詢，有延遲與 API 壓力 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS |
-| 6 | AI 信心度校準 | 🔵 影響擴大 | 失準會導致功能被客服棄用 | `messageSuggestion` 不回傳信心度（見 #17），檢索分數需自建。**改為：自建 embedding 檢索分數 + 模型自評，後端校準** |
+| 6 | **無相關度分數可用** | 🔵 **已確認** | **demo 的「信心度 92%」做不到** | ~~自建 embedding 檢索分數~~ **`ai.embed()` 404，此路不通**；agent 的 RAG 工具回傳純文字亦無 score。**決策：介面拿掉信心度數字，只保留 SOP 來源**（見 MEETING_2026-08-25 §4-1） |
 | 7 | 多副本狀態共享 | ⚪ | 上 K8s 後 SSE 推播直接失效 | 介面 day-1 async；M4 換 Redis |
 | 8 | Nuxt UI Pro 授權 | ⚪ | 商用可能需付費 | 開發前確認授權狀況，必要時以 Tailwind 自建替代元件 |
 | 9 | 對話內容送外部 LLM | 🟡 範圍可能擴大 | 資安／合規 | 若 #17 確認無 structured output、或無 vision 模型，則需外送外部服務，**出境範圍從文字擴大到語音與影像**。`05-ai-structured.ts` 會一併檢查 `is_vision_available` |
 | 10 | Data Board 欄位型別限制 | ⚪ | schema 可能需調整 | M3 前先實測，setup script 可重跑 |
-| 11 | **語音／圖片是否已由平台文字化** | 🟡 **待實測（最高優先）** | **決定 M2 工作量級距**，若需自建 STT 與視覺分析則 +5~10 人日 | 型別層強烈暗示「未文字化」：`MessageType` 無 `audio`、`MessageContent` 無 transcript 欄位（只有 `caption`，那是使用者附註**不是** AI 描述）。但後端可能回傳型別外欄位 → `02-multimodal.ts` 掃描原始 JSON 確認 |
+| 11 | **附件內容完全取不到** | 🔴 **已確認（風險升級）** | 不只是「平台沒幫我們 OCR」，是**連原始檔案都拿不到**，自建 STT／vision 也無米可炊 | 實測 `file` 訊息的 `content` 是 `{name, media_id}`，**沒有 url**；SDK 全域搜尋 `media` 無任何端點，試打 4 條猜測路徑全 404。**已列為對 iMBrace 的 P0 追問**。M1 暫行方案：僅顯示檔名，標示「無法預覽」。398 則實測訊息中 `file` 僅 4 則、`image`／`audio` 各 0 則 → 建議**多模態移出 MVP** |
 | 12 | **JOIN 後 AI 仍持續自動回覆（已確認）** | ⚪ | 撞單成為預設情況而非邊緣情況 | 已列為 P0（H-1）求證單一對話暫停 API；撞單檢查須一併攔截 AI 訊息，並補上 Composer 即時警示 |
-| 13 | **訊息發送者身分無法區分** | 🟡 **待實測（風險升高）** | 撞單防護產生大量誤判，功能形同虛設 | ⚠️ **`ConversationMessage.from` 是裸 `string`，沒有任何 type 判別欄位**。只能靠對照 `contact_id` 與 `users[]` 反推，AI 訊息屬**排除法推定**。若「已離開對話的客服」也落在未歸類集合中，會被誤判為 AI。`01-sender-type.ts` 蒐集 `from` 值域證據 |
+| 13 | ~~訊息發送者身分無法區分~~ | ✅ **已解除** | ~~撞單防護產生大量誤判~~ | **實測 `from` 帶型別前綴**：`con_` 客戶／`u_` 真人客服／`pub_` AI，398 則覆蓋率 100%。已改用前綴判別（`mappers.senderTypeOf`），不再依賴 `users[]` 反推 —— 後者在 `users[]` 為空時會把同事全數誤判為 AI。**僅剩 `pub_` 語意待 iMBrace 確認（H-3b）**，未知前綴一律歸 `unknown`，不預設為 `ai` |
 | 14 | 知識庫條目時效性 | ⚪ | 客服可能依據已失效的 SOP 回覆客戶 | `KnowledgeHit.updatedAt` 顯示於介面，過舊者標示提醒 |
 | 15 | **主管強制介入擋不住官方介面** | ⚪ | 主管可能誤以為已完全接管 | 介面誠實標示邊界；`removeTeamMember()` API 確實存在，但實際效力待確認（H-4） |
 | 16 | ~~角色權限來源未定~~ | ✅ **多半已解除** | ~~自建權限系統的離職同步缺口~~ | **`OrganizationMembership` 帶 `role?: string` 與 `is_admin?: boolean`**，`auth.authenticate()` 即回傳。實際有值則直接沿用平台角色，不必自建。`00-auth.ts` 確認填充率 |
-| 17 | 🆕 **`ai.complete()` 不支援 structured output** | 🟡 待實測 | 違反憲法第 4 條與 §11.7「絕不解析自由文字」 | `CompletionInput` 無 `response_format`／`tools`／`tool_choice`。但模型清單有 `is_toolCall_available` 旗標，額外欄位或可 passthrough → `05-ai-structured.ts` 實測三種寫法。**最壞情況**：prompt 要求 JSON + Zod 驗證 + 重試，M2 +1~2 人日 |
-| 18 | 🆕 **`messageSuggestion` 無信心度與 SOP 引用** | 🔵 **已確認** | **建議卡從「接平台 API」變成「完整自建」** | 回傳型別就是 `{ suggestions: string[] }`，沒有分數也沒有來源。demo 的「SOP 3.2｜信心度 92%」無法由平台內建能力產生。**§2 決策摘要的「建議回覆先用 `messageSuggestion`」需修正**，它只能當低品質 fallback。M2 工作量顯著增加 |
+| 17 | **無平台層的 structured output 保證** | 🟡 **已緩解** | 違反憲法第 4 條與 §11.7「絕不解析自由文字」 | ~~`ai.complete()` 無 `response_format`~~ 該端點根本 404。改走 agent 路徑後：27 個 agent 的 `response_format` 欄位**皆為 null**（值域待確認），但**純靠 prompt 實測 4/4 次可直接 `JSON.parse`**。**仍須自建 Zod 驗證 + 重試 + 降級**，不可假設模型永遠聽話 |
+| 18 | **`messageSuggestion` 端點不存在** | 🔵 **已確認** | 建議卡完全自建 | 不只是「無信心度與引用」——**端點回 404**（兩種憑證皆然），連 fallback 都當不成。建議卡改由 agent 路徑產生，引用來源從 `RAGknowledge` 工具輸出解析 |
+| 19 | 🆕 **RAG 檢索品質不可調校** | 🔴 **已確認（新增，最高優先）** | **客服可能照著錯誤的 SOP 回覆客戶 —— 比沒有建議更糟** | 實測向掛了 9 份 SOP 的 agent 問「電梯困人」，**未命中同名的 `金融大樓電梯困人SOP.pdf`**，反而回傳「管理辦法」的火災逃生段落。chunk 大小、top-k、中文斷詞、同義詞**全部不在我方手上**。已列為對 iMBrace 的 P0 追問；若調不動，則觸發方案 B（改接 viki） |
+| 20 | 🆕 **AI 回應延遲 5～12 秒** | 🔵 **已確認（新增）** | 右欄若等全部算完才渲染，客服會以為當掉 | 實測中位數 **5.0s**、最慢 **12.2s**、首字 **2.2s**。**M2 必須做漸進顯示**：骨架先出，摘要／情緒／建議卡各自獨立載入，建議卡串流逐字顯示，並提供「重新產生」入口（因 #19 品質不穩） |
+| 21 | 🆕 **客戶資料幾乎是空的** | 🟡 **已確認（新增）** | demo 右欄的「客戶資訊卡」無內容可顯示 | 實測 19 筆 Contact：`display_name` 100% 但值是 `TWN#UK2594` 這類代號；`email`／`phone_number`／`company_name`／`birthday`／`location` **填充率皆為 0%**；`avatar_url` 僅 21%。**待決策**：改從 CRM board 關聯取得（`contact` 帶 `board_id`／`board_item_id`），或此區塊 MVP 先拿掉 |
 | 19 | 🆕 **`messages.list()` 無 `conversation_id` 也無 `since`** | 🟡 **待實測（可能阻塞 M1）** | §9 整套輪詢策略的地基 | 簽章僅 `{type, q, limit, skip}`。三種候選解已實作於 `server/sources/message-fetch.ts`，由 `03-incremental.ts` 實測。**最壞情況**（只能全量取回本地過濾）→ §9.2 自適應頻率表必須整個重算 |
 
 ### 19.2 目前最需要收斂的三件事
