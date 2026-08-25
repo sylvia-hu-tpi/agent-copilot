@@ -16,6 +16,8 @@ export interface SessionCredentials {
 
 export interface ClientOptions {
   env?: Environment
+  /** 直接指定 gateway URL，覆寫 env 的預設對應（iMBrace 有時直接給 URL 而非環境名） */
+  baseUrl?: string
   timeout?: number
 }
 
@@ -28,6 +30,7 @@ export function clientForSession(
     accessToken: session.accessToken,
     organizationId: session.organizationId,
     env: opts.env ?? 'stable',
+    baseUrl: opts.baseUrl,
     timeout: opts.timeout,
   })
 }
@@ -44,6 +47,7 @@ export function clientForApiKey(
     apiKey,
     organizationId: opts.organizationId,
     env: opts.env ?? 'stable',
+    baseUrl: opts.baseUrl,
     timeout: opts.timeout,
   })
 }
@@ -52,6 +56,7 @@ export function clientForApiKey(
 export function anonymousClient(opts: ClientOptions = {}): ImbraceClient {
   return new ImbraceClient({
     env: opts.env ?? 'stable',
+    baseUrl: opts.baseUrl,
     timeout: opts.timeout,
   })
 }

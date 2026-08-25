@@ -57,14 +57,38 @@ export function isMain(importMetaUrl: string): boolean {
 
 export function makeClient(): ImbraceClient {
   loadEnv()
-  const e = (env('IMBRACE_ENV', 'sandbox')) as Environment
+  const e = (env('IMBRACE_ENV', 'stable')) as Environment
+  const baseUrl = env('IMBRACE_BASE_URL') || undefined
   const token = env('IMBRACE_ACCESS_TOKEN')
   const apiKey = env('IMBRACE_API_KEY')
   const orgId = env('IMBRACE_ORGANIZATION_ID') || undefined
 
-  if (token) return clientForSession({ accessToken: token, organizationId: orgId }, { env: e })
-  if (apiKey) return clientForApiKey(apiKey, { organizationId: orgId, env: e })
-  throw new SkipProbe('需要 IMBRACE_ACCESS_TOKEN 或 IMBRACE_API_KEY（先跑 npm run spike:auth）')
+  // ⚠️ API Key 路徑下 gateway 不會自動注入組織範圍，缺 orgId 會讓多數路由 401，
+  //    而 conversations.list() 則是靜默回傳空陣列 —— 比報錯更難查。
+  if (apiKey && !orgId) {
+    throw new SkipProbe(
+      'IMBRACE_API_KEY 已設定但缺少 IMBRACE_ORGANIZATION_ID —— '
+      + '可用 client.account.getAccount() 取得 organization_id',
+    )
+  }
+
+  if (token) return clientForSession({ accessToken: token, organizationId: orgId }, { env: e, baseUrl })
+  if (apiKey) return clientForApiKey(apiKey, { organizationId: orgId, env: e, baseUrl })
+  throw new SkipProbe('需要 IMBRACE_API_KEY + IMBRACE_ORGANIZATION_ID，或 IMBRACE_ACCESS_TOKEN（見 .env.example）')
+}
+
+/**
+ * Business unit id —— conversations 的查詢幾乎都需要它。
+ * 未設定時自動從 channel.list() 的 bu_id 推導。
+ */
+export async function businessUnitId(client: ImbraceClient): Promise<string> {
+  const fromEnv = env('SPIKE_BUSINESS_UNIT_ID')
+  if (fromEnv) return fromEnv
+
+  const res = await client.channel.list() as { data?: Array<{ bu_id?: string }> }
+  const bu = res?.data?.find(c => c.bu_id)?.bu_id
+  if (!bu) throw new SkipProbe('找不到 business unit id，請在 .env.local 設定 SPIKE_BUSINESS_UNIT_ID')
+  return bu
 }
 
 // ── Findings ────────────────────────────────────────────────
