@@ -68,7 +68,10 @@ export interface CopilotSession {
   conversationId: string
   /** 正在檢視此對話的客服 id —— 歸零即可回收 session 與停止輪詢 */
   watchers: string[]
-  /** 已處理到的最新訊息 id。§9.3「只取最新 N 則 + 本地比對」的比對基準 */
+  /**
+   * `advanceAnchor()` 會寫入，但目前沒有讀者（docs/ARCHITECTURE.md §18）——
+   * 不是撞單檢查的版本錨點，也不是 §9.3 輪詢去重的比對基準，兩者另有各自的欄位。
+   */
   lastMessageId: string | null
   createdAt: number
   updatedAt: number
@@ -123,3 +126,12 @@ export const operatorTopic = (operatorId: string): string => `operator:${operato
 
 /** 推播給所有正在檢視該對話的人（新訊息、presence、分析結果） */
 export const conversationTopic = (conversationId: string): string => `conversation:${conversationId}`
+
+/**
+ * 推播給整個組織（對話清單的變動）。
+ *
+ * ⚠️ §8.3 原本只列了 operator / conversation 兩種 topic，那是在「逐對話輪詢」的
+ *    假設下訂的。改成 §9.3.1 的清單輪詢後，「哪個對話有新訊息」是**一次算出全部**的，
+ *    需要一個對應的廣播範圍，否則側欄的未讀徽記就得靠前端自己再輪詢一次清單。
+ */
+export const organizationTopic = (orgId: string): string => `organization:${orgId}`

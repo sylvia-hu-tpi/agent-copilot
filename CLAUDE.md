@@ -57,12 +57,18 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 npm run typecheck    # nuxt typecheck + scripts/test 的 tsc
 npm test             # vitest（單元 + 對假 gateway 的整合測試）
 npm run build        # 會先跑 typecheck 才建置
-npm run smoke        # ⚠️ 需先 build。對建置後的 Nitro 跑完整登入流程並驗 M0 驗收
+npm run smoke        # ⚠️ 需先 build。兩支合計約 30 秒（下面兩支的總和）
+npm run smoke:flow      # 單一 session 走完登入→對話→送出，並掃描憑證是否外洩
+npm run smoke:realtime  # 兩位客服、兩條 SSE：M1 的「4 秒內看到」與「斷線補齊」
 ```
 
 提交前至少跑 `npm run typecheck && npm test`。
 動到 `server/api/**`、`server/utils/session*`、`server/sources/**` 時**一併跑 `smoke`** ——
 它涵蓋 vitest 測不到的 HTTP route 與 cookie 往返，並掃描每個回應確認憑證不外洩。
+
+⚠️ `smoke:realtime` 會量**實際延遲**並斷言 ≤ 4 秒（§18 M1）。
+機器負載很重時它可能是唯一會浮動的檢查 —— 但失敗是真的訊號，
+不要因為「偶爾紅」就放寬門檻，那個數字是驗收標準本身。
 
 ## 協作注意
 

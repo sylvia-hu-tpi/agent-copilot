@@ -12,7 +12,9 @@
     "preview": "node .output/server/index.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "smoke": "tsx test/smoke-http.ts",
+    "smoke": "tsx test/smoke-http.ts && tsx test/realtime-http.ts",
+    "smoke:flow": "tsx test/smoke-http.ts",
+    "smoke:realtime": "tsx test/realtime-http.ts",
     "postinstall": "nuxt prepare",
     "typecheck": "nuxt typecheck && tsc -p tsconfig.scripts.json --noEmit",
     "typecheck:scripts": "tsc -p tsconfig.scripts.json --noEmit",
@@ -29,7 +31,8 @@
     "spike:agents": "tsx scripts/spike/10-agent-retest.ts",
     "spike:contract": "tsx scripts/spike/11-working-agents.ts",
     "build:only": "nuxt build",
-    "spike:presence": "tsx scripts/spike/12-presence-watch.ts"
+    "spike:presence": "tsx scripts/spike/12-presence-watch.ts",
+    "spike:write": "tsx scripts/spike/13-write-path.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",

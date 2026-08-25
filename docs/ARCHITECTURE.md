@@ -106,7 +106,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 圖表庫（ECharts / Chart.js） | 情緒 sparkline 資料量極小，手刻 SVG polyline 即可。引入圖表庫是殺雞用牛刀，深色模式與動畫反而更難控 |
 | SSR / SSG | 見決策摘要 |
 | 前端直連 `@imbrace/sdk` | 官方文件明載核心操作須在 server 端執行；且憑證不得進入瀏覽器 |
-| WebSocket（自建雙向） | 本專案的即時需求是單向推播（server → client），SSE 更簡單、原生支援重連與 `lastEventId` 補拉 |
+| WebSocket（自建雙向） | 本專案的即時需求是單向推播（server → client），SSE 更簡單、原生支援自動重連。⚠️ 補齊漏訊不靠 `lastEventId`，靠對帳 —— 見 §9.5 |
 
 ### 3.3 Node 版本選擇
 
@@ -241,7 +241,7 @@ AgentCopilot/
 │   │   │   └── ClosurePanel.vue     # 結案摘要人審面板
 │   │   └── common/
 │   ├── composables/
-│   │   ├── useCopilotStream.ts      # SSE 連線 + 自動重連 + lastEventId
+│   │   ├── useCopilotStream.ts      # SSE 連線 + 自動重連 + 重連後對帳（§9.5）
 │   │   ├── useCopilotSession.ts     # 單一對話的 copilot 狀態
 │   │   ├── usePresence.ts
 │   │   └── useDraft.ts              # 草稿保存於 localStorage
@@ -280,7 +280,7 @@ AgentCopilot/
 │   │           └── conversation.post.ts   # webhook 收口
 │   ├── sources/
 │   │   ├── types.ts                 # Provider 介面定義
-│   │   ├── polling-event-source.ts
+│   │   ├── conversation-list-poller.ts  # 第一層：清單輪詢（§9.3.1）
 │   │   ├── polling-message-source.ts
 │   │   ├── webhook-event-source.ts  # 骨架先備好
 │   │   ├── boards-rag-provider.ts
@@ -550,10 +550,30 @@ export interface MessageSource {
 
 | 介面 | M1 實作 | M4 實作（規格到位後） |
 |---|---|---|
-| `ConversationEventSource` | `PollingEventSource` | `WebhookEventSource` |
+| `ConversationEventSource` | **本地快路徑**（我方客服按下 JOIN） | `WebhookEventSource` |
 | `MessageSource` | `PollingMessageSource` | `WebhookMessageSource` 或 `WsMessageSource` |
+| （新增）對話變動偵測 | `ConversationListPoller` | webhook 取代，但**保留為對帳輪詢**（§9.4） |
 
-> `PollingEventSource` 透過定期 `conversations.list()` 比對 team member 變化來推斷 JOIN／LEAVE。有數秒延遲且不夠精確，僅作為過渡方案。
+> ### ⚠️ 2026-08-25 修訂：`PollingEventSource` 不存在，也不會被實作
+>
+> 初版寫的是「`PollingEventSource` 透過定期 `conversations.list()` 比對 team member
+> 變化來推斷 JOIN／LEAVE」。**這條路已被 §10.2 的二次實測封死** ——
+> 它唯一可能的輸入 `users[]` 是**團隊名冊**而非對話參與者，
+> diff 出來的結果會是「整個團隊同時 JOIN 了每一個對話」。
+>
+> **輪詢路徑下無論如何都答不出「是誰」**，因此 M1 不去假裝有一個 JOIN 事件來源：
+>
+> | 需求 | M1 的實際做法 |
+> |---|---|
+> | 我方客服 JOIN | 本地快路徑 —— 我們自己發起的，當然知道是誰。經 §4.3 去重後廣播 |
+> | 官方介面同事 JOIN | **只知道「有人能送出訊息」**（`mode ∈ {manual, hybrid}`），指不出名字 |
+> | 官方介面同事發言 | 訊息 `u_` 前綴反推，此時才知道是誰 |
+>
+> 硬要把第二列包裝成 `JoinEvent` 就得捏造一個 operator ——
+> 那是 §10.2 明文禁止的事。`ConversationChange`（`server/sources/types.ts`）
+> 誠實地只承載「有沒有變動」，不承載「是誰」。
+>
+> `mappers.diffOperators()` 因此**沒有可用輸入**，僅保留給 spike 蒐證，不得接上 presence。
 
 ### 8.2 知識庫
 
@@ -691,6 +711,22 @@ export interface EventBus {
 >
 > 查詢端點 `?conversation_id=` **兩種形式都接受**，所以打得通不代表比得對。
 >
+> #### ✅ 2026-08-25 實測：怎麼從對話 id 拿到 `tcu_` id
+>
+> | 呼叫 | 結果 |
+> |---|---|
+> | `conversations.getByConversationId(id)` | ❌ `{ data: [], total: 0 }` —— **兩種 id 形式都回空** |
+> | `conversations.get(id)`（`GET /v1/team_conversations/{id}`） | ✅ 完整詳情，**裸 UUID 與 `conv_` 前綴都接受** |
+>
+> 也就是說 `{id}` 這個路徑參數**同時吃對話 id 與 `tcu_` id**，平台自行解析。
+> 回傳物件的 `id` / `_id` 是 `tcu_`，另有 `conversation_id` 欄位為 `conv_<裸 UUID>`。
+>
+> ⚠️ 這推翻了先前「`get()` 只吃 `tcu_` id，要反查只能靠 `getByConversationId()`」的推論 ——
+> 那是照 SDK 編譯後的 URL 組法推出來的，沒有實測。**照它寫的話所有對話都查不到詳情，
+> JOIN / LEAVE / 切換 mode 全壞**，而錯誤形態是 404 而非「查詢方式錯」。
+> 實作見 `server/services/imbrace.ts` 的 `getConversationDetail()`，
+> 證據見 `npm run spike:write`。
+>
 > **正規形式取裸 UUID**，一律經 `mappers.normalizeConversationId()` / `sameConversation()` 轉換。
 > 這個坑已經造成過兩次實際損害：
 > ① `precisionOf()` 把 100% 正確的取數判成 0%，差點誤判 M1 被阻塞；
@@ -771,21 +807,49 @@ Webhook 會漏、會亂序、會重送。生產環境必須保留**低頻對帳�
 
 ### 9.5 SSE 契約
 
+正典為 `shared/types/events.ts`。M1 已實作的部分：
+
 ```ts
-// shared/types/events.ts
 export type CopilotEvent =
-  | { type: 'session.opened';    conversationId: string; reason: 'join' | 'resume' }
-  | { type: 'session.closed';    conversationId: string; reason: 'leave' | 'resolved' }
-  | { type: 'messages.appended'; conversationId: string; messages: Message[] }
-  | { type: 'summary.updated';   conversationId: string; summary: ConversationSummary }
-  | { type: 'sentiment.appended';conversationId: string; point: SentimentPoint }
-  | { type: 'suggestions.updated';conversationId: string; cards: SuggestionCard[] }
-  | { type: 'presence.updated';  conversationId: string; operators: PresenceEntry[] }
-  | { type: 'control.updated';   conversationId: string; control: ConversationControl }
-  | { type: 'analysis.failed';   conversationId: string; stage: string; message: string }
+  | { type: 'session.opened';      conversationId: string; reason: 'join' | 'resume' }
+  | { type: 'session.closed';      conversationId: string; reason: 'leave' | 'resolved' }
+  | { type: 'messages.appended';   conversationId: string; messages: Message[] }
+  | { type: 'presence.updated';    conversationId: string; presence: PresenceSnapshot }
+  | { type: 'control.updated';     conversationId: string; control: ConversationControl }
+  | { type: 'conversation.updated';conversationId: string; lastMessageAt?: string }
+  | { type: 'stream.heartbeat';    at: string }
+  // M2 加入：summary.updated / sentiment.appended / suggestions.updated / analysis.failed
 ```
 
-每則事件都帶 `id`，供斷線重連時以 `Last-Event-ID` 補拉。
+#### ⚠️ 2026-08-25 兩處修訂
+
+**① `presence.updated` 的 payload 不是 `PresenceEntry[]`。**
+
+初版寫 `operators: PresenceEntry[]`，但 §10.2 的第三個來源
+（`mode ∈ {manual, hybrid}`）**只知道「有人能送出訊息」，指不出是誰** ——
+沒有 operatorId 也沒有名字，塞不進以 operatorId 為鍵的陣列。
+硬塞就得捏造一個名字，那正是 §10.2 明文禁止的。因此改為：
+
+```ts
+interface PresenceSnapshot {
+  operators: PresenceEntry[]      // ①SSE 與 ②訊息反推 —— 皆具名
+  unidentifiedActor: boolean      // ③mode —— 有人能送，但無法指名
+  mode: ConversationMode | null
+}
+```
+
+**② 斷線補齊不靠 `Last-Event-ID`，靠對帳。**
+
+初版寫「每則事件都帶 `id`，供斷線重連時以 `Last-Event-ID` 補拉」。
+那需要一份「已送出事件」的儲存 —— 放在單一副本的記憶體裡，
+**M4 上多副本後重連到別的副本就補不到**，而那正是「偶爾少一則訊息」
+這類最難追查的 bug。
+
+改採**對帳式補齊**：前端重連後以自己的 `lastMessageId` 打
+`GET /api/messages?conversationId=…&since=…` 重新對帳。
+這與 §9.4「webhook 上線後仍要保留對帳輪詢」是同一個原則 ——
+**真相一律回源頭取，不依賴傳輸層的可靠性假設。**
+事件仍帶 `id`，但只用於排序與除錯。
 
 ---
 
@@ -890,7 +954,7 @@ const someoneElseCanSend = mode === 'manual' || mode === 'hybrid'
 > 「有人在」這個資訊本身就足以阻止撞單。
 
 > ⚠️ **`mode` 是「AI 處理模式」而非「presence」**，兩者只是在 JOIN／LEAVE 時剛好連動。
-> 若平台或使用者能獨立切換 `mode`（§10.6 把 aiMode 建模為正交維度，正是預期會如此），
+> 若平台或使用者能獨立切換 `mode`（§10.6 把它拆成 `aiReplies` / `agentCanSend` 兩個正交維度，正是預期會如此），
 > 就會出現 `mode=manual` 但實際無人在看的情況。**因此 ③ 仍不可取代 §10.4 的送出前檢查。**
 
 **M1 採用的 presence 策略（四來源合併，不等任何外部回覆）：**
@@ -954,7 +1018,9 @@ const byOtherAgent = since.filter(
   m => m.sender.type === 'agent' && m.sender.id !== me.operatorId,
 )
 // 協作模式下，AI 也是撞單對象
-const byAi = control.aiMode === 'collab'
+// ⚠️ 只在 AI 真的會自動回覆時才把它列為撞單對象。
+// Manual Mode 下 AI 不會送出，列入檢查就是製造假警報（§10.5 / §19.1 #12）。
+const byAi = control.aiReplies
   ? since.filter(m => m.sender.type === 'ai')
   : []
 
@@ -1028,7 +1094,7 @@ t=30s    送出
 
 > 協作模式下，真人的價值恰在於 AI 做不到的事 —— 同理、破例、承諾、決策。
 
-`aiMode === 'collab'` 時，prompt 須明確告知模型當前為協作模式，要求產生**補位性質**的建議（情緒安撫、權限內的破例、明確承諾、升級處理），而非重複 AI 已能處理的例行說明。
+`control.aiReplies === true`（Hybrid Mode）時，prompt 須明確告知模型當前為協作模式，要求產生**補位性質**的建議（情緒安撫、權限內的破例、明確承諾、升級處理），而非重複 AI 已能處理的例行說明。
 
 若忽略此點，客服會發現「這張卡的內容 AI 兩秒前剛說過」，很快就不再看建議卡。
 
@@ -1069,19 +1135,31 @@ LEAVE 後回到 `automation`（與「有人但選 Automation Only」同值，見
 而平台的三種模式恰好就是兩個布林維度的三種有效組合：
 
 ```ts
-// shared/types/conversation.ts
+// shared/types/conversation.ts —— 正典在程式碼，此處為摘要
 export interface ConversationControl {
-  /** AI 是否自動回覆 —— 對應平台 mode 的 automation 面向 */
+  /** AI 是否自動回覆 —— 為 true 時 AI 是撞單對象之一（§10.5） */
   aiReplies: boolean
-  /** 客服能否送出 —— Automation Only 時為 false，平台端會拒絕 */
+  /** 客服能否送出 —— Automation Only 時為 false，平台端也會拒絕 */
   agentCanSend: boolean
+  /** 產生上述兩維度的平台 mode，供 UI 顯示與除錯 */
+  mode: ConversationMode | null
   lock: null | {                      // 誰能回覆（我方自訂，平台無此概念）
     by: string                        // operatorId
     name: string
     at: string
   }
 }
+
+/** 平台 mode → 兩維度。⚠️ `null`（從未 JOIN）視同 automation */
+export function controlFromMode(mode, lock = null): ConversationControl
 ```
+
+> ⚠️ **2026-08-25：這個型別曾經有兩套並存的定義。**
+> 本節寫 `aiReplies` / `agentCanSend`，但 §10.4 的範例碼與 §11.6、§14.1.2
+> 寫的是舊的 `aiMode: 'collab' | 'human_only'`，而程式碼裡實際是後者。
+> 四個 mode 全數實測後，「AI 會不會回」與「客服能不能送」確認互相獨立
+> （Automation Only 時 AI 會回、客服不能送），單一列舉表達不了 ——
+> 已全面統一為本節的兩維度模型。
 
 | 平台 mode | `aiReplies` | `agentCanSend` |
 |---|---|---|
@@ -1585,9 +1663,9 @@ boards.linkItems()                                      # 關聯至 Contact
 
 > ⚠️ **不可用 JOIN 時間點做「AI 階段 / 真人階段」的分段。**
 >
-> JOIN 之後 AI 仍持續運作（見 §10.5），該時點之後依然是混合狀態。真正的分界是 `aiMode` 切換為 `human_only` 的時刻。
+> JOIN 之後 AI 仍持續運作（見 §10.5），該時點之後依然是混合狀態。真正的分界是 `mode` 切換為 `manual`（即 `control.aiReplies` 轉為 `false`）的時刻。
 >
-> **正確做法**：以每則訊息各自的 `sender.type` 標示，時間分段僅作為輔助視覺提示（可在 `aiMode` 切換處加一條分隔線）。
+> **正確做法**：以每則訊息各自的 `sender.type` 標示，時間分段僅作為輔助視覺提示（可在 `mode` 切換處加一條分隔線）。
 
 ### 14.2 多對話切換
 
@@ -1668,7 +1746,7 @@ demo 圖右上的「⚠ 焦慮偏高」標籤做法是正確的，**必須保留
 | SDK 讀取超時 | 保留舊訊息流，頂部黃條「連線不穩，重試中」，指數退避 | ❌ 否 |
 | AI 分析失敗 | **該區塊**顯示「暫時無法分析 [重試]」，其他區塊照常運作 | ❌ 否 |
 | 知識庫失敗 | 建議卡降級為無 SOP 引用的通用建議，並**明確標示「未引用知識庫」** | ❌ 否 |
-| SSE 斷線 | 指數退避重連（1s → 30s），帶 `Last-Event-ID` 補拉；斷線期間切 HTTP 輪詢 fallback | ❌ 否 |
+| SSE 斷線 | 指數退避重連（1s → 30s）；重連後以本地 `lastMessageId` 打 `GET /api/messages?since=` **對帳補齊**（不靠 `Last-Event-ID`，理由見 §9.5）；斷線期間切 HTTP 輪詢 fallback | ❌ 否 |
 | Token 過期（401） | 清 session 導回登入，**URL 保留 `conversationId`**，登入後回到原處 | ✅ 是（但無痛） |
 | Rate limit（429） | 全域退避 + 佇列，**禁止重試風暴** | ❌ 否 |
 | 送出訊息失敗 | 樂觀 UI 標記「傳送失敗 [重試]」，草稿存 `localStorage` **絕不遺失** | ❌ 否 |
@@ -1799,15 +1877,72 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 - **送出前樂觀併發檢查**
 - JOIN 雙路徑去重
 
-**驗收**
-- [ ] 兩個瀏覽器開同一對話：A 送出後 B 在 **4 秒內**看到（前景輪詢 3s + 傳輸餘裕）
-- [ ] B 帶入草稿準備送出時，若 A 已回覆，**必須被攔截並提示**
-- [ ] 三個瀏覽器檢視同一對話時，該對話**只被輪詢一次**
-- [ ] 分頁切至背景後，輪詢頻率確實下降至 30s 以上
-- [ ] SSE 斷線後能自動重連並補齊斷線期間的訊息
-- [ ] 單次輪詢**不會**每次都取回整串對話（以 398 則的對話驗證）
-- [ ] PresenceBar 在**無人**時顯示正常空狀態，不是壞掉的樣子
-- [ ] `u_` 反推的同事標示為「N 分鐘前回覆過」，**不可**標示成「正在檢視」
+**驗收** ✅ **2026-08-26 全數通過**（8/8，皆為可重跑的自動化驗證）
+
+- [x] 兩個瀏覽器開同一對話：A 送出後 B 在 **4 秒內**看到（前景輪詢 3s + 傳輸餘裕）
+- [x] B 帶入草稿準備送出時，若 A 已回覆，**必須被攔截並提示**
+- [x] 三個瀏覽器檢視同一對話時，該對話**只被輪詢一次**
+- [x] 分頁切至背景後，輪詢頻率確實下降至 30s 以上
+- [x] SSE 斷線後能自動重連並補齊斷線期間的訊息
+- [x] 單次輪詢**不會**每次都取回整串對話（以 398 則的對話驗證）
+- [x] PresenceBar 在**無人**時顯示正常空狀態，不是壞掉的樣子
+- [x] `u_` 反推的同事標示為「N 分鐘前回覆過」，**不可**標示成「正在檢視」
+
+**驗收方式**
+
+| 項目 | 由誰驗 |
+|---|---|
+| 4 秒內看到 | `npm run smoke`（`realtime-http.ts`）—— 兩條真實 SSE 連線，量從 A 按下送出到 B 的連線收到 `messages.appended` 的**實際毫秒數**。⚠️ 兩條路徑分開量：送出 API 直接 `poke()` 的捷徑（≈40ms）與**客戶回覆**（不經我方 API，只能靠第一層清單輪詢發現，≈1s）—— 後者才是 4 秒預算的來源 |
+| 斷線重連補齊 | 拆兩半驗：**伺服器端**由 `npm run smoke`（`realtime-http.ts`）—— 真的關掉 socket，斷線期間插入客戶與同事各一則，重連後以 `since=` 對帳，驗「漏掉的全補回、看過的不重送、錨點失效時回整批」；**前端**由 `npm test`（`stream-store.test.ts`）—— 對真正的 `app/stores/stream.ts` 驗退避間隔、首次連線不對帳／重連才對帳、401 與斷網分開處理 |
+| 撞單攔截 | `npm run smoke` —— 同事插話後送出回 409，且**平台端收到 0 次送出請求**；帶 `force` 才放行 |
+| 共享訂閱只輪詢一次 | `npm test`（`message-source.test.ts`）—— 三個訂閱者、`fetchLatest` 呼叫數為 1 |
+| 背景降頻至 30s | `npm test`（`poll-interval.test.ts` / `list-poller.test.ts`）—— §9.2 的表逐格釘死 |
+| 不取回整串對話 | `limit` 預設 50（`DEFAULT_MESSAGE_LIMIT`）；`npm run spike:write` 已對真實對話確認 `limit=N` 即最新 N 則 |
+| PresenceBar 空狀態 | `npm test`（`presence.test.ts`）+ `npm run smoke` —— 回空陣列而非 null |
+| `u_` 反推不得標成「正在檢視」 | `npm test`（`presence.test.ts`）—— 斷言 `source==='message'` 且 `state!=='viewing'` |
+
+> ### ⚠️ 最後兩項是怎麼從「只有真實瀏覽器驗得到」變成自動化的（2026-08-26）
+>
+> 原本的判斷是「需要兩個真實瀏覽器 + 真實平台」。**那個判斷有一半是錯的** ——
+> 真正需要瀏覽器的只有 `EventSource` 本身，而那是瀏覽器的實作，不是我方的程式碼。
+> 拆開之後，我方負責的部分全都驗得到：
+>
+> | 這一段 | 誰驗 | 怎麼驗 |
+> |---|---|---|
+> | 兩位客服、兩條連線、跨 session 的送出與接收 | `realtime-http.ts` | 兩個獨立 cookie jar 打**建置後的 Nitro**，SSE 以 `fetch` 手動解析。時間量的是事件抵達的實際時刻 |
+> | 斷線 | `realtime-http.ts` | `AbortController` 真的關掉 socket，伺服器端的 `onClosed` 清理也會跑到 |
+> | 補齊 | `realtime-http.ts` | 斷線期間插入兩則（客戶 + 同事），重連後以 `since=` 對帳 |
+> | 何時重連、退避多久、重連後要不要對帳 | `stream-store.test.ts` | 對**真正的** `app/stores/stream.ts` 跑，以假 `EventSource` 注入斷線 |
+>
+> **仍然驗不到的一小塊**：瀏覽器 `EventSource` 在真實網路抖動下的行為，
+> 以及真實平台的延遲。前者不是我方程式碼；後者的預算來源是 §9.3.1 的實測
+> （`last_message_at` ≤2 秒更新），已由 spike 記錄，不需要重跑一次瀏覽器。
+>
+> ⚠️ **測試自己也要能被信任**：`realtime-http.ts` 第一項檢查就是
+> 「兩位客服是不同的 operator」。兩條 session 若共用同一個 operatorId，
+> presence 的自我排除與撞單的 `sameOperator` 過濾都會被測成「正確」而其實分不出人
+> —— 這正是 `mock-gateway.ts` 改成依 email 給不同 `user_id` 的理由。
+
+> ⚠️ **另有一項尚未驗證的寫入行為**：`sendTextMessage()` 送出成功後回傳物件的
+> `id` 欄位形狀（我方用它推進版本錨點）。欄位名 `conversation_id` 已由
+> `npm run spike:write` 的零投遞探測確認，但**成功路徑只在假 gateway 上跑過** ——
+> 對真實客戶送測試訊息不可接受。已列為 `IMBRACE_QUESTIONS.md` H-6a。
+>
+> ⚠️ 這一項**不列入上面的 8 項驗收**，因為它不是「我方有沒有做對」，
+> 而是「平台回什麼」—— 沒有可安全寫入的測試對話之前，任何做法都只是換個地方假設。
+>
+> **但它目前的實際影響是零，不是「可能靜默出錯」**（2026-08-26 追查後更正）：
+>
+> | 用到送出回應 `id` 的地方 | 誰讀它 | 結論 |
+> |---|---|---|
+> | `advanceAnchor()` 寫入 `CopilotSession.lastMessageId` | `copilotSessionOf()` —— **匯出後從未被呼叫** | 寫了沒人讀 |
+> | 撞單檢查的版本錨點 | 前端的 `baseMessageId`，來自 `GET /api/messages` 的**真實訊息 id** | 與送出回應無關 |
+> | 避免自己送的訊息被重複 fan-out | `PollingMessageSource` 自己的 `lastMessageId`（每輪 `sliceNew` 推進） | 與送出回應無關；`seed()` 同樣**從未被呼叫** |
+>
+> 也就是說 `sentId` 為 `null` 時，今天不會有任何行為改變。
+> 真正該記住的是反面：**`copilotSessionOf()` 與 `seed()` 是兩個沒有讀者的機制**，
+> M2 若有人開始依賴 `CopilotSession.lastMessageId`，才會第一次真的需要 H-6a。
+> 屆時要嘛先驗 H-6a，要嘛把錨點改成從 `GET /api/messages` 取 —— 別默默接上去。
 
 **外部依賴**：無
 
@@ -1909,7 +2044,7 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | # | 風險 | 狀態 | 影響 | 因應 |
 |---|---|---|---|---|
 | 1 | **無獨立的知識檢索 API** | 🔵 **已確認（部分緩解）** | 檢索只能透過 agent 間接觸發 | 無 query／retrieve 端點。~~改採自建向量檢索~~ **`ai.embed()` 亦 404，自建路線不成立**。**改為：agent 的 SSE `tool-output-available` 事件解析 `RAGknowledge` 輸出**，可取得檔名與 chunk 原文（見 PLATFORM_CAPABILITY §3③） |
-| 2 | **Webhook payload 規格未定** | ⚪ | JOIN 偵測的精確度 | `PollingEventSource` 過渡；`WebhookEventSource` 骨架先備 |
+| 2 | **Webhook payload 規格未定** | 🔵 **已確認為 M1 的硬限制** | 輪詢路徑**答不出「是誰」JOIN 了**（`users[]` 為團隊名冊，§10.2） | M1 只做「我方本地快路徑」＋ `mode` 的匿名訊號；具名的 operator 清單必須等 webhook（`IMBRACE_QUESTIONS` A-1 已重升為 P0）。`WebhookEventSource` 骨架先備 |
 | 3 | **Presence 無可靠來源** | 🟢 **大幅緩解（2026-08-25 實測）** | 同事在官方介面 JOIN 但未發言時完全看不到 | ⚠️ 先前「`users[]` 12/12 全為空」**量錯位置**（量在 `search()` 的輕量 payload，該處 `users` 為 `null`）；`get()` 實際回 14 人，但兩個不同對話回同一批人且含 `Bot` 與 `observer` → 是**團隊名冊**，仍不可用。✅ **真正的解是 `mode` 欄位**：JOIN 時 `null→manual`、LEAVE 時 `manual→automation`，**雙向正確且在清單 payload 中**，一次清單輪詢即可得知所有對話有沒有真人在處理。原本最痛的盲區已補上。⚠️ 但它只能回答「有沒有人」不能回答「是誰」，且 `mode` 本質是 AI 處理模式（§10.6 視為正交維度），仍不可取代 §10.4 送出前檢查。詳見 §10.2 |
 | 4 | **Webhook 簽章機制未知** | ⚪ | 無法驗簽 = 任何人可偽造 JOIN 事件 | 上線前必須取得規格，否則 endpoint 不得對外開放 |
 | 5 | **SDK 無訊息層級推播** | 🔵 已確認 | 依賴輪詢，有延遲與 API 壓力 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS |

@@ -1,5 +1,103 @@
 {
   "app": {
     "name": "AgentCopilot"
+  },
+  "common": {
+    "retry": "重試",
+    "cancel": "取消",
+    "refresh": "重新整理",
+    "loading": "載入中…",
+    "search": "搜尋對話…",
+    "loadMore": "載入更早的訊息",
+    "justNow": "剛剛",
+    "minutesAgo": "{n} 分鐘前",
+    "hoursAgo": "{n} 小時前"
+  },
+  "sidebar": {
+    "title": "對話",
+    "empty": "沒有符合的對話。",
+    "loadFailed": "讀取對話清單失敗",
+    "unread": "有新訊息",
+    "collapse": "收合側欄",
+    "expand": "展開側欄"
+  },
+  "stream": {
+    "connecting": "連線中…",
+    "reconnecting": "連線中斷，重新連線中…",
+    "resyncing": "正在補齊斷線期間的訊息…",
+    "offline": "即時更新已中斷。畫面上的內容可能不是最新的。"
+  },
+  "presence": {
+    "viewing": "正在檢視",
+    "composing": "正在輸入…",
+    "joined": "已加入",
+    "repliedAgo": "{time}回覆過",
+    "unknownName": "另一位同事",
+    "unidentified": "有同事正在處理（無法確認身分）",
+    "none": "沒有偵測到其他人",
+    "sourceHint": "「回覆過」代表對方曾經發言，不代表現在還在線上。"
+  },
+  "mode": {
+    "label": "服務模式",
+    "manual": "全真人",
+    "manualHint": "AI 自動回覆已關閉，只有客服能送出訊息",
+    "hybrid": "協作",
+    "hybridHint": "AI 會自動回覆，你也可以送出訊息",
+    "automation": "全自動（唯讀）",
+    "automationHint": "AI 自動回覆，所有人都無法手動送出訊息",
+    "none": "尚未加入",
+    "sharedWarning": "⚠️ 模式是這個對話的共用設定，切換會影響所有人，包含在 iMBrace 官方介面工作的同事。",
+    "switching": "切換中…",
+    "switchFailed": "切換模式失敗"
+  },
+  "conversation": {
+    "join": "加入對話",
+    "joining": "加入中…",
+    "leave": "離開",
+    "leaving": "離開中…",
+    "joinFailed": "加入對話失敗",
+    "leaveFailed": "離開對話失敗",
+    "empty": "這個對話還沒有訊息。",
+    "loadFailed": "讀取訊息失敗",
+    "notFound": "找不到這個對話",
+    "selectPrompt": "從左側選擇一個對話開始。",
+    "messageCount": "共 {n} 則訊息"
+  },
+  "sender": {
+    "customer": "客戶",
+    "agent": "客服",
+    "ai": "AI",
+    "unknown": "未知來源",
+    "workflowInternal": "AI 內部訊息（客戶收不到）"
+  },
+  "attachment": {
+    "image": "圖片",
+    "audio": "語音",
+    "video": "影片",
+    "file": "檔案",
+    "noPreview": "（此版本尚無法預覽附件，僅顯示檔名）"
+  },
+  "composer": {
+    "placeholder": "輸入回覆…",
+    "placeholderReadonly": "目前無法送出訊息",
+    "send": "送出",
+    "sending": "送出中…",
+    "sendFailed": "送出失敗",
+    "hint": "Enter 送出，Shift + Enter 換行",
+    "draftSaved": "草稿已保存",
+    "notJoined": "你尚未加入這個對話。加入後才能送出訊息。",
+    "readonlyAutomation": "這個對話目前是「全自動（唯讀）」模式，任何人都無法送出訊息。",
+    "locked": "{name} 已強制介入此對話。",
+    "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。"
+  },
+  "collision": {
+    "title": "有人搶先回覆了",
+    "byAgent": "{name} 已經回覆過客戶，你的內容可能重複。",
+    "byAi": "AI 已經自動回覆，請確認內容是否衝突。",
+    "unverified": "無法確認是否有人搶先回覆，請自行確認對話內容後再送出。",
+    "theirMessage": "對方送出的內容",
+    "sendAnyway": "仍要送出",
+    "discard": "捨棄我的內容",
+    "review": "先看看"
   }
 }

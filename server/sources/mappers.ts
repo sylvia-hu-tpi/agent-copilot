@@ -171,6 +171,25 @@ export function sameConversation(a: string, b: string): boolean {
   return normalizeConversationId(a) === normalizeConversationId(b)
 }
 
+/**
+ * 兩個客服 id 是否為同一人（容忍 `u_` 前綴差異）。
+ *
+ * ⚠️ 為何不能直接用 `===`：
+ * 訊息的 `from` 是 `u_xxx`，而登入回應的 `user_id` 不保證帶前綴 ——
+ * 兩者是同一個人卻比不相等。這正是 §10.4 撞單檢查
+ * 「必須以 `sender.id !== me.operatorId` 過濾自己」那一行的輸入，
+ * **比錯的後果是客服每次送出都看到「你自己剛剛回覆過」的假警報**，
+ * 而假警報比沒有警報更糟 —— 客服學會忽略提示後，真正的撞單也會被一併略過。
+ */
+export function sameOperator(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false
+  return stripOperatorPrefix(a) === stripOperatorPrefix(b)
+}
+
+function stripOperatorPrefix(id: string): string {
+  return id.startsWith('u_') ? id.slice('u_'.length) : id
+}
+
 // ─────────────────────────────────────────────────────────────
 // 主 mapper
 // ─────────────────────────────────────────────────────────────
@@ -219,6 +238,9 @@ export function toConversation(raw: SdkConversation): Conversation {
   const withConvId = raw as SdkConversation & {
     conversation_id?: string
     mode?: string | null
+    /** §9.3.1 第一層輪詢的變動偵測依據。SDK 型別未宣告，實測存在（填充率 83%） */
+    last_message_at?: string | null
+    updated_at?: string | null
   }
   // `tcu_` 開頭者才是 team_conversation 記錄 id（JOIN/LEAVE/mode 要用）；
   // 清單 payload 的 id 是對話 id，沒有 tcu → 維持 undefined
@@ -232,21 +254,30 @@ export function toConversation(raw: SdkConversation): Conversation {
     contactId: raw.contact_id,
     status: raw.status,
     name: raw.name,
+    // ⚠️ 這是團隊名冊，不是對話參與者（§10.2）。留著只為顯示，不可作為 presence。
     operators: (raw.users ?? []).map(u => ({
       id: u.id,
       name: u.display_name,
     })),
-    updatedAt: raw.timestamp,
+    lastMessageAt: withConvId.last_message_at ?? undefined,
+    // ⚠️ 取 updated_at 優先於 timestamp：實測 JOIN／LEAVE／切換 mode 時
+    //    只有 updated_at 會跳動，而 §9.3.1 的第一層輪詢正是靠它偵測狀態變動。
+    updatedAt: withConvId.updated_at ?? raw.timestamp,
   }
 }
 
 /**
  * 比對兩次快照的 operators，推斷 JOIN / LEAVE。
- * PollingEventSource 的核心邏輯（§8.1）。
  *
- * ⚠️ 實測發現 users[] 可能為空，即使對話中確實有客服發過言 ——
- * 這代表 users[] 反映的是「目前在對話中的人」而非「曾經參與的人」。
- * 對 JOIN/LEAVE 推斷而言這是正確語意，但不可拿來判斷歷史訊息的發送者。
+ * ⚠️⚠️ **這個函式目前沒有可用的輸入，不得接上 presence 或 JOIN/LEAVE 偵測。**
+ *
+ * 2026-08-25 二次實測（§10.2）：`users[]` 不是「這個對話的參與者」，
+ * 而是**團隊名冊** —— 兩個不同對話拿到同一批 14 人，含 Bot 與 observer。
+ * 拿它做 diff，結果會是「整個團隊同時 JOIN 了每一個對話」，比空陣列更糟。
+ *
+ * 目前只保留給 `scripts/spike/03-incremental.ts` 作為證據蒐集之用。
+ * M1 的 JOIN/LEAVE 偵測改走 §9.3.1 的清單輪詢 + `mode` 欄位
+ * （見 `conversation-list-poller.ts`），M4 換 webhook 後才會有真正的 operator 清單。
  */
 export function diffOperators(
   prev: Conversation | undefined,
@@ -272,6 +303,9 @@ export function diffOperators(
  * ⚠️ 為何需要這個：SDK 的型別標成 `PagedResponse<T>`，但實測回傳的容器鍵不一致
  * （`data` / `items` / `results` / `hits` 都出現過），也有直接回陣列的情況。
  * 型別靠不住，只能在執行期逐一探。這正是防腐層該吸收的髒東西。
+ *
+ * ⚠️ `server/services/imbrace.ts` 有一份 `unwrapPagedRaw()` 是同一段邏輯的複本
+ *    （該檔須維持零內部相依，供 spike 以 tsx 直接 import）。改這裡時兩處都要改。
  */
 export function unwrapPaged<T>(res: unknown): T[] {
   if (Array.isArray(res)) return res as T[]
