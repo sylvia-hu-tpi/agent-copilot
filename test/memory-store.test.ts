@@ -31,6 +31,8 @@ const presenceEntry = (operatorId: string) => ({
   operatorId,
   operatorName: '客服',
   state: 'viewing' as const,
+  // §10.2：'viewing'（正在檢視）與 joined（已加入）是兩個正交維度，不可併成一個列舉
+  joined: false,
   source: 'sse' as const,
   at: new Date().toISOString(),
 })

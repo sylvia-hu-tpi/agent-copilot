@@ -268,3 +268,122 @@ function assertTeamConversationId(id: string, caller: string): void {
     )
   }
 }
+
+// ── 對話詳情 ────────────────────────────────────────────────────────────
+//
+// ⚠️ §10.6 ②：`tcu_` id 只有詳情 API 會回，清單 payload 沒有。
+//    因此「從對話列表按 JOIN」必須先取一次詳情才拿得到識別碼。
+
+/**
+ * 以**對話 id**（裸 UUID 或 `conv_` 前綴皆可）取得詳情。
+ *
+ * ── 2026-08-25 實測修正 ─────────────────────────────────────────
+ * 初版走 `getByConversationId()`，理由是「`get()` 吃的是 tcu_ id，
+ * 拿對話 id 去打會查不到」。**這個推理是錯的，而且錯得很貴** ——
+ * 它是照 SDK 編譯後的 URL 組法反推出來的，沒有實測。
+ *
+ * `npm run spike:write` 的實測結果：
+ *   ❌ `getByConversationId()` → `{ data: [], total: 0 }`（兩種 id 形式都一樣）
+ *   ✅ `get(<對話 id>)`        → 完整 team_conversation 物件（兩種 id 形式都可以）
+ *
+ * 也就是說 `GET /v1/team_conversations/{id}` 的 `{id}` **同時接受對話 id 與 tcu id**，
+ * 平台會自行解析。回傳物件的 `id` / `_id` 是 tcu_，另有 `conversation_id` 欄位。
+ *
+ * ⚠️ 若照初版寫法上線，症狀會是「所有對話都查不到詳情」→ JOIN 按鈕全壞，
+ *    而錯誤形態是 404 而非「查詢方式錯」，很難從症狀反推。
+ *
+ * 實測回傳的欄位（供上層取用，SDK 型別一個都沒宣告）：
+ *   `id` / `_id` = `tcu_…`、`conversation_id` = `conv_…`、
+ *   `mode`、`is_joined`（我的視角）、`is_agent_joined`、`is_presence`、
+ *   `users[]`（14 人的**團隊名冊**，不是參與者 —— §10.2）
+ */
+export async function getConversationDetail(
+  client: ImbraceClient,
+  conversationId: string,
+): Promise<Record<string, unknown> | null> {
+  const res = await client.conversations.get(conversationId) as unknown
+
+  // ⚠️ 仍保留解容器的分支：SDK 型別標的是單一物件，但這個 gateway 的
+  //    其他端點回的是分頁容器，形狀靠不住（見 unwrapPagedRaw 的說明）。
+  //    空容器要回 null，不可把 `{ data: [], total: 0 }` 本身當成詳情往上傳 ——
+  //    那會讓上層以為查到了，然後在讀 id 時炸在別的地方。
+  if (isPagedContainer(res)) {
+    const list = unwrapPagedRaw(res)
+    return list[0] ?? null
+  }
+
+  return res && typeof res === 'object' && !Array.isArray(res)
+    ? res as Record<string, unknown>
+    : null
+}
+
+/** 回應是不是「分頁容器」而不是資料本身 */
+function isPagedContainer(res: unknown): boolean {
+  if (!res || typeof res !== 'object' || Array.isArray(res)) return false
+  const r = res as Record<string, unknown>
+  return ['data', 'items', 'results', 'hits'].some(k => Array.isArray(r[k]))
+}
+
+/**
+ * ⚠️ 與 sources/mappers.ts 的 `unwrapPaged` 是同一段邏輯，此處刻意複製而非 import。
+ *
+ * 理由：本檔被 `scripts/spike/*` 以 tsx 直接 import，必須維持零內部相依 ——
+ * mappers.ts 會 import SDK 型別與領域型別，把相依鏈拉進來只為了一個 6 行的函式並不划算。
+ * 若日後這段邏輯要修，兩處都要改（已在 mappers.ts 端註明）。
+ */
+function unwrapPagedRaw(res: unknown): Record<string, unknown>[] {
+  if (Array.isArray(res)) return res as Record<string, unknown>[]
+  const r = res as Record<string, unknown> | null | undefined
+  for (const key of ['data', 'items', 'results', 'hits']) {
+    if (Array.isArray(r?.[key])) return r[key] as Record<string, unknown>[]
+  }
+  return []
+}
+
+// ── 送出訊息（docs/ARCHITECTURE.md §10.4）───────────────────────────────
+
+/**
+ * 送出一則文字訊息。
+ *
+ * ⚠️ **SDK 的 `messages.send()` 型別完全沒有宣告對話識別碼**：
+ *
+ * ```ts
+ * send(body: { type, text?, url?, caption?, title?, payload? })
+ * ```
+ *
+ * 但它打的是 `POST /v1/conversation_messages` 且**把 body 原樣送出**，
+ * 而該端點不可能不需要知道要送到哪個對話 —— 這是 SDK 型別漏宣告，
+ * 與 §10.6 的 `join()` 少宣告 `mode` 是同一類問題。
+ * 此處以與 `joinBody()` 相同的方式，用單一 cast 集中吸收。
+ *
+ * ⚠️ **`conversation_id` 的正確形式尚未實測**（見 `IMBRACE_QUESTIONS.md` H-6）。
+ *    取數端點 `?conversation_id=` 兩種形式都收，故此處送**帶 `conv_` 前綴**的形式
+ *    —— 那是訊息物件自己 `conversation_id` 欄位的形狀，最可能與寫入端一致。
+ *    若實測失敗，只需改這一個函式（`npm run spike:send`）。
+ */
+export async function sendTextMessage(
+  client: ImbraceClient,
+  conversationId: string,
+  text: string,
+): Promise<Record<string, unknown>> {
+  const body = {
+    type: 'text' as const,
+    text,
+    conversation_id: withConvPrefix(conversationId),
+  }
+  const res = await client.messages.send(
+    body as unknown as Parameters<ImbraceClient['messages']['send']>[0],
+  )
+  return res as unknown as Record<string, unknown>
+}
+
+/**
+ * 補上 `conv_` 前綴。
+ *
+ * ⚠️ 與 `mappers.normalizeConversationId()` 方向相反 —— 那支是**對內**正規化成裸 UUID，
+ *    這支是**對外**還原成平台寫入端要的形式。兩者都存在是刻意的：
+ *    正規形式只在我方系統內部通用，出了防腐層就要換回平台的形狀。
+ */
+function withConvPrefix(conversationId: string): string {
+  return conversationId.startsWith('conv_') ? conversationId : `conv_${conversationId}`
+}
