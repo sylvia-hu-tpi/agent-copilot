@@ -80,8 +80,10 @@ const CAPABILITIES: Capability[] = [
   // ── 頻道 / 流程 ─────────────────────────────────────
   { area: '頻道/流程', need: '頻道設定（取 bu_id）', call: 'channel.list',
     run: (c) => (c.channel as { list(): Promise<unknown> }).list() },
-  { area: '頻道/流程', need: '⭐ AI workflow（暫停單一對話 AI 的線索）', call: 'workflows.list',
-    run: (c) => (c.workflows as { list(p?: unknown): Promise<unknown> }).list?.() ?? Promise.reject(new Error('無此方法')) },
+  { area: '頻道/流程', need: '⭐ AI workflow（暫停單一對話 AI 的線索）', call: 'workflows.listFlows',
+    run: (c) => c.workflows.listFlows() },
+  { area: '頻道/流程', need: '頻道自動化（AI 是否自動回覆的設定處）', call: 'workflows.listChannelAutomation',
+    run: (c) => c.workflows.listChannelAutomation() },
 
   // ── 組織 / 權限 ─────────────────────────────────────
   { area: '組織/權限', need: '目前使用者（含 org id）', call: 'account.getAccount',
