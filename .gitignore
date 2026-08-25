@@ -1,0 +1,12 @@
+node_modules/
+.output/
+.nuxt/
+.data/
+
+# 憑證：絕不進版控
+.env
+.env.local
+.env.*.local
+
+# Spike 產出（含真實對話樣本，可能有 PII）
+scripts/spike/out/

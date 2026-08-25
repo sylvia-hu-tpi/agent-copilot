@@ -1,0 +1,28 @@
+{
+  "name": "agent-copilot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "spike": "tsx scripts/spike/run-all.ts",
+    "spike:auth": "tsx scripts/spike/00-auth.ts",
+    "spike:sender": "tsx scripts/spike/01-sender-type.ts",
+    "spike:media": "tsx scripts/spike/02-multimodal.ts",
+    "spike:poll": "tsx scripts/spike/03-incremental.ts",
+    "spike:knowledge": "tsx scripts/spike/04-knowledge.ts",
+    "spike:ai": "tsx scripts/spike/05-ai-structured.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@imbrace/sdk": "^1.4.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.0"
+  }
+}
