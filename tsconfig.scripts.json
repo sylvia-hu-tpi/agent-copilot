@@ -10,7 +10,9 @@
   //    少了這個對應，vitest 會過（型別匯入在執行期被抹除）但 tsc 會紅 ——
   //    是「測試綠、typecheck 紅」這種難看的不一致。
   "compilerOptions": {
-    "baseUrl": ".",
+    // ⚠️ 刻意不設 `baseUrl` —— 它在 TS 7.0 會停止運作（編輯器已經在報 deprecated）。
+    //    `paths` 自 TS 4.4 起在沒有 baseUrl 時以**本檔所在目錄**為基準，
+    //    語意與原本的 `baseUrl: "."` 完全相同，不需要別的補償。
     "paths": {
       "#shared/*": ["./shared/*"]
     },
@@ -27,5 +29,12 @@
     "noEmit": true
   },
   "include": ["scripts/**/*", "test/**/*", "app/utils/**/*", "vitest.config.ts"],
-  "exclude": ["node_modules", ".output", ".nuxt"]
+
+  // ⚠️ `test/nuxt/**` 不歸本檔管 —— 那是 **Nuxt 自己預留**的測試目錄，
+  //    已列在 `.nuxt/tsconfig.app.json` 的 include 裡，由 `nuxt typecheck` 以
+  //    真正的 auto-import 與 DOM 型別檢查。那些測試直接載入 `app/` 的前端模組，
+  //    在本檔（Node 環境、沒有 DOM 也沒有 auto-import 宣告）下必紅。
+  //    ⚠️ 不要為了收編它們而在這裡加 DOM 或自寫全域宣告 ——
+  //    同一個模組被兩份設定各檢查一次，其中一次用的是手寫的假型別。
+  "exclude": ["node_modules", ".output", ".nuxt", "test/nuxt"]
 }
