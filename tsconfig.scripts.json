@@ -4,7 +4,16 @@
   //    （目前為 server/services/imbrace.ts、server/utils/redact.ts）。
   //    一旦某個 server 檔案開始用 defineEventHandler / useRuntimeConfig，
   //    它就不再能被 spike 直接 import —— 請改抽出純函式共用。
+  //
+  // ⚠️ paths 必須與 Nuxt 的別名一致：test/ 會 import app/utils/ 底下的純函式
+  //    （例如 composer-block.ts），而那些檔案用 `#shared/*` 匯入共用型別。
+  //    少了這個對應，vitest 會過（型別匯入在執行期被抹除）但 tsc 會紅 ——
+  //    是「測試綠、typecheck 紅」這種難看的不一致。
   "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "#shared/*": ["./shared/*"]
+    },
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "bundler",
@@ -17,6 +26,6 @@
     "resolveJsonModule": true,
     "noEmit": true
   },
-  "include": ["scripts/**/*", "test/**/*", "vitest.config.ts"],
+  "include": ["scripts/**/*", "test/**/*", "app/utils/**/*", "vitest.config.ts"],
   "exclude": ["node_modules", ".output", ".nuxt"]
 }
