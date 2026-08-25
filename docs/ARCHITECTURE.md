@@ -681,7 +681,25 @@ export interface EventBus {
 後端**強制要求** `conversation_id`（不帶會 400），只是 SDK 的 `messages.list()` 未公開此參數。
 實作見 `server/sources/message-fetch.ts` 的 `raw-conversation-id` 策略。
 
-**但不支援增量拉取**，每次都是全量。
+> ### ⚠️ 對話有三種識別碼 —— 這是最容易靜默出錯的地方
+>
+> | 來源 | 欄位 | 範例 | 是什麼 |
+> |---|---|---|---|
+> | `conversations.search()` | `id` | `b6f76f09-…` | 對話 id，裸 UUID |
+> | 訊息 | `conversation_id` | `conv_b6f76f09-…` | 同一個對話，帶前綴 |
+> | `conversations.get()` | `id` / `_id` | `tcu_6cd3cee1-…` | **不是對話 id** —— 是 team_conversation 這筆關聯記錄自己的 id。該物件另有 `conversation_id` 欄位，那才是對話 id |
+>
+> 查詢端點 `?conversation_id=` **兩種形式都接受**，所以打得通不代表比得對。
+>
+> **正規形式取裸 UUID**，一律經 `mappers.normalizeConversationId()` / `sameConversation()` 轉換。
+> 這個坑已經造成過兩次實際損害：
+> ① `precisionOf()` 把 100% 正確的取數判成 0%，差點誤判 M1 被阻塞；
+> ② `toConversation()` 原本取 `raw.id`，同一個對話經由 `search()` 與 `get()` 會得到兩個不同的鍵 ——
+> CopilotSession、presence、EventBus topic 全部以對話 id 為鍵，症狀會是
+> 「訊息進來了但面板沒反應」，極難追查。
+
+**但不支援增量拉取**，每次都是全量。已實測 `since` / `after` / `since_id` /
+`from_created_at` / `start_time` / `created_at_gt` 等**八種寫法全部被忽略**（回傳筆數與全量相同）。
 
 以 §9.2 修訂後的頻率估算：
 
@@ -696,11 +714,27 @@ export interface EventBus {
 
 **必要的緩解措施（M1 就要做，不可延後）：**
 
-1. **`limit + sort=desc` 只取最新 N 則**（建議 N=50），而非整串對話
-   —— 首次載入才取全量，之後只比對最新的一小段
+1. **`limit=N` 只取最新 N 則**（建議 N=50），而非整串對話
+   —— ✅ **實測確認訊息預設即由新到舊排序**，`limit=N` 直接就是最新 N 則，
+   不需要 `sort` 參數、也不需要 `skip=total-N`。這讓本項緩解幾乎零成本。
+   首次載入才取全量（`skip` 亦實測有效，可正常分頁回補歷史）
 2. **本地以 `lastMessageId` 比對**，只把新增的部分推給前端（SSE payload 仍是增量的）
 3. **並發控制** —— 同時 in-flight 請求上限 5，避免瞬間尖峰觸發未知的 rate limit
 4. **`ETag` / `If-None-Match` 探測** —— 若後端支援，可省下大量重複傳輸；尚未實測
+
+> ### 🆕 可能大幅改寫上表的線索：以清單輪詢取代逐對話輪詢
+>
+> `conversations.search()` 的清單 payload **本身就帶 `last_message_at`**（實測填充率 83%）
+> 與 `updated_at`（100%）。若這兩個欄位在新訊息進來時會即時更新，輪詢即可改成：
+>
+> **一次清單輪詢（1 個請求，涵蓋所有對話）→ 比對 `last_message_at` → 只對真的變動的對話抓訊息**
+>
+> 那與上表「每個活躍對話各自輪詢、合計 ≈ 9.4 req/s」是完全不同的量級 ——
+> 穩態下會趨近 **1 req/3s**，只在有人真的說話時才產生額外請求。
+>
+> ⚠️ **尚未驗證**，由 `12-presence-watch.ts` 一併觀測（它同時記錄
+> `list.last_message_at` 與 `messages` 最新一則的時間差）。
+> 驗證通過的話，§9.2 的頻率表與本節的成本估算都應重寫。
 
 > **輪詢仍不是瓶頸，AI 呼叫才是。** 見 §11.2 的前景／背景分級策略。
 > 實測 AI 單次呼叫中位數 **5.0 秒**、最慢 **12.2 秒**，與輪詢完全不在同一量級。
@@ -756,17 +790,43 @@ type PresenceState = 'viewing' | 'composing' | 'joined'
 
 #### 2026-08-25 決策：`Conversation.users[]` 不可作為 presence 來源
 
-原本規劃以 `users[]` 補齊「不在 AgentCopilot 但已 JOIN 的同事」。**實測後此路不通。**
+原本規劃以 `users[]` 補齊「不在 AgentCopilot 但已 JOIN 的同事」。**實測後此路不通** ——
+但**理由與初版寫的不同**，初版的量測位置是錯的，此處已依二次實測改寫。
 
 | 實測 | 結果 |
 |---|---|
-| 掃 12 個對話的 `users[]` | **12/12 全為空陣列** |
-| 同一批對話的訊息中的 `u_` 前綴發言 | 確實存在（398 則中有 9 則） |
+| ~~掃 12 個對話的 `users[]`~~ | ~~12/12 全為空陣列~~ ← **量錯位置**：那是 `conversations.search()` 的輕量 payload，該處 `users` 本來就是 `null` |
+| `conversations.get()` 的 `users[]` | **14 人**，含 `id`、`display_name`、`is_bot`、`teams[].team_user_role` |
+| 兩個**不同**對話各自的 `users[]` | **同一批 14 人**，含 `Bot` 與 `team_user_role: observer` |
 
-也就是說：**有客服講過話，但 `users[]` 是空的。** 這個欄位無法反映實際參與者。
+也就是說：這個欄位**不是空的，但它是「團隊名冊」而不是「這個對話的參與者」**。
+拿它做 presence 會把整個團隊都標成「正在檢視」—— 比空陣列更糟。
+`diffOperators()` 依然沒有可用輸入。
+
+> ⚠️ **教訓**：初版結論（欄位是空的）與修正後結論（欄位有值但語意不對）**指向同一個決策**，
+> 但若當初就照初版理由去補救，會走向「等 webhook 補 operator 清單」這條完全錯誤的路。
+> 量測位置錯誤造成的假結論，危險之處不在結論本身，而在它推導出的下一步。
 
 > ⚠️ 這同時是 `mappers.ts` 初版的致命錯誤來源 —— 舊版靠比對 `users[]` 反推發送者，
 > 會把所有 `u_` 客服誤判為 AI，撞單防護直接失效。已改為前綴判別（見 `senderTypeOf`）。
+> **此項不受本次修正影響**：即使 `users[]` 有值，它是團隊名冊，用來反推發送者一樣是錯的。
+
+#### 🆕 尚未驗證的第四個來源
+
+`conversations.get()` 另外回傳三個布林欄位，語意上比 `users[]` 更接近我們要的東西：
+
+| 欄位 | 出現位置 | 推測語意 | 狀態 |
+|---|---|---|---|
+| `is_joined` | 詳情 | 「我」是否已加入此對話 | 待驗證 |
+| `is_agent_joined` | 詳情 + **清單 payload**（填充率 42%） | 是否有真人客服已加入 | 待驗證 |
+| `is_presence` | 詳情 | 疑似「目前是否有人在線」 | 待驗證 |
+
+若 `is_agent_joined` 確實反映 JOIN 狀態，且出現在**清單** payload 中，
+那就等於「一次清單輪詢即可得知所有對話的 JOIN 狀態」—— §10.2 的盲區直接補上，
+且成本幾乎為零。
+
+**驗證方式**：`npm run spike:presence`，觀測期間在官方介面對該對話 JOIN → 送訊息 → LEAVE，
+腳本會把每個欄位的變動時點記錄成時間軸。這是 §19.2 目前的 🔴 優先 2。
 
 **M1 採用的 presence 策略（三來源合併，不等任何外部回覆）：**
 
@@ -1582,9 +1642,18 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 
 **外部依賴**：無
 
+> **取數方式已於 2026-08-25 定案**（原列為「可能阻塞 M1」的 #19 已解除，見 §19.1 #22）：
+> `GET /v1/conversation_messages?conversation_id=<裸 UUID>`，precision 100%，
+> 訊息由新到舊排序故 `limit=N` 即為最新 N 則。
+> ⚠️ 實作前務必先讀 §9.3 的「對話有三種識別碼」—— 那是本專案目前最容易靜默出錯的地方。
+
 > **本階段刻意接受的暫行方案**（皆不阻塞，待 iMBrace 回覆後再定案）：
 > presence 有盲區（同事在官方介面 JOIN 但未發言時看不到，由 §10.4 兜底）、
 > 輪詢頻率取保守值、附件僅顯示檔名無法預覽。
+>
+> ⚠️ 其中「presence 盲區」與「輪詢頻率」兩項**可能在開工前就改善** ——
+> 取決於 `12-presence-watch.ts` 的結果（§10.2 的第四個來源、§9.3 的清單輪詢線索）。
+> 建議 M1 開工前先跑完，否則會照著保守假設寫出之後要重做的東西。
 
 ---
 
@@ -1672,7 +1741,7 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 |---|---|---|---|---|
 | 1 | **無獨立的知識檢索 API** | 🔵 **已確認（部分緩解）** | 檢索只能透過 agent 間接觸發 | 無 query／retrieve 端點。~~改採自建向量檢索~~ **`ai.embed()` 亦 404，自建路線不成立**。**改為：agent 的 SSE `tool-output-available` 事件解析 `RAGknowledge` 輸出**，可取得檔名與 chunk 原文（見 PLATFORM_CAPABILITY §3③） |
 | 2 | **Webhook payload 規格未定** | ⚪ | JOIN 偵測的精確度 | `PollingEventSource` 過渡；`WebhookEventSource` 骨架先備 |
-| 3 | **Presence 無可靠來源** | 🔴 **風險回歸（原判定有誤）** | 同事在官方介面 JOIN 但未發言時完全看不到 | ~~已解除：`users[]` 提供完整 operator 清單~~ ⚠️ **實測 12/12 全為空**，即使該對話確有 `u_` 客服發言 → **此欄位不可用**，`mappers.diffOperators()` 失去輸入。**改為 §10.2 的三來源合併**（自家 SSE + `u_` 前綴反推 + 未來 webhook）。**A-1 重新升回 P1**，盲區由 §10.4 送出前檢查兜底 |
+| 3 | **Presence 無可靠來源** | 🟡 **結論不變，但原因與線索已更新（2026-08-25 二次實測）** | 同事在官方介面 JOIN 但未發言時完全看不到 | ⚠️ **先前「`users[]` 12/12 全為空」的量測位置錯了** —— 那是量在 `conversations.search()` 的輕量 payload 上（該處 `users` 為 `null`）；`conversations.get()` 實際回 **14 人**。但仍**不可**作為 presence 來源：兩個不同對話回**同一批 14 人**（含 `Bot` 與 `team_user_role: observer`），研判是**團隊名冊而非該對話的參與者**，`diffOperators()` 依然沒有可用輸入。**結論維持 §10.2 的三來源合併**。🆕 **新線索**：`conversations.get()` 另帶 `is_joined` / `is_agent_joined` / `is_presence` 三個布林（`is_agent_joined` 在清單 payload 亦有），若確實反映 JOIN 狀態即為第四個來源 —— 由 `12-presence-watch.ts` 實測 |
 | 4 | **Webhook 簽章機制未知** | ⚪ | 無法驗簽 = 任何人可偽造 JOIN 事件 | 上線前必須取得規格，否則 endpoint 不得對外開放 |
 | 5 | **SDK 無訊息層級推播** | 🔵 已確認 | 依賴輪詢，有延遲與 API 壓力 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS |
 | 6 | **無相關度分數可用** | 🔵 **已確認** | **demo 的「信心度 92%」做不到** | ~~自建 embedding 檢索分數~~ **`ai.embed()` 404，此路不通**；agent 的 RAG 工具回傳純文字亦無 score。**決策：介面拿掉信心度數字，只保留 SOP 來源**（見 MEETING_2026-08-25 §4-1） |
@@ -1691,14 +1760,14 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 19 | 🆕 **RAG 檢索品質不可調校** | 🔴 **已確認（新增，最高優先）** | **客服可能照著錯誤的 SOP 回覆客戶 —— 比沒有建議更糟** | 實測向掛了 9 份 SOP 的 agent 問「電梯困人」，**未命中同名的 `金融大樓電梯困人SOP.pdf`**，反而回傳「管理辦法」的火災逃生段落。chunk 大小、top-k、中文斷詞、同義詞**全部不在我方手上**。已列為對 iMBrace 的 P0 追問；若調不動，則觸發方案 B（改接 viki） |
 | 20 | 🆕 **AI 回應延遲 5～12 秒** | 🔵 **已確認（新增）** | 右欄若等全部算完才渲染，客服會以為當掉 | 實測中位數 **5.0s**、最慢 **12.2s**、首字 **2.2s**。**M2 必須做漸進顯示**：骨架先出，摘要／情緒／建議卡各自獨立載入，建議卡串流逐字顯示，並提供「重新產生」入口（因 #19 品質不穩） |
 | 21 | 🆕 **客戶資料幾乎是空的** | 🟡 **已確認（新增）** | demo 右欄的「客戶資訊卡」無內容可顯示 | 實測 19 筆 Contact：`display_name` 100% 但值是 `TWN#UK2594` 這類代號；`email`／`phone_number`／`company_name`／`birthday`／`location` **填充率皆為 0%**；`avatar_url` 僅 21%。**待決策**：改從 CRM board 關聯取得（`contact` 帶 `board_id`／`board_item_id`），或此區塊 MVP 先拿掉 |
-| 19 | 🆕 **`messages.list()` 無 `conversation_id` 也無 `since`** | 🟡 **待實測（可能阻塞 M1）** | §9 整套輪詢策略的地基 | 簽章僅 `{type, q, limit, skip}`。三種候選解已實作於 `server/sources/message-fetch.ts`，由 `03-incremental.ts` 實測。**最壞情況**（只能全量取回本地過濾）→ §9.2 自適應頻率表必須整個重算 |
+| 22 | ~~**`messages.list()` 無 `conversation_id` 也無 `since`**~~ | ✅ **已解除（不再阻塞 M1）** | ~~§9 整套輪詢策略的地基~~ | 原判「三種策略皆不可行」是**量測錯誤**：`precisionOf()` 以字串相等比對，而對話清單給裸 UUID、訊息帶 `conv_` 前綴，於是「取回 70 則全部正確的訊息」被算成 precision 0%。修正後 `raw-conversation-id` **precision 100%**，且不帶 `conversation_id` 會 400（代表過濾強制且真實）。`since` 類參數確實不支援（八種全被忽略），但訊息**由新到舊排序**，`limit=N` 直接就是最新 N 則 → §9.3 的緩解措施成本遠低於原本設想的最壞情況。詳見 §9.3 的識別碼說明 |
 
 ### 19.2 目前最需要收斂的三件事
 
 | 優先 | 事項 | 為何是它 |
 |---|---|---|
 | 🔴 1 | **#11 語音／圖片文字化** | 唯一還能讓總工時再增 5–10 人日的變數。**必須用含語音與圖片的對話跑 `02-multimodal.ts`** |
-| 🔴 2 | **#19 訊息取數策略** | 若三種策略皆不可行，M1 直接卡住，且無法靠自己解決 —— 必須問 iMBrace |
+| 🔴 2 | **#3 Presence 的第四個來源** | ~~#19 訊息取數策略~~ 已解除（見 #22）。改為：`is_joined` / `is_agent_joined` / `is_presence` 是否真的反映 JOIN 狀態 —— 這決定 §10.2 的盲區能否補上，而盲區正是撞單防護唯一補不了的缺口。跑 `npm run spike:presence` 並在官方介面 JOIN／LEAVE 對照 |
 | 🔴 3 | **#13 發送者身分** | 決定撞單防護（產品核心價值）能否成立 |
 
 **待向 iMBrace 確認的完整清單見 `docs/IMBRACE_QUESTIONS.md`**（可直接轉貼給對方）。
