@@ -85,7 +85,22 @@ list(params?: { type?, q?, limit?, skip? })
 
 ## 二、比預期樂觀的發現 🟢
 
-### 5. `conversation.users[]` 已提供完整 operator 清單
+### ~~5. `conversation.users[]` 已提供完整 operator 清單~~ ❌ **已被實測推翻**
+
+> ⚠️ **2026-08-25 撤銷。** 本節是**型別層推論**的產物，live 實測後證實結論是錯的。
+> 保留原文是為了記錄「型別看起來對、實際語意不對」這個失敗形態本身。
+>
+> **實測結果**：`users[]` 不是「這個對話的 operator」，而是**團隊名冊** ——
+> 兩個不同對話回傳同一批 14 人，含 `is_bot: true` 與 `team_user_role: observer`，
+> 且 JOIN / LEAVE 全程數量不變。
+>
+> **正確結論見** `ARCHITECTURE.md` §10.2。presence 的可用來源是 `mode` 欄位，
+> 而「是誰」這個問題**仍然沒有答案**，`IMBRACE_QUESTIONS.md` 的 A-1 已重新升為 P0。
+>
+> ⚠️ 連帶失效：`mappers.diffOperators()` **沒有可用的輸入，不得接上任何 presence 邏輯**；
+> §8.1 原本設想的 `PollingEventSource`（靠 diff `users[]` 推斷 JOIN/LEAVE）**已不存在**。
+
+<details><summary>原文（保留供參 —— 這是型別層分析會如何出錯的範例）</summary>
 
 ```ts
 interface Conversation { …; users: SimpleUser[] }   // { id, display_name, avatar_url }
@@ -99,6 +114,11 @@ interface Conversation { …; users: SimpleUser[] }   // { id, display_name, ava
 - `PollingEventSource` 靠 diff `users[]` 推斷 JOIN/LEAVE 完全可行（已實作於 `mappers.diffOperators`）
 - Presence 對「未開 AgentCopilot 的同事」**不再是永久盲區**（風險 #3 大幅降級）
 - **M1 不被 webhook 規格阻塞** —— 這正是抽象層設計想達成的效果
+
+</details>
+
+> 📌 **教訓**：型別宣告只告訴你「有這個欄位」，不告訴你「這個欄位是什麼意思」。
+> 本檔其餘各節同樣是型別層推論，引用前請先確認有沒有對應的 live 實測。
 
 ### 6. 角色資訊可能可沿用平台
 
@@ -154,7 +174,7 @@ G-1 解決。spike 與開發期可全程走 `sandbox`，不碰生產資料。
 
 | 項目 | 原估 | 調整後 | 原因 |
 |---|---|---|---|
-| M1 對話主線 | 12–18 人日 | **12–16** ↓ | `users[]` 已提供 operator 清單，PollingEventSource 比預期單純 |
+| M1 對話主線 | 12–18 人日 | **12–18**（維持） | ⚠️ 先前下修的理由（`users[]` 已提供 operator 清單）**已被實測推翻**，見本檔第 5 節。改以 `mode` 欄位 + 本地快路徑替代，工作量回到原估 |
 | M2 Copilot 核心 | 12–16 人日 | **16–22** ↑ | 建議卡需完整自建（發現 2）＋ structured output 可能需重試機制（發現 1） |
 | M3 知識庫與結案 | 10–14 人日 | **12–16** ↑ | RAG 檢索需自建（發現 4），但 `ai.embed` 可用，非最壞情況 |
 

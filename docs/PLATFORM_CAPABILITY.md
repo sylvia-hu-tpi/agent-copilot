@@ -125,7 +125,9 @@ HTTP 200、`text/event-stream`、標準 Vercel-AI-SDK 事件格式（`start` / `
 | 領域 | 能力 | 端點 | 結果 |
 |---|---|---|---|
 | 對話 | 對話列表（左欄） | `conversations.search({businessUnitId})` | ✅ |
-| 對話 | 對話詳情 + operator 清單 | `conversations.getByConversationId` | ✅ |
+| 對話 | 對話詳情（`tcu_` id / `mode` / `is_joined` / `users[]`） | `conversations.get(<對話 id>)` → `GET /v1/team_conversations/{id}` | ✅ **（2026-08-25 更正端點）** |
+| 對話 | ~~對話詳情~~ | ~~`conversations.getByConversationId`~~ | ❌ 實測回 `{data:[],total:0}`，兩種 id 形式皆然 |
+| 對話 | ~~該對話的 operator 清單~~ | ~~詳情的 `users[]`~~ | ❌ **是團隊名冊，不是參與者**（見 ARCHITECTURE §10.2）|
 | 對話 | 未處理佇列 | `conversations.getOutstanding` | ✅ |
 | 對話 | 各檢視計數（側欄徽記） | `conversations.getViewsCount` | ✅ |
 | 對話 | 可邀請的同事 | `conversations.getInvitableUsers` | ✅ |
