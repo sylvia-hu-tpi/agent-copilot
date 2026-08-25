@@ -10,3 +10,6 @@ node_modules/
 
 # Spike 產出（含真實對話樣本，可能有 PII）
 scripts/spike/out/
+
+# codegraph
+.codegraph/
