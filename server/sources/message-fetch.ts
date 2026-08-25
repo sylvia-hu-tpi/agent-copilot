@@ -12,7 +12,7 @@
  */
 
 import type { ImbraceClient, ConversationMessage, PagedResponse } from '@imbrace/sdk'
-import { unwrapPaged } from './mappers.js'
+import { sameConversation, unwrapPaged } from './mappers.js'
 
 export type FetchStrategy =
   /** SDK 原生 list，用 q 帶 conversation id */
@@ -30,9 +30,16 @@ export interface FetchResult {
   note: string
 }
 
+/**
+ * ⚠️ 必須用 sameConversation 而非字串相等。
+ *
+ * 初版寫成 `m.conversation_id === convId`，而對話清單給的是裸 UUID、
+ * 訊息帶 `conv_` 前綴 —— 結果是「明明取回 70 則正確訊息，precision 卻算成 0%」，
+ * 進而把一個完全可行的策略判成不可行，差點誤判 M1 被阻塞。
+ */
 function precisionOf(msgs: ConversationMessage[], convId: string): number {
   if (msgs.length === 0) return 0
-  const hit = msgs.filter(m => m.conversation_id === convId).length
+  const hit = msgs.filter(m => sameConversation(m.conversation_id, convId)).length
   return hit / msgs.length
 }
 
@@ -89,7 +96,7 @@ export async function tryStrategies(
   try {
     const res = await client.messages.list({ limit })
     const all = unwrap(res)
-    const msgs = all.filter(m => m.conversation_id === convId)
+    const msgs = all.filter(m => sameConversation(m.conversation_id, convId))
     results.push({
       strategy: 'sdk-client-filter',
       messages: msgs,

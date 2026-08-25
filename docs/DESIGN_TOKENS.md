@@ -38,6 +38,12 @@
 - 內文：`'Noto Sans TC','Helvetica Neue',Helvetica,sans-serif`
 - 代號／ID／驗證碼／倒數計時：`'IBM Plex Mono',monospace`
 
+> ✅ **2026-08-25 M0 實作結果**：以上建議已採用（色票落於 `app/assets/css/main.css`）。
+> **深色模式選擇器改用 `.dark`，不是本文件原寫的 `[data-theme="dark"]`。**
+> 原因：`@nuxtjs/color-mode`（`@nuxt/ui` v4 內建）切換的是 `.dark` class，Nuxt UI 元件本身也依賴這個
+> class；兩套選擇器並存會讓自訂區塊與 Nuxt UI 元件在切換主題時不同步。變數名與色值不變，
+> 下方 §1 的程式碼區塊示意時請自行替換選擇器（`[data-theme="dark"]` → `.dark`）。
+
 ---
 
 ## 1. 色票

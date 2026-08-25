@@ -138,6 +138,40 @@ interface AttachmentContent {
 }
 
 // ─────────────────────────────────────────────────────────────
+// 識別碼正規化
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * 對話 id 的正規形式 —— **不帶** `conv_` 前綴。
+ *
+ * ⚠️ 平台對「一個對話」總共有三種識別碼，這是實測（2026-08-25）確認的：
+ *
+ *   | 來源 | 欄位 | 範例 | 是什麼 |
+ *   |---|---|---|---|
+ *   | `conversations.search()` | `id` | `b6f76f09-…` | 對話 id，裸 UUID |
+ *   | 訊息 | `conversation_id` | `conv_b6f76f09-…` | 同一個對話，帶前綴 |
+ *   | `conversations.get()` | `id` / `_id` | `tcu_6cd3cee1-…` | **不是對話 id** —— 是
+ *     team_conversation 這筆關聯記錄自己的 id，與對話 id 毫無關係 |
+ *
+ *   `get()` 回的物件另有 `conversation_id: conv_<裸 UUID>` 欄位，那才是對話 id。
+ *
+ * 若不在防腐層統一，`Conversation.id` 與 `Message.conversationId` 會是兩個不同的
+ * 字串，所有以對話 id 為鍵的查表（CopilotSession、presence、EventBus topic、
+ * 共享訂閱的 refcount）都會靜默失準 —— 症狀是「訊息進來了但面板沒反應」。
+ *
+ * 取裸 UUID 為正規形式的理由：它是列表／詳情 API 的主鍵，
+ * 而訊息查詢端點 `?conversation_id=` 兩種形式都接受（已實測）。
+ */
+export function normalizeConversationId(id: string): string {
+  return id.startsWith('conv_') ? id.slice('conv_'.length) : id
+}
+
+/** 兩個對話 id 是否指同一個對話（容忍前綴差異） */
+export function sameConversation(a: string, b: string): boolean {
+  return normalizeConversationId(a) === normalizeConversationId(b)
+}
+
+// ─────────────────────────────────────────────────────────────
 // 主 mapper
 // ─────────────────────────────────────────────────────────────
 
@@ -168,7 +202,8 @@ export function toMessage(
 
   return {
     id: raw.id,
-    conversationId: raw.conversation_id,
+    // ⚠️ 一律正規化 —— 訊息帶 conv_ 前綴，對話物件不帶（見 normalizeConversationId）
+    conversationId: normalizeConversationId(raw.conversation_id),
     at: raw.created_at,
     sender: resolveSender(raw.from),
     text,
@@ -177,8 +212,13 @@ export function toMessage(
 }
 
 export function toConversation(raw: SdkConversation): Conversation {
+  // ⚠️ 必須優先取 conversation_id。
+  //    search() 的 id 就是對話 id，但 get() 的 id 是 tcu_ 開頭的關聯記錄 id ——
+  //    若直接用 raw.id，同一個對話經由兩支 API 取得會得到兩個不同的鍵，
+  //    CopilotSession、presence、EventBus topic 全部對不起來。
+  const withConvId = raw as SdkConversation & { conversation_id?: string }
   return {
-    id: raw.id,
+    id: normalizeConversationId(withConvId.conversation_id ?? raw.id),
     channel: raw.channel_type,
     contactId: raw.contact_id,
     status: raw.status,

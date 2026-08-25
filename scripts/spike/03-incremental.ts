@@ -10,7 +10,7 @@
 
 import { runProbe, requireEnv, isMain, type Finding } from './lib/harness.js'
 import { tryStrategies, rawList } from '../../server/sources/message-fetch.js'
-import { toConversation, diffOperators } from '../../server/sources/mappers.js'
+import { toConversation, diffOperators, normalizeConversationId, unwrapPaged } from '../../server/sources/mappers.js'
 
 export const probe03 = () => runProbe('03', 'B-2 增量取數與輪詢可行性', async (p, client) => {
   const convId = requireEnv('SPIKE_CONVERSATION_ID')
@@ -80,19 +80,51 @@ export const probe03 = () => runProbe('03', 'B-2 增量取數與輪詢可行性'
   })
 
   // ── ③ PollingEventSource 可行性 ──────────────────────
-  const snap1 = toConversation(await client.conversations.getByConversationId(convId))
-  await new Promise(r => setTimeout(r, 1500))
-  const snap2 = toConversation(await client.conversations.getByConversationId(convId))
-  const changes = diffOperators(snap1, snap2)
+  //
+  // ⚠️ getByConversationId() 打的是 `?type=conversation_id&q=`，回的是**分頁容器**
+  //    而非單一對話。初版直接把它丟給 toConversation()，靜默產生 id=undefined
+  //    的空快照，讓 A-1alt 一直得到「0 人」的假結論。
+  // ⚠️ 且它與 search() 吃的 id 形式不同 —— 兩種都試，把實際可行的那個記錄下來。
+  async function snapshot(): Promise<{ conv: ReturnType<typeof toConversation> | null, via: string }> {
+    for (const [label, id] of [
+      ['帶 conv_ 前綴', `conv_${normalizeConversationId(convId)}`],
+      ['裸 UUID', normalizeConversationId(convId)],
+    ] as const) {
+      const hit = unwrapPaged<Parameters<typeof toConversation>[0]>(
+        await client.conversations.getByConversationId(id),
+      )[0]
+      if (hit) return { conv: toConversation(hit), via: `getByConversationId(${label})` }
+    }
+    // 退回以內部 id 直接取
+    try {
+      return {
+        conv: toConversation(await client.conversations.get(normalizeConversationId(convId))),
+        via: 'conversations.get(內部 id)',
+      }
+    }
+    catch {
+      return { conv: null, via: '兩種 id 形式與 get() 皆取不到' }
+    }
+  }
 
-  console.log(`     conversation.users[] = ${snap1.operators.length} 人：${snap1.operators.map(o => o.name).join(', ') || '(無)'}`)
+  const first = await snapshot()
+  await new Promise(r => setTimeout(r, 1500))
+  const second = await snapshot()
+  const snap1 = first.conv
+  const snap2 = second.conv
+  const changes = snap1 && snap2 ? diffOperators(snap1, snap2) : []
+
+  console.log(`     取得方式：${first.via}`)
+  console.log(`     conversation.users[] = ${snap1?.operators.length ?? '取不到'} 人：${snap1?.operators.map(o => o.name).join(', ') || '(無)'}`)
 
   p.record({
     question: 'A-1alt', claim: 'webhook 未到位前，能否靠輪詢 users[] 推斷 JOIN/LEAVE',
-    verdict: snap1.operators.length > 0 ? 'yes' : 'partial',
-    evidence: `conversations.getByConversationId() 回傳完整 users[]（${snap1.operators.length} 人，含 id 與 display_name）；`
-      + `1.5 秒內偵測到 ${changes.length} 筆變化`,
-    impact: snap1.operators.length > 0
+    verdict: !snap1 ? 'unknown' : snap1.operators.length > 0 ? 'yes' : 'partial',
+    evidence: !snap1
+      ? `取不到對話快照（${first.via}）`
+      : `${first.via} 回傳 users[]（${snap1.operators.length} 人，含 id 與 display_name）；`
+        + `1.5 秒內偵測到 ${changes.length} 筆變化`,
+    impact: snap1 && snap1.operators.length > 0
       ? '✅ 重要發現：SDK 已提供該對話的完整 operator 清單 —— '
         + 'A-1 要求 webhook 附帶 current_operators 的需求，在輪詢路徑下已可自行滿足。'
         + 'PollingEventSource + Presence 可完整實作，M1 不被 webhook 阻塞。'
