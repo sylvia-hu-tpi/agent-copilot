@@ -68,7 +68,10 @@ export interface CopilotSession {
   conversationId: string
   /** 正在檢視此對話的客服 id —— 歸零即可回收 session 與停止輪詢 */
   watchers: string[]
-  /** 已處理到的最新訊息 id。§9.3「只取最新 N 則 + 本地比對」的比對基準 */
+  /**
+   * `advanceAnchor()` 會寫入，但目前沒有讀者（docs/ARCHITECTURE.md §18）——
+   * 不是撞單檢查的版本錨點，也不是 §9.3 輪詢去重的比對基準，兩者另有各自的欄位。
+   */
   lastMessageId: string | null
   createdAt: number
   updatedAt: number

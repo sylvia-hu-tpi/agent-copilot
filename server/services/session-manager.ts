@@ -88,7 +88,15 @@ export async function watchConversation(req: WatchRequest): Promise<Unsubscribe>
   }
 }
 
-/** 目前的 CopilotSession（撞單檢查要拿 `lastMessageId` 當版本錨點） */
+/**
+ * 目前的 CopilotSession。
+ *
+ * ⚠️ **匯出後從未被呼叫**（docs/ARCHITECTURE.md §18）。
+ * `CopilotSession.lastMessageId` 不是撞單檢查的版本錨點（那是前端的
+ * `baseMessageId`，見 server/api/messages/index.post.ts），也不是 §9.3
+ * 輪詢去重的比對基準（那是 `PollingMessageSource` 自己的 `entry.lastMessageId`）。
+ * M2 若要開始依賴這個欄位，先讀該章節。
+ */
 export async function copilotSessionOf(conversationId: string): Promise<CopilotSession | null> {
   return useStateStore().getCopilotSession(conversationId)
 }
