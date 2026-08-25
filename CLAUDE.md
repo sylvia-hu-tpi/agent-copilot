@@ -66,8 +66,9 @@ npm run smoke        # ⚠️ 需先 build。對建置後的 Nitro 跑完整登�
 
 ## 協作注意
 
-- **可能有另一個 Claude session 正在編輯同一份文件**（設計 session 負責
-  `docs/DESIGN_TOKENS.md` 與畫布）。`git add -A` 前先 `git status` 看一眼，
+- **可能有另一個 Claude session 正在編輯同一份文件** —— 不限於 `docs/DESIGN_TOKENS.md`，
+  `docs/ARCHITECTURE.md` 同樣會被跨 session 修正（例如發現文件內部不同步、
+  或畫布內容有更新時）。`git add -A` 前先 `git status` 看一眼，
   避免把對方進行中的修改掃進自己的 commit。
 - commit 訊息用 Conventional Commits，內文說明**為什麼**，不只是改了什麼 ——
   這個專案的多數 commit 是在記錄「某個假設被實測推翻」，那個推翻的理由才是價值所在。
