@@ -1753,12 +1753,26 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 - SDK client factory
 - `StateStore` / `EventBus` 介面 + 記憶體實作（**API 全 async**）
 
-**驗收**
-- [ ] 能以 OTP 登入並選擇組織（**選擇畫面一律出現**，即使只有一個組織）
-- [ ] 重新整理 `organization.vue` 不會被踢回輸 email 的步驟
-- [ ] session 中確實存有 `refresh_token`（見 §5.1 ③）
-- [ ] 能列出對話清單
-- [ ] access token 不出現在任何前端資源或網路回應中
+**驗收** ✅ **2026-08-25 全數通過**
+
+- [x] 能以 OTP 登入並選擇組織（**選擇畫面一律出現**，即使只有一個組織）
+- [x] 重新整理 `organization.vue` 不會被踢回輸 email 的步驟
+- [x] session 中確實存有 `refresh_token`（見 §5.1 ③）
+- [x] 能列出對話清單
+- [x] access token 不出現在任何前端資源或網路回應中
+
+**驗收方式**（皆為自動化，可重跑）：
+
+| 項目 | 由誰驗 |
+|---|---|
+| 前四項 + 憑證不外洩 | `npm run build && npm run smoke` —— 對建置後的 Nitro 伺服器跑完整登入流程，並掃描每個回應的 body 與 Set-Cookie |
+| `refresh_token` 確實留存 | `npm test`（`test/auth-flow.test.ts`）—— 從 HTTP 外部看不到 session 內容，那正是這個設計的重點 |
+| §5.1 的三個登入坑 | 同上，以真實 SDK 打假 gateway，驗的是「SDK 實際送出什麼」 |
+
+> **超出原驗收清單、但一併完成的項目**：
+> `StateStore` / `EventBus` 介面與記憶體實作（含 TTL、poll lock、去重語意的測試）、
+> 對話識別碼正規化（§9.3）、JOIN / LEAVE / mode 切換的防腐層（§10.6）。
+> 後兩者原屬 M1，因 M1 前置驗證過程中確認了平台行為而順勢完成。
 
 **外部依賴**：無
 
