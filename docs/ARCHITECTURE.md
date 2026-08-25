@@ -844,9 +844,18 @@ type PresenceState = 'viewing' | 'composing' | 'joined'
 | `is_presence` | 全程 `false` | 全程 `false` | ❌ 與 JOIN 狀態無關，語意不明 |
 | `users[].length` | 維持 14 | 維持 14 | ❌ 確認為團隊名冊 |
 
-**結論：`mode === 'manual'` 是目前唯一「雙向正確、且能看到同事」的平台端 presence 訊號。**
+**結論：`mode` 是目前唯一「雙向正確、且能看到同事」的平台端 presence 訊號。**
 它同時出現在清單 payload 中，因此**一次清單輪詢就能得知所有對話有沒有真人在處理**，
 成本為零（§9.3.1 的第一層本來就要跑）。
+
+> ⚠️ **判定條件是 `mode !== 'automation'`，不是 `mode === 'manual'`。**
+> 平台有三種模式（§10.6），JOIN 後客服可自行切到 **Hybrid Mode**，
+> 此時他人**仍在對話中**但 `mode` 已不是 `manual`。
+> 寫成 `=== 'manual'` 會讓切到 Hybrid 的同事從 presence 中消失 ——
+> 而 Hybrid 恰恰是撞單最可能發生的模式，漏判的代價最高。
+>
+> ⚠️ `null`（未 JOIN）與 `automation`（無人）都代表「沒有真人」，
+> 但 Hybrid 的實際 API 值**尚未實測**，實作前必須確認（§10.6 末）。
 
 **這補上了 §10.2 原本最痛的盲區** —— 「同事在官方介面 JOIN 但尚未發言」。
 修訂後的來源表：
@@ -855,7 +864,7 @@ type PresenceState = 'viewing' | 'composing' | 'joined'
 |---|---|---|---|---|
 | ① | 自家 SSE 上報 | 只涵蓋我方使用者 | < 200ms | ✅ 可 |
 | ② | 訊息 `u_` 前綴反推 | 官方介面的同事 | 一個輪詢週期 | ✅ 可（但只在發言後） |
-| ③ | 🆕 **`mode === 'manual'`** | **全涵蓋** | 一個清單輪詢週期 | ❌ **只知道「有人」，不知道是誰** |
+| ③ | 🆕 **`mode !== 'automation'`** | **全涵蓋** | 一個清單輪詢週期 | ❌ **只知道「有人」，不知道是誰** |
 | ④ | JOIN/LEAVE webhook | 全涵蓋 | 即時 | 待規格（M4） |
 
 > ⚠️ **③ 只能回答「有沒有人」，不能回答「是誰」。** UI 必須誠實呈現這個差別，
@@ -997,22 +1006,34 @@ t=30s    送出
 
 ### 10.6 服務模式與主管接管
 
-介面提供**兩顆**控制按鈕，作用不同：
+#### ✅ 平台已有三種模式（2026-08-25 實測 + 官方介面確認）
 
-| 按鈕 | 誰可操作 | 效果 |
-|---|---|---|
-| 切換為全真人模式 | 一般客服 | 停止該對話的 AI 自動回覆 |
-| **主管強制介入** | **僅主管** | 停止 AI，**且鎖定其他客服** —— 只有該主管可回覆 |
+**這不是我們要自行發明的功能 —— iMBrace 官方介面的 Composer 上方就有這個下拉選單。**
+按下 JOIN 時預設為 Manual Mode，之後客服可隨時切換：
 
-#### 資料模型：兩個正交維度
+| 官方介面選項 | 官方說明文字 | AI 自動回覆 | 客服可送出 |
+|---|---|---|---|
+| **Manual Mode** | Chats 1-on-1, automation is off | ✗ | ✓ |
+| **Automation Only** | Replies automatically, you can only view | ✓ | **✗（唯讀）** |
+| **Hybrid Mode** | Replies automatically, and you can also send messages | ✓ | ✓ |
 
-不要建模成三種模式列舉，會綁死組合（例如「主管接管但保留 AI 協助」將無法表達）：
+**API 對應**：`conversations.get()` 與清單 payload 的 `mode` 欄位。
+實測值：未 JOIN 時 `null`；JOIN 後 `manual`；LEAVE 後 `automation`。
+⚠️ **Hybrid 的 API 值尚未實測**（見本節末的待確認事項）。
+
+#### 資料模型：兩個正交維度 —— 原判定正確，且維度已確知
+
+初版寫「不要建模成三種模式列舉，會綁死組合」。**這個判斷是對的**，
+而平台的三種模式恰好就是兩個布林維度的三種有效組合：
 
 ```ts
 // shared/types/conversation.ts
 export interface ConversationControl {
-  aiMode: 'collab' | 'human_only'    // AI 是否自動回覆
-  lock: null | {                      // 誰能回覆
+  /** AI 是否自動回覆 —— 對應平台 mode 的 automation 面向 */
+  aiReplies: boolean
+  /** 客服能否送出 —— Automation Only 時為 false，平台端會拒絕 */
+  agentCanSend: boolean
+  lock: null | {                      // 誰能回覆（我方自訂，平台無此概念）
     by: string                        // operatorId
     name: string
     at: string
@@ -1020,10 +1041,42 @@ export interface ConversationControl {
 }
 ```
 
-- 客服按「切換為全真人模式」 → `aiMode = 'human_only'`
-- 主管按「強制介入」 → `aiMode = 'human_only'` + `lock = { by: 主管 }`
+| 平台 mode | `aiReplies` | `agentCanSend` |
+|---|---|---|
+| `manual` | `false` | `true` |
+| `automation` | `true` | `false` |
+| Hybrid（值待確認） | `true` | `true` |
+| （兩者皆 false） | — | 平台無此模式，我方也不應產生 |
 
-兩個動作、一個資料結構。日後新增組合不必改結構。
+- 客服切到 Manual → `aiReplies = false`
+- 主管按「強制介入」 → `aiReplies = false` + `lock = { by: 主管 }`
+
+#### ⚠️ 這對 Composer 的設計是硬性約束（M1）
+
+1. **Composer 上方必須有模式指示**，與官方介面一致 —— 客服會在兩邊切換工作，
+   同一個對話在兩處顯示不同狀態會直接造成誤送。
+2. **`Automation Only` 時 Composer 必須停用**，不能只是送出後失敗。
+   讓客服打完一整段話才發現送不出去，比一開始就停用更糟。
+3. **`Hybrid` 是撞單真正會發生的模式** —— AI 與客服同時能送。
+   §10.5「AI 是第四個競爭者」整段**只在此模式下適用**，不是預設情況（見 §19.1 #12）。
+4. **mode 可能隨時被改變**（客服自己改、或從官方介面改），
+   因此它是輪詢要偵測的一級狀態 —— §9.3.1 的清單輪詢已涵蓋（`updated_at` 會跳動）。
+
+#### ⚠️ 待確認：我方能不能「設定」mode
+
+**SDK 沒有任何設定 mode 的端點** —— 手寫 resource 與 generated API 全域搜尋皆無
+（`conversations` 只有 `join` / `leave` / `updateStatus` / `updateName` /
+`assignTeamMember` / `removeTeamMember`）。
+
+因此目前只能**讀**不能**寫**。這有兩種後果，取決於 iMBrace 的回覆：
+
+- **若有未公開的端點** → Composer 的模式選單可與官方介面完全對等
+- **若真的沒有** → 我方的模式選單只能是**唯讀指示器**，並提示「請至 iMBrace 官方介面切換」。
+  ⚠️ 這同時代表「切換為全真人模式」這顆按鈕**做不出來**，
+  上表主管接管的 `aiReplies = false` 也無法由我方寫入 —— §10.6 的主管接管設計會受影響。
+
+**已列為對 iMBrace 的追問（H-1 改寫）。** 原本 H-1 問的是「單一對話的 AI 暫停 API」，
+現在知道平台已有這個概念（mode），問題精確化為「mode 的寫入端點與 Hybrid 的 API 值」。
 
 #### 這個鎖的邊界（必須誠實標示）
 
@@ -1788,7 +1841,7 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 9 | 對話內容送外部 LLM | 🟡 範圍可能擴大 | 資安／合規 | 若 #17 確認無 structured output、或無 vision 模型，則需外送外部服務，**出境範圍從文字擴大到語音與影像**。`05-ai-structured.ts` 會一併檢查 `is_vision_available` |
 | 10 | Data Board 欄位型別限制 | ⚪ | schema 可能需調整 | M3 前先實測，setup script 可重跑 |
 | 11 | **附件內容完全取不到** | 🔴 **已確認（風險升級）** | 不只是「平台沒幫我們 OCR」，是**連原始檔案都拿不到**，自建 STT／vision 也無米可炊 | 實測 `file` 訊息的 `content` 是 `{name, media_id}`，**沒有 url**；SDK 全域搜尋 `media` 無任何端點，試打 4 條猜測路徑全 404。**已列為對 iMBrace 的 P0 追問**。M1 暫行方案：僅顯示檔名，標示「無法預覽」。398 則實測訊息中 `file` 僅 4 則、`image`／`audio` 各 0 則 → 建議**多模態移出 MVP** |
-| 12 | **JOIN 後 AI 仍持續自動回覆** | 🔴 **與新實測矛盾，需重驗（升級）** | 撞單是否為預設情況 —— 這決定 §10.5「AI 是第四個競爭者」整段設計要不要做 | 原判「已確認 AI 仍持續回覆」。**但 2026-08-25 實測：JOIN 時 `mode` 自動 `null→manual`、LEAVE 時 `manual→automation`** —— 若 `manual` 真的代表 AI 停手，則 JOIN 本身就是暫停鍵，H-1 追問的「單一對話暫停 API」不必要，§10.5 可大幅簡化。兩個結論不可能同時為真。**重驗方式**：JOIN 該對話後請客戶端送一則訊息，觀察 AI 是否回覆。此為目前最高優先 |
+| 12 | **JOIN 後 AI 是否仍自動回覆** | 🟢 **已釐清（2026-08-25）** | 撞單是預設情況還是選用情況 —— 決定 §10.5 的適用範圍 | **兩個舊結論都只對一半。** 平台有三種模式（§10.6）：JOIN 時**預設 Manual（AI 關閉）**，故撞單**不是預設情況**；但客服可切到 **Hybrid（AI 開 + 客服可送）**，此時撞單真實存在。因此 §10.5「AI 是第四個競爭者」**不刪除，改為只在 Hybrid 模式下適用**，UI 需依 mode 決定是否顯示 AI 撞單警示。⚠️ 衍生新風險：**SDK 無設定 mode 的端點**，我方可能只能讀不能寫（見 #23） |
 | 13 | ~~訊息發送者身分無法區分~~ | ✅ **已解除** | ~~撞單防護產生大量誤判~~ | **實測 `from` 帶型別前綴**：`con_` 客戶／`u_` 真人客服／`pub_` AI，398 則覆蓋率 100%。已改用前綴判別（`mappers.senderTypeOf`），不再依賴 `users[]` 反推 —— 後者在 `users[]` 為空時會把同事全數誤判為 AI。**僅剩 `pub_` 語意待 iMBrace 確認（H-3b）**，未知前綴一律歸 `unknown`，不預設為 `ai` |
 | 14 | 知識庫條目時效性 | ⚪ | 客服可能依據已失效的 SOP 回覆客戶 | `KnowledgeHit.updatedAt` 顯示於介面，過舊者標示提醒 |
 | 15 | **主管強制介入擋不住官方介面** | ⚪ | 主管可能誤以為已完全接管 | 介面誠實標示邊界；`removeTeamMember()` API 確實存在，但實際效力待確認（H-4） |
@@ -1799,13 +1852,14 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 20 | 🆕 **AI 回應延遲 5～12 秒** | 🔵 **已確認（新增）** | 右欄若等全部算完才渲染，客服會以為當掉 | 實測中位數 **5.0s**、最慢 **12.2s**、首字 **2.2s**。**M2 必須做漸進顯示**：骨架先出，摘要／情緒／建議卡各自獨立載入，建議卡串流逐字顯示，並提供「重新產生」入口（因 #19 品質不穩） |
 | 21 | 🆕 **客戶資料幾乎是空的** | 🟡 **已確認（新增）** | demo 右欄的「客戶資訊卡」無內容可顯示 | 實測 19 筆 Contact：`display_name` 100% 但值是 `TWN#UK2594` 這類代號；`email`／`phone_number`／`company_name`／`birthday`／`location` **填充率皆為 0%**；`avatar_url` 僅 21%。**待決策**：改從 CRM board 關聯取得（`contact` 帶 `board_id`／`board_item_id`），或此區塊 MVP 先拿掉 |
 | 22 | ~~**`messages.list()` 無 `conversation_id` 也無 `since`**~~ | ✅ **已解除（不再阻塞 M1）** | ~~§9 整套輪詢策略的地基~~ | 原判「三種策略皆不可行」是**量測錯誤**：`precisionOf()` 以字串相等比對，而對話清單給裸 UUID、訊息帶 `conv_` 前綴，於是「取回 70 則全部正確的訊息」被算成 precision 0%。修正後 `raw-conversation-id` **precision 100%**，且不帶 `conversation_id` 會 400（代表過濾強制且真實）。`since` 類參數確實不支援（八種全被忽略），但訊息**由新到舊排序**，`limit=N` 直接就是最新 N 則 → §9.3 的緩解措施成本遠低於原本設想的最壞情況。詳見 §9.3 的識別碼說明 |
+| 23 | 🆕 **無法由 API 設定對話 mode** | 🔴 **已確認（新增）** | 「切換為全真人模式」與主管接管的 `aiReplies=false` 可能都做不出來 | SDK 手寫 resource 與 generated API **全域搜尋皆無** mode 寫入端點；`conversations` 只有 `join`／`leave`／`updateStatus`／`updateName`／`assignTeamMember`／`removeTeamMember`。若確實沒有，我方的模式選單只能是**唯讀指示器**並提示「請至官方介面切換」，§10.6 主管接管設計需重新評估。已列為對 iMBrace 的追問（H-1 改寫） |
 
 ### 19.2 目前最需要收斂的三件事
 
 | 優先 | 事項 | 為何是它 |
 |---|---|---|
 | 🔴 1 | **#11 語音／圖片文字化** | 唯一還能讓總工時再增 5–10 人日的變數。**必須用含語音與圖片的對話跑 `02-multimodal.ts`** |
-| 🔴 2 | **#12 JOIN 後 AI 到底停不停** | ~~#19 訊息取數策略~~ 已解除（#22）、~~#3 Presence 第四個來源~~ 已找到（`mode` 欄位）。新的第二順位：實測顯示 JOIN 會把 `mode` 切成 `manual`，與「JOIN 後 AI 仍持續回覆」的舊結論矛盾。**若 AI 其實會停，§10.5 整段（AI 是第四個競爭者）可大幅簡化，H-1 也不必問** —— 影響範圍大，且只需一次實測即可定案 |
+| 🔴 2 | **#23 mode 能不能寫** | ~~#19 取數~~ 已解除（#22）、~~#3 Presence~~ 已解決（`mode`）、~~#12 AI 停不停~~ 已釐清（預設 Manual）。新的第二順位：**平台有三種模式但 SDK 只能讀不能寫**。若寫不了，「切換為全真人模式」與主管接管都做不出來 —— 這是 §10.6 一整節的存廢問題，且只能問 iMBrace |
 | 🔴 3 | **#13 發送者身分** | 決定撞單防護（產品核心價值）能否成立 |
 
 **待向 iMBrace 確認的完整清單見 `docs/IMBRACE_QUESTIONS.md`**（可直接轉貼給對方）。
