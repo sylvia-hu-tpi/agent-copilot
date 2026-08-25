@@ -1,0 +1,27 @@
+# 統一以 LF 存入版本庫，簽出時由 core.autocrlf 決定工作區形式。
+# 開發在 Windows、部署在 node:24-alpine（見 ARCHITECTURE.md §16.1），
+# 不統一的話兩邊會產生整檔換行差異，把真實的 diff 淹掉。
+* text=auto eol=lf
+
+# 明確指定，避免誤判
+*.ts    text eol=lf
+*.vue   text eol=lf
+*.json  text eol=lf
+*.yaml  text eol=lf
+*.yml   text eol=lf
+*.md    text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+
+# 二進位，不做任何轉換
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.webp  binary
+*.ico   binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary
+
+# lockfile 由工具產生，diff 時摺疊
+package-lock.json linguist-generated=true -diff
