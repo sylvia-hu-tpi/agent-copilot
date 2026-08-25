@@ -83,6 +83,18 @@ npm run smoke        # ⚠️ 需先 build。對建置後的 Nitro 跑完整登�
   真的押在錯的狀態上時（例如押在驗收尚未通過的 commit），
   **刪掉重押並在 annotation 說明**，不要靜默移動。
 
+  ⚠️ **機制陷阱**：`git tag -f -a <name>` 不指定 commit-ish 時會**靜默重新指向 HEAD**。
+  因此「只想改 annotation 文字」的操作會連帶移動位置，而且不會有任何提示。
+  要保位置改文字，必須明確帶上原本的 commit：
+
+  ```bash
+  git tag -f -a m1-ready <原本的 commit hash> -m "..."   # ✅ 位置不變
+  git tag -f -a m1-ready -m "..."                        # ❌ 靜默跳到 HEAD
+  ```
+
+  這個陷阱已經觸發過一次 —— 在一段正文寫著「位置維持不動」的 annotation 裡，
+  改寫該段文字的動作本身把 tag 又往前移了一個 commit。
+
 ## 環境
 
 - Node ≥ 24。`.env.local` 一份供 spike 腳本與 Nuxt 共用，
