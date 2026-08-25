@@ -192,3 +192,47 @@ export interface PresenceEntry {
   /** 此狀態的發生時間（ISO8601）。source 為 `message` 時即該則訊息的時間 */
   at: string
 }
+
+/**
+ * 這則訊息是不是 AI workflow 的**內部訊息**（路由、分類等），而非給客戶看的回覆。
+ *
+ * ── 2026-08-25 實測發現 ─────────────────────────────────────────
+ * 同一個 workflow 會在同一個對話裡送出兩種東西，而**平台完全無法區分**：
+ *
+ * ```
+ * pub_486c5cab…  text  抱歉造成您使用上的不便，請協助確認…      ← 真的回給客戶
+ * pub_486c5cab…  text  {"category":"DEV-001","confidence":"high"} ← 內部分類
+ * pub_486c5cab…  text  {"route": "T1"}                           ← 內部路由
+ * ```
+ *
+ * 同一個 `from`、同樣 `type: "text"`、**所有欄位完全一致**，沒有任何旗標。
+ *
+ * ⚠️ 為何這是正確性問題而不只是體驗問題：
+ * §10.4 的撞單檢查在 Hybrid 模式下把 `sender.type === 'ai'` 視為撞單對象。
+ * workflow 在客服組字期間吐一個 `{"route":"T1"}`，客服就會收到
+ * 「AI 已經自動回覆」的警告 —— 但客戶那邊什麼都沒收到。
+ * **假警報比沒有警報更糟**：客服學會忽略提示後，真正的撞單也會被一併略過。
+ *
+ * ⚠️ 這是**啟發式判斷，不是規格**。已列為 `IMBRACE_QUESTIONS.md` H-3c 請 iMBrace
+ *    提供正式的區分方式；屆時只需改這一個函式。
+ *    採「整段文字可解析為 JSON 物件／陣列」這個條件的理由：
+ *    對一個以中文回覆終端客戶的客服 bot，正式回覆剛好是純 JSON 的機率極低，
+ *    而漏判（把內部訊息當成真回覆）的代價是假警報，比誤判嚴重。
+ */
+export function isWorkflowInternalMessage(message: Message): boolean {
+  if (message.sender.type !== 'ai') return false
+
+  const text = message.text?.trim()
+  if (!text) return false
+  // 先看首字元，避免對每一則長訊息都做一次 JSON.parse
+  if (!text.startsWith('{') && !text.startsWith('[')) return false
+
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return typeof parsed === 'object' && parsed !== null
+  }
+  catch {
+    // 以 { 開頭但不是合法 JSON —— 那就是普通文字（例如「{...}是什麼意思？」）
+    return false
+  }
+}

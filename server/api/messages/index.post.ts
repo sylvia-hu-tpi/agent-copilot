@@ -22,12 +22,13 @@
 
 import { z } from 'zod'
 import type { Message } from '../../../shared/types/conversation.js'
-import { controlFromMode } from '../../../shared/types/conversation.js'
+import { controlFromMode, isWorkflowInternalMessage } from '../../../shared/types/conversation.js'
 import type { CollisionReport } from '../../../shared/types/events.js'
 import { loadConversationContext } from '../../services/conversation-context.js'
 import { useCopilotRuntime } from '../../services/copilot-runtime.js'
 import { sendTextMessage } from '../../services/imbrace.js'
 import { advanceAnchor } from '../../services/session-manager.js'
+import { operatorName } from '../../services/directory.js'
 import { sameOperator } from '../../sources/mappers.js'
 import { fetchSince } from '../../sources/message-fetch.js'
 import { assertConversationId } from '../../utils/conversation-param.js'
@@ -87,6 +88,7 @@ export default defineEventHandler(async (event) => {
       baseMessageId,
       operatorId: session.operatorId,
       aiIsCompetitor: control.aiReplies,
+      orgId: session.orgId,
     })
     if (collision) {
       throw createError({
@@ -114,6 +116,8 @@ interface CollisionInput {
   baseMessageId: string | null
   operatorId: string
   aiIsCompetitor: boolean
+  /** 供撞單提示把 `u_xxx` 換成人名 —— 見 nameSenders() */
+  orgId: string
 }
 
 /**
@@ -141,14 +145,18 @@ async function detectCollision(input: CollisionInput): Promise<CollisionReport |
   if (byOtherAgent.length > 0) {
     return {
       kind: 'agent',
-      messages: byOtherAgent,
+      messages: nameSenders(byOtherAgent, input.orgId),
       latestMessageId: since[since.length - 1]?.id ?? input.baseMessageId,
     }
   }
 
   // 協作模式（Hybrid）下 AI 也是撞單對象；Manual 下 AI 不會送，列入就是假警報
   if (input.aiIsCompetitor) {
-    const byAi = since.filter(m => m.sender.type === 'ai')
+    // ⚠️ 必須排除 workflow 的內部訊息（`{"route":"T1"}` 這類）。
+    //    它們與真回覆同一個 from、同一個 type，但**客戶根本收不到** ——
+    //    列入檢查會在客服組字期間跳出「AI 已經自動回覆」的假警報。
+    //    見 isWorkflowInternalMessage() 的說明與 IMBRACE_QUESTIONS H-3c。
+    const byAi = since.filter(m => m.sender.type === 'ai' && !isWorkflowInternalMessage(m))
     if (byAi.length > 0) {
       return {
         kind: 'ai',
@@ -159,6 +167,24 @@ async function detectCollision(input: CollisionInput): Promise<CollisionReport |
   }
 
   return null
+}
+
+/**
+ * 把 `u_xxx` 換成可讀的人名。
+ *
+ * ⚠️ 為什麼值得多這幾行：撞單提示寫「另一位同事已經回覆過」與
+ *    「李小華已經回覆過」，對客服的價值完全不同 —— 後者他可以直接去問對方，
+ *    前者只能自己猜。而名字我們**本來就查得到**（`loadConversationContext()`
+ *    已把團隊名冊寫進 directory），不查等於白白丟掉手上的資訊。
+ *
+ * ⚠️ 查不到時維持 `undefined`，由前端顯示通稱 —— **不可自行編一個名字**。
+ */
+function nameSenders(messages: Message[], orgId: string): Message[] {
+  return messages.map(m => (
+    m.sender.name || !m.sender.id
+      ? m
+      : { ...m, sender: { ...m.sender, name: operatorName(orgId, m.sender.id) } }
+  ))
 }
 
 function collisionMessage(collision: CollisionReport): string {
