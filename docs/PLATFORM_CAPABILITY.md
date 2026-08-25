@@ -5,21 +5,38 @@
 
 ---
 
-## 1. 結論
+## ⚠️ 2026-08-25 下午更正：本文 §1、§3②、§5 的結論已被後續實測推翻
 
-**iMBrace 能完整支撐 demo 的左欄與中欄（對話層），但右欄 Copilot 面板的每一項依賴目前都不可用。**
+本文原先寫「27 個 agent 全部無法推論、AI 層 6 項全不可用」。
+**那是抽測少數 agent 後外推的錯誤結論。**
 
-而右欄就是這個產品本身。
+逐一實測 27 個 agent 後的正確結果：**11 個可實際完成推論**，其中 4 個掛了知識庫且能檢索；
+JSON 結構化輸出 4/4 次可解析；引用來源可從 SSE 事件解析取得。
 
-分界線異常乾淨：
+最新且正確的能力盤點請見 **[MEETING_2026-08-25.md](MEETING_2026-08-25.md)**。
+本文以下內容保留供追溯，閱讀時請以更正為準。
+
+---
+
+## 1. 結論（⚠️ 已被推翻，見上方更正）
+
+~~**iMBrace 能完整支撐 demo 的左欄與中欄（對話層），但右欄 Copilot 面板的每一項依賴目前都不可用。**~~
+
+實際情形：對話層 15 項全可用；AI 層**部分可用** ——
+`ai.complete` / `ai.embed` / `messageSuggestion` 確實 404，
+但 **AI Agent 路徑（`aiAgent.streamChat`）有 11/27 可用**，且能做知識庫檢索與 JSON 輸出。
+
+仍然成立的缺口只剩三項：**無相關度分數**、**檢索品質不可調校**、**附件內容取不到**。
 
 ```
 ✅ 對話 / 訊息 / 聯絡人 / Data Board / 知識庫檔案來源 / 頻道 ── 15 項全可用
-❌ 所有 AI 推論與語意檢索 ────────────────────────────── 6 項全不可用
+✅ AI 推論（透過 AI Agent）─────────────────────────── 11/27 agent 可用
+❌ ai.complete / ai.embed / messageSuggestion ──────── 404（此結論不變）
+❌ 相關度分數、檢索品質調校、附件內容 ─────────────── 仍不可得
 ```
 
-**且已排除「憑證權限」這個可能性。** 用 API Key 與客服本人的 access token 各測一遍，
-4 項關鍵 AI 能力**解鎖 0 項**，兩者表現完全一致。
+**憑證權限已排除。** 用 API Key 與客服本人的 access token 各測一遍，
+404 的那三個端點兩者表現完全一致 —— 是部署缺失，不是權限問題。
 
 ---
 
@@ -60,12 +77,15 @@
 - 無法自建向量檢索（`ai.embed` 是先前規劃的替代方案，同樣不存在）
 - `messageSuggestion` 不只是「缺信心度」，是**整個端點不存在**
 
-### ② AI Agent 路由存在，但每個 agent 都跑不動（運維性）
+### ② AI Agent 路由存在，**16/27 跑不動**（運維性）
+
+> ⚠️ **更正**：本節原寫「每個 agent 都跑不動」。逐一實測後為 **11 個可用、16 個失敗**。
+> 可用清單見 [MEETING_2026-08-25.md](MEETING_2026-08-25.md) §0。
 
 `aiAgent.streamChat` → `POST /ai-agent/v2/chat` **機制正常**：
 HTTP 200、`text/event-stream`、標準 Vercel-AI-SDK 事件格式（`start` / `text-delta` / `finish`）。
 
-但組織內 27 個 agent 逐一實測，全部失敗，形態有三：
+失敗的 16 個，形態有三：
 
 | 形態 | 範例 agent | 推測原因 |
 |---|---|---|
@@ -75,15 +95,25 @@ HTTP 200、`text/event-stream`、標準 Vercel-AI-SDK 事件格式（`start` / `
 
 **這一類是 iMBrace 可以修的。** 兩個 provider（`TPI_AWSBedrock`、`bedrock-partners`）都不可用。
 
-### ③ 即使 ② 修好，仍有一項補不上（架構性）
+### ③ 真正補不上的只有「分數」（架構性）
 
-Agent 路徑回傳的是**串流的自由文字**：
-- 沒有 structured output（違反憲法第 4 條「AI 輸出必須經 Zod 驗證」）
-- **沒有帶分數的引用來源**
+> ⚠️ **更正**：本節原寫「沒有 structured output、沒有引用來源」。兩者都不正確。
+>
+> - **結構化輸出**：實測 4/4 次可直接 `JSON.parse`（靠 prompt 達成，`response_format` 欄位為 null）
+> - **引用來源**：agent 的 SSE `tool-output-available` 事件會吐出 `RAGknowledge` 工具的完整輸出，
+>   含 `📁 Sources:` 檔名清單、`[Source: 檔名]` 標記的 **chunk 原文**，以及帶 `file_id` 的 `folder_info`。
+>   坑：檔名是 double URL-encoded，且引用在文字裡而非結構化欄位。
 
-而 demo 的「SOP 3.2 安撫圓場｜信心度 92%」必須有能回傳**條目 ID + 相關度分數**的檢索 API。
-全套 SDK 搜尋 `knowledge|semantic|retriev` 只有建立與列檔（`processEmbedding`、`listRagFiles`），
-**沒有任何查詢端點**。
+**仍然成立的缺口**：
+
+1. **沒有相關度分數** —— RAG 工具回傳純文字，無 score 欄位
+   → demo 的「信心度 92%」無法對應到真實依據
+2. **檢索品質不可調校** —— 實測問「電梯困人」，未命中知識庫裡的
+   `金融大樓電梯困人SOP.pdf`，反而回傳「管理辦法」的火災段落。
+   chunk 大小、top-k、中文斷詞、同義詞都不在我們手上。
+
+全套 SDK 搜尋 `knowledge|semantic|retriev` 確實沒有**獨立的**查詢端點 ——
+檢索只能「透過 agent」間接觸發，拿不到裸查詢結果。
 
 > 知識庫的「料」是有的：311 個 RAG 檔案、20 個 Knowledge Hub 資料夾（含「企業知識」）、25 個 board。
 > 但沒有任何方式可以查詢它們並取回帶分數的結果。

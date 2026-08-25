@@ -217,10 +217,11 @@ AgentCopilot/
 ├── nuxt.config.ts
 ├── app/
 │   ├── layouts/
-│   │   ├── default.vue              # 登入頁
+│   │   ├── default.vue              # 登入／選組織頁（未進工作區前）
 │   │   └── console.vue              # 頂欄 + 側欄 + 三欄工作區
 │   ├── pages/
-│   │   ├── login.vue                # OTP 兩段式登入
+│   │   ├── login.vue                # ①寄 OTP → ②驗證 OTP（見 §7.1）
+│   │   ├── organization.vue         # ③選擇組織 —— 一律顯示，即使只有一個
 │   │   ├── index.vue                # 對話列表
 │   │   └── c/[conversationId].vue   # 主工作區
 │   ├── components/
@@ -250,9 +251,9 @@ AgentCopilot/
 ├── server/
 │   ├── api/
 │   │   ├── auth/
-│   │   │   ├── otp.post.ts          # auth.signinEmailRequest
-│   │   │   ├── login.post.ts        # auth.authenticate
-│   │   │   ├── organization.post.ts # auth.exchangeAccessToken
+│   │   │   ├── otp.post.ts          # client.requestOtp(email)
+│   │   │   ├── login.post.ts        # client.loginWithOtp() → 回傳 organizations[]
+│   │   │   ├── organization.post.ts # 手動 exchange（保留 refresh_token，見下方 ③）
 │   │   │   ├── me.get.ts
 │   │   │   └── logout.post.ts
 │   │   ├── conversations/
@@ -318,6 +319,51 @@ AgentCopilot/
     ├── IMBRACE_QUESTIONS.md         # 待向 iMBrace 確認的清單
     └── CONSTITUTION.md              # Spec Kit 憲法
 ```
+
+### 5.1 登入流程的三個實作約束（2026-08-25 實測後修正）
+
+初版目錄結構寫的是「OTP 兩段式登入」且直接標註底層 SDK 方法，兩者都會導致實作出錯。
+以下三點是踩過的坑，實作 `server/api/auth/*` 前必讀。
+
+#### ① 是三段式，不是兩段式 —— 且第三段要有自己的畫面
+
+```
+① client.requestOtp(email)                  → 寄出驗證碼          … login.vue
+② client.loginWithOtp(email, otp)           → login_acc_ token
+                                              + organizations[]   … login.vue
+③ selectOrganization(organizationId)        → acc_ token          … organization.vue
+```
+
+第 ② 步**一次回傳 token 與組織清單**，不需再呼叫 `organizations.list()`。
+
+**決策：第 ③ 步一律顯示選擇畫面，即使 `organizations[]` 只有一筆。**
+
+理由：
+- 客服看得到自己正要以哪個組織身分進入系統 —— 之後所有 JOIN、回覆、稽核軌跡都掛在這個身分上，
+  靜默替他選會讓誤入錯組織的情況難以察覺
+- 未來支援跨組織切換時不必補一個新流程
+- 單筆時的畫面成本極低（一張卡片 + 一顆按鈕），不值得為此寫兩條分支
+
+`organization.vue` 是獨立路由而非 `login.vue` 的第三個步驟，
+因為此時 `login_acc_` token 已存在 BFF session，重新整理頁面不該把使用者踢回輸 email。
+
+#### ② 必須用 `client.*` 便利方法，不可用 `client.auth.*`
+
+| ❌ 底層方法 | ✅ 便利方法 | 為何 |
+|---|---|---|
+| `auth.authenticate()` | `client.loginWithOtp()` | 前者**只回傳資料、不保存 token**，後續呼叫等於未認證，會 401 |
+| `auth.exchangeAccessToken()` | `client.selectOrganization()` | 前者要求請求本身帶 `x-organization-id`；後者會先 `setOrganizationId` 再呼叫 |
+
+#### ③ `selectOrganization()` 會丟棄 `refresh_token`
+
+便利方法只保留 `token`。若要讓客服在 8 小時 session 內不被迫重跑 OTP，
+`organization.post.ts` 必須改走手動流程：先 `setOrganizationId`，
+再自行呼叫 exchange 端點並把 `refresh_token` 一起存進 session。
+
+實作範本見 `scripts/spike/00-auth.ts`。
+
+> **三者的共同後果**：登入是唯一「不照著寫就整個系統起不來」的環節，
+> 且錯誤形態是 401 而非明確報錯，很難從症狀反推。M0 應優先把這段跑通並寫成整合測試。
 
 ---
 
@@ -402,6 +448,9 @@ iMBrace 的 OTP 登入是三段式（✅ 已實測跑通）：
 > - 第 ③ 步回傳 `refresh_token` → **token 可續期**，客服不會在工作中被迫重跑 OTP
 > - `organizations.list()` 僅 access token 可呼叫，API Key 會 401
 >   → 印證「以客服個人 token 執行」的設計是對的
+
+> **UI 對應**：第 ①② 步在 `login.vue`，第 ③ 步在獨立的 `organization.vue`，
+> **一律顯示選擇畫面**（即使只有一個組織）。理由見 §5.1 ①。
 
 **全部在 Nitro 執行**，瀏覽器只拿到一個 session cookie。
 
@@ -1429,7 +1478,9 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 - `StateStore` / `EventBus` 介面 + 記憶體實作（**API 全 async**）
 
 **驗收**
-- [ ] 能以 OTP 登入並選擇組織
+- [ ] 能以 OTP 登入並選擇組織（**選擇畫面一律出現**，即使只有一個組織）
+- [ ] 重新整理 `organization.vue` 不會被踢回輸 email 的步驟
+- [ ] session 中確實存有 `refresh_token`（見 §5.1 ③）
 - [ ] 能列出對話清單
 - [ ] access token 不出現在任何前端資源或網路回應中
 
