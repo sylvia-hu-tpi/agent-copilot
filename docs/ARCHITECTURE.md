@@ -848,14 +848,32 @@ type PresenceState = 'viewing' | 'composing' | 'joined'
 它同時出現在清單 payload 中，因此**一次清單輪詢就能得知所有對話有沒有真人在處理**，
 成本為零（§9.3.1 的第一層本來就要跑）。
 
-> ⚠️ **判定條件是 `mode !== 'automation'`，不是 `mode === 'manual'`。**
-> 平台有三種模式（§10.6），JOIN 後客服可自行切到 **Hybrid Mode**，
-> 此時他人**仍在對話中**但 `mode` 已不是 `manual`。
-> 寫成 `=== 'manual'` 會讓切到 Hybrid 的同事從 presence 中消失 ——
-> 而 Hybrid 恰恰是撞單最可能發生的模式，漏判的代價最高。
->
-> ⚠️ `null`（未 JOIN）與 `automation`（無人）都代表「沒有真人」，
-> 但 Hybrid 的實際 API 值**尚未實測**，實作前必須確認（§10.6 末）。
+#### `mode` 到底回答了哪個問題（2026-08-25 二次實測定案）
+
+四個值全部實測到，且**確認出現在清單 payload**（12 筆中 6 筆有值：`automation`×5、`manual`×1）：
+
+| `mode` | 實測時的 `is_joined` | 意義 | **有沒有「我以外的人」能送出訊息** |
+|---|---|---|---|
+| `null` | — | 從未 JOIN | ❌ 沒有 |
+| `manual` | `true` | 有人 JOIN，AI 關閉 | ✅ **有** |
+| `hybrid` | `true` | 有人 JOIN，AI 同時開著 | ✅ **有**（且 AI 也會送） |
+| `automation` | **`true` 或 `false` 都可能** | 要嘛沒人，**要嘛有人但選了 Automation Only（唯讀）** | ❌ 沒有 |
+
+> ⚠️ **`automation` 是有歧義的** —— 實測 01:02 切到 Automation Only 時，
+> `is_joined` 仍是 `true`（人還在，只是變成唯讀），mode 卻已是 `automation`，
+> 與「根本沒人」完全無法區分。
+
+**但這個歧義對我們無害，因為 `mode` 回答的不是「有沒有人在」，而是「有沒有人能送出訊息」** ——
+Automation Only 的同事**送不出訊息**，撞不了單。而撞單防護要的正是後者。
+
+```ts
+// 正確的判定：是否有他人可能送出訊息
+const someoneElseCanSend = mode === 'manual' || mode === 'hybrid'
+```
+
+> ⚠️ 因此 ③ 的能力要誠實描述為「**偵測可能撞單的對象**」，而非「presence」。
+> 用 Automation Only 純觀察的同事在我方畫面上看不到 —— 這是已知且可接受的缺口，
+> 因為他造不成撞單。**但 UI 文案不可寫成「目前沒有其他人在看」**，那是超出資料能支持的宣稱。
 
 **這補上了 §10.2 原本最痛的盲區** —— 「同事在官方介面 JOIN 但尚未發言」。
 修訂後的來源表：
@@ -864,7 +882,7 @@ type PresenceState = 'viewing' | 'composing' | 'joined'
 |---|---|---|---|---|
 | ① | 自家 SSE 上報 | 只涵蓋我方使用者 | < 200ms | ✅ 可 |
 | ② | 訊息 `u_` 前綴反推 | 官方介面的同事 | 一個輪詢週期 | ✅ 可（但只在發言後） |
-| ③ | 🆕 **`mode !== 'automation'`** | **全涵蓋** | 一個清單輪詢週期 | ❌ **只知道「有人」，不知道是誰** |
+| ③ | 🆕 **`mode ∈ {manual, hybrid}`** | 涵蓋所有「能送出訊息」的人 | 一個清單輪詢週期 | ❌ **只知道「有人能送」，不知道是誰** |
 | ④ | JOIN/LEAVE webhook | 全涵蓋 | 即時 | 待規格（M4） |
 
 > ⚠️ **③ 只能回答「有沒有人」，不能回答「是誰」。** UI 必須誠實呈現這個差別，
@@ -1017,9 +1035,23 @@ t=30s    送出
 | **Automation Only** | Replies automatically, you can only view | ✓ | **✗（唯讀）** |
 | **Hybrid Mode** | Replies automatically, and you can also send messages | ✓ | ✓ |
 
-**API 對應**：`conversations.get()` 與清單 payload 的 `mode` 欄位。
-實測值：未 JOIN 時 `null`；JOIN 後 `manual`；LEAVE 後 `automation`。
-⚠️ **Hybrid 的 API 值尚未實測**（見本節末的待確認事項）。
+**API 對應**：`conversations.get()` 與**清單 payload** 的 `mode` 欄位，四個值皆已實測：
+
+| 官方介面 | API `mode` |
+|---|---|
+| （未 JOIN） | `null` |
+| Manual Mode | `manual` |
+| Hybrid Mode | `hybrid` |
+| Automation Only | `automation` |
+
+LEAVE 後回到 `automation`（與「有人但選 Automation Only」同值，見 §10.2 的歧義說明）。
+
+> ⚠️ **`mode` 是對話層級的共用狀態，不是每個客服各自的偏好。**
+> 任一位客服切換模式，其他所有人（含我方）都會跟著改變。
+> 兩個後果必須在實作時處理：
+> ① 我方 Composer **不可快取 mode**，必須跟著輪詢更新；
+> ② 同事把模式切成 Automation Only 時，**我方的 Composer 也會被停用** ——
+> 這不是 bug，但畫面必須說清楚原因，否則客服會以為系統壞了。
 
 #### 資料模型：兩個正交維度 —— 原判定正確，且維度已確知
 
