@@ -2,30 +2,50 @@
 /**
  * 工作區外框 —— docs/ARCHITECTURE.md §14.1。
  *
- * M0 只有頂欄 + 內容區。側欄與三欄工作區於 M1 加入
- * （對應設計稿 artboard 1c/1d，規格尚未取得）。
+ * ⚠️ `min-h-0` 這一串不是裝飾。三欄工作區的訊息流要在自己的容器內捲動，
+ *    少了它 flex 子項的預設 `min-height: auto` 會讓內容把整頁撐高，
+ *    虛擬滾動就完全失效（畫面看起來正常，但每則訊息都被渲染了）。
  */
 
 const auth = useAuthStore()
+const stream = useStreamStore()
 
 async function logout() {
+  stream.disconnect()
   await auth.logout()
   await navigateTo('/login')
 }
+
+const statusLabel = computed(() => {
+  if (stream.status === 'open') return null
+  if (stream.status === 'reconnecting') return 'stream.reconnecting'
+  if (stream.status === 'connecting') return 'stream.connecting'
+  return null
+})
 </script>
 
 <template>
-  <div class="flex min-h-dvh flex-col">
+  <div class="flex h-dvh flex-col overflow-hidden">
     <header
-      class="flex items-center gap-3 border-b px-4 py-2.5"
+      class="flex shrink-0 items-center gap-3 border-b px-4 py-2.5"
       :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
     >
-      <span class="ac-eyebrow">AGENTCOPILOT</span>
+      <NuxtLink to="/" class="ac-eyebrow transition-opacity hover:opacity-70">AGENTCOPILOT</NuxtLink>
       <span
         v-if="auth.me?.orgName"
         class="truncate text-[12.5px]"
         :style="{ color: 'var(--text-2)' }"
       >{{ auth.me.orgName }}</span>
+
+      <!-- 連線狀態：只在不正常時才出現，正常時不佔視覺注意力 -->
+      <span
+        v-if="statusLabel"
+        class="flex items-center gap-1.5 text-[11px]"
+        :style="{ color: 'var(--text-3)' }"
+      >
+        <UIcon name="i-lucide-loader-circle" class="size-3 animate-spin" />
+        {{ $t(statusLabel) }}
+      </span>
 
       <div class="ml-auto flex items-center gap-3">
         <span class="truncate text-[12.5px]" :style="{ color: 'var(--text-2)' }">
