@@ -44,6 +44,8 @@ export interface MockGateway {
    * §10.4 的撞單檢查沒有這個就測不出來。
    */
   pushMessage(from: string, text: string): { id: string }
+  /** 目前對話裡的訊息則數 —— 「斷線期間漏了幾則」的基準 */
+  messageCount(): number
   /** 目前的服務模式（JOIN／切換後會變）*/
   currentMode(): string | null
   /** 已送出的訊息（驗證送出路徑真的打到平台）*/
@@ -70,6 +72,16 @@ const DEFAULT_ORGS = [
   { organization_id: 'org_b', display_name: '客服二部', role: 'member', is_admin: false },
 ]
 
+/**
+ * email → 客服身分。與下方 `users[]` 團隊名冊一致 ——
+ * 名冊裡沒有的人，撞單提示就查不到名字（那條路徑也需要測得到）。
+ */
+const OPERATORS: Record<string, { id: string, name: string }> = {
+  'agent@example.com': { id: 'u_test_operator', name: '測試客服' },
+  'other@example.com': { id: 'u_other', name: '李小華' },
+  default: { id: 'u_test_operator', name: '測試客服' },
+}
+
 /** 探測用對話。⚠️ 三種識別碼刻意設成互相對得起來但字串不同（§9.3）*/
 const CONV_BARE = '68e39cf1-68df-47a0-9e68-6e19c72eff8a'
 const CONV_PREFIXED = `conv_${CONV_BARE}`
@@ -84,11 +96,25 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
   let seq = 0
   const sent: Array<Record<string, unknown>> = []
 
+  /**
+   * ⚠️ `updated_at` 只在「真的有事發生」時才推進。
+   *
+   * 寫成每次回應都給 `new Date()` 會讓第一層清單輪詢（§9.3.1）**每一拍都看到變動**，
+   * 於是 `hasNewMessages` 是否正確就再也測不出來 ——
+   * 少發 `poke()` 的 bug 會被這個永遠為真的 `touched` 掩蓋過去。
+   */
+  let updatedAt = new Date(Date.UTC(2026, 7, 25, 0, 0, 0)).toISOString()
+  let touchSeq = 0
+  function touch(): void {
+    updatedAt = new Date(Date.UTC(2026, 7, 25, 1, ++touchSeq, 0)).toISOString()
+  }
+
   /** ⚠️ 由舊到新存放，回應時才反轉 —— 平台實測是由新到舊回傳 */
   const messages: Array<Record<string, unknown>> = []
 
   function addMessage(from: string, text: string): { id: string } {
     const id = `msg_${++seq}`
+    touch()
     messages.push({
       id,
       conversation_id: CONV_PREFIXED,
@@ -130,10 +156,15 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
       }
 
       if (path.endsWith('/login/authenticate')) {
+        // ⚠️ 依 email 給不同的 user_id —— 「兩位客服」的情境沒有這個就測不出來：
+        //    兩條 session 若共用同一個 operatorId，presence 的自我排除、
+        //    撞單的 sameOperator 過濾都會被測成「正確」而實際上分不出人。
+        const email = String((requests.at(-1)?.body as { email?: string } | undefined)?.email ?? '')
+        const who = OPERATORS[email] ?? OPERATORS.default!
         return send(200, {
           ...(opts.omitLoginToken ? {} : { accessToken: 'login_acc_TESTTOKEN' }),
-          user_id: 'u_test_operator',
-          display_name: '測試客服',
+          user_id: who.id,
+          display_name: who.name,
           organizations: opts.organizations ?? DEFAULT_ORGS,
         })
       }
@@ -157,7 +188,7 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
             // ⚠️ 清單 payload 的 users 實測為 null
             users: null,
             last_message_at: messages.at(-1)?.created_at,
-            updated_at: new Date().toISOString(),
+            updated_at: updatedAt,
           }],
         })
       }
@@ -188,7 +219,7 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
             { id: 'u_other', display_name: '李小華', is_bot: false },
             { id: 'u_bot', display_name: 'Bot', is_bot: true },
           ],
-          updated_at: new Date().toISOString(),
+          updated_at: updatedAt,
         })
       }
 
@@ -196,12 +227,14 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
       if (path.includes('/team_conversations/_join')) {
         const body = (requests.at(-1)?.body ?? {}) as { mode?: string }
         mode = body.mode ?? 'manual'
+        touch()
         return send(200, { success: true })
       }
 
       if (path.includes('/team_conversations/_leave')) {
         // ⚠️ LEAVE 後回到 automation —— 與「有人但選 Automation Only」同值
         mode = 'automation'
+        touch()
         return send(200, { success: true })
       }
 
@@ -246,6 +279,7 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
     requests,
     lastRequestTo: (suffix: string) => [...requests].reverse().find(r => r.path.endsWith(suffix)),
     pushMessage: addMessage,
+    messageCount: () => messages.length,
     currentMode: () => mode,
     sentMessages: () => sent,
     close: () => new Promise<void>((resolve, reject) => {
