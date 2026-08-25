@@ -10,7 +10,7 @@ import { readBffSession } from '../../utils/session.js'
 
 export default defineEventHandler(async (event): Promise<MeResponse> => {
   const session = await readBffSession(event)
-  if (!session) throw createError({ statusCode: 401, statusMessage: '尚未登入' })
+  if (!session) throw createError({ statusCode: 401, message: '尚未登入' })
 
   if (session.stage === 'pending_org') {
     return {

@@ -10,6 +10,7 @@ import { toConversation, unwrapPaged } from '../../sources/mappers.js'
 import { resolveBusinessUnitId } from '../../services/business-unit.js'
 import { imbraceClientFor } from '../../utils/imbrace-client.js'
 import { requireActiveBffSession } from '../../utils/session.js'
+import { getQueryAs } from '../../utils/validate.js'
 
 const Query = z.object({
   q: z.string().trim().default(''),
@@ -18,7 +19,7 @@ const Query = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  const { q, limit, skip } = Query.parse(getQuery(event))
+  const { q, limit, skip } = getQueryAs(event, Query)
   const session = await requireActiveBffSession(event)
 
   const client = imbraceClientFor(session)

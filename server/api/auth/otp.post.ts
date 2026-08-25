@@ -2,13 +2,14 @@
 
 import { z } from 'zod'
 import { anonymousImbraceClient } from '../../utils/imbrace-client.js'
+import { readBodyAs } from '../../utils/validate.js'
 
 const Body = z.object({
   email: z.string().trim().email('請輸入有效的 email'),
 })
 
 export default defineEventHandler(async (event) => {
-  const { email } = Body.parse(await readBody(event))
+  const { email } = await readBodyAs(event, Body)
 
   await anonymousImbraceClient().requestOtp(email)
 

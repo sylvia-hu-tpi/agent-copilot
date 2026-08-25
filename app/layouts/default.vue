@@ -1,15 +1,14 @@
 <script setup lang="ts">
-/** 登入／選組織頁的外框（未進工作區前）—— docs/ARCHITECTURE.md §5 */
-const { public: pub } = useRuntimeConfig()
+/**
+ * 登入／選組織頁的外框（未進工作區前）—— docs/ARCHITECTURE.md §5。
+ *
+ * 刻意不放任何標題或品牌列：artboard 1a/1b 的卡片本身就帶 header row，
+ * 外框只負責置中與頁面底色。
+ */
 </script>
 
 <template>
-  <div class="min-h-dvh flex flex-col items-center justify-center bg-default px-4">
-    <main class="w-full max-w-sm">
-      <h1 class="mb-6 text-center text-xl font-semibold text-highlighted">
-        {{ pub.appName }}
-      </h1>
-      <slot />
-    </main>
+  <div class="flex min-h-dvh items-center justify-center px-4 py-10">
+    <slot />
   </div>
 </template>

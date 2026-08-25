@@ -11,6 +11,7 @@ import { z } from 'zod'
 import { loginWithOtp } from '../../services/imbrace.js'
 import { anonymousImbraceClient } from '../../utils/imbrace-client.js'
 import { SESSION_TTL_MS, startBffSession } from '../../utils/session.js'
+import { readBodyAs } from '../../utils/validate.js'
 
 const Body = z.object({
   email: z.string().trim().email('請輸入有效的 email'),
@@ -18,7 +19,7 @@ const Body = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  const { email, otp } = Body.parse(await readBody(event))
+  const { email, otp } = await readBodyAs(event, Body)
 
   const result = await loginWithOtp(anonymousImbraceClient(), email, otp)
 

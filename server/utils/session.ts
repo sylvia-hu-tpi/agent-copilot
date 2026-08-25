@@ -29,7 +29,7 @@ function secret(): string {
     // 且在多副本下每個副本簽章不同 —— 症狀是「隨機被登出」，極難追查。
     throw createError({
       statusCode: 500,
-      statusMessage: '缺少 NUXT_SESSION_SECRET（見 .env.example）',
+      message: '缺少 NUXT_SESSION_SECRET（見 .env.example）',
     })
   }
   return s
@@ -62,7 +62,7 @@ export async function startBffSession(event: H3Event, session: Session): Promise
 /** 覆寫既有 session 內容（第 ③ 步 pending_org → active），同時延長滑動視窗 */
 export async function saveBffSession(event: H3Event, session: Session): Promise<void> {
   const id = unsignValue(getCookie(event, SESSION_COOKIE))
-  if (!id) throw createError({ statusCode: 401, statusMessage: 'session 不存在或已過期' })
+  if (!id) throw createError({ statusCode: 401, message: 'session 不存在或已過期' })
   await useStateStore().setSession(id, { ...session, expiresAt: Date.now() + SESSION_TTL_MS })
   setSessionCookie(event, id)
 }
@@ -88,9 +88,9 @@ export async function readBffSession(event: H3Event): Promise<Session | null> {
 /** 取得已選定組織的 session；否則丟 401。業務 API 一律用這支。 */
 export async function requireActiveBffSession(event: H3Event): Promise<ActiveSession> {
   const session = await readBffSession(event)
-  if (!session) throw createError({ statusCode: 401, statusMessage: '尚未登入' })
+  if (!session) throw createError({ statusCode: 401, message: '尚未登入' })
   if (session.stage !== 'active') {
-    throw createError({ statusCode: 401, statusMessage: '尚未選擇組織' })
+    throw createError({ statusCode: 401, message: '尚未選擇組織' })
   }
   return session
 }
@@ -98,9 +98,9 @@ export async function requireActiveBffSession(event: H3Event): Promise<ActiveSes
 /** 取得登入中（尚未選組織）的 session；否則丟 401。organization.post.ts 用。 */
 export async function requirePendingBffSession(event: H3Event) {
   const session = await readBffSession(event)
-  if (!session) throw createError({ statusCode: 401, statusMessage: '尚未登入' })
+  if (!session) throw createError({ statusCode: 401, message: '尚未登入' })
   if (session.stage !== 'pending_org') {
-    throw createError({ statusCode: 409, statusMessage: '此 session 已選定組織' })
+    throw createError({ statusCode: 409, message: '此 session 已選定組織' })
   }
   return session
 }

@@ -10,20 +10,21 @@ import { z } from 'zod'
 import { exchangeOrganizationToken } from '../../services/imbrace.js'
 import { loginTokenImbraceClient } from '../../utils/imbrace-client.js'
 import { requirePendingBffSession, saveBffSession, SESSION_TTL_MS } from '../../utils/session.js'
+import { readBodyAs } from '../../utils/validate.js'
 
 const Body = z.object({
   organizationId: z.string().trim().min(1, '請選擇組織'),
 })
 
 export default defineEventHandler(async (event) => {
-  const { organizationId } = Body.parse(await readBody(event))
+  const { organizationId } = await readBodyAs(event, Body)
   const pending = await requirePendingBffSession(event)
 
   // ⚠️ 只允許 ② 回傳的組織 —— 那份清單是「membership-scoped，每一筆都可 exchange」。
   //    不驗證的話，任何人都能拿別的組織 id 來試 exchange。
   const chosen = pending.organizations.find(o => o.id === organizationId)
   if (!chosen) {
-    throw createError({ statusCode: 403, statusMessage: '此帳號不屬於該組織' })
+    throw createError({ statusCode: 403, message: '此帳號不屬於該組織' })
   }
 
   const { accessToken, refreshToken } = await exchangeOrganizationToken(

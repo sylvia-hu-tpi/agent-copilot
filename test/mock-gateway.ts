@@ -86,6 +86,25 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
         })
       }
 
+      // channel-service：conversations.search 需要 bu id，bu id 由 channel.list 推導
+      if (path.includes('/channel-service/v1/channels')) {
+        return send(200, { data: [{ id: 'ch_1', bu_id: 'bu_test', name: 'LINE' }] })
+      }
+
+      if (path.includes('/team_conversations/_search')) {
+        return send(200, {
+          data: [{
+            id: 'conv_1',
+            channel_type: 'line',
+            contact_id: 'con_1',
+            status: 'open',
+            name: 'TWN#GW4772',
+            users: [],
+            timestamp: '2026-08-25T00:00:00.000Z',
+          }],
+        })
+      }
+
       if (path.endsWith('/access/_exchange_access_token')) {
         return send(200, {
           token: 'acc_TESTTOKEN',

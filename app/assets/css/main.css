@@ -2,6 +2,220 @@
 @import "@nuxt/ui";
 
 /*
- * 設計基調見 docs/ARCHITECTURE.md §14.3。
- * 主題 token 待 M1 UI 收斂後再集中定義於此。
+ * 設計 token —— 來源為 Claude Design 畫布（artboard 1a/1b），
+ * 對應 docs/ARCHITECTURE.md §14.3 設計基調。
+ *
+ * ⚠️ 為何用 CSS 變數而非 Nuxt UI 的語意 token（bg-default / text-muted…）：
+ *    那組是為中性灰階 UI 設計的，本專案是一套自訂 navy 品牌色階，
+ *    硬套會讓顏色跑掉。這裡的 --surface / --border / --text-* 是「結構性色階」，
+ *    在 Nuxt UI 中沒有對應概念，直接以變數形式提供給元件使用。
+ *
+ * ⚠️ 深色模式的選擇器是 `.dark` 而非設計稿的 `[data-theme="dark"]` ——
+ *    @nuxtjs/color-mode（由 @nuxt/ui 內建）切換的是 class，
+ *    Nuxt UI 元件自身也依賴 .dark。兩套並存會讓元件與自訂區塊不同步。
  */
+
+:root {
+  --bg: #f3f4f6;
+  --surface: #ffffff;
+  --surface-2: #f8f9fb;
+  --surface-3: #eef0f4;
+
+  --border: #e2e5ea;
+  --border-strong: #cfd4dc;
+  --border-dash: #c7ccd6;
+
+  --text: #1b2230;
+  --text-2: #596274;
+  --text-3: #8b93a3;
+
+  --navy: #1b3a6b;
+  --navy-2: #274d88;
+  --navy-fg: #ffffff;
+  --navy-soft: #eaeff7;
+  --navy-soft-bd: #cbd8ea;
+
+  --active: #17845c;
+  --active-bg: #e7f5ef;
+  --open: #a3700a;
+  --open-bg: #fbf2df;
+
+  --ai: #5348a8;
+  --ai-bg: #f2f1fb;
+  --ai-bd: #d9d6f0;
+
+  --agent-bg: #e9eff8;
+  --agent-bd: #c9d7ea;
+
+  --warn: #a24a06;
+  --warn-bg: #fdf1e3;
+  --warn-bd: #eec69b;
+
+  --skel: #e7e9ee;
+  --skel-hi: #f2f3f7;
+
+  --shadow: 0 1px 2px rgba(16, 24, 40, .05);
+
+  --font-ui: 'Noto Sans TC', 'Helvetica Neue', Helvetica, sans-serif;
+  /* 代號、ID、驗證碼、倒數計時一律等寬 —— 這些是要逐字核對的東西 */
+  --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.dark {
+  --bg: #101319;
+  --surface: #181c23;
+  --surface-2: #1e232c;
+  --surface-3: #252b35;
+
+  --border: #2a303a;
+  --border-strong: #3a4250;
+  --border-dash: #414a58;
+
+  --text: #e5e8ee;
+  --text-2: #9fa8b8;
+  --text-3: #6f7889;
+
+  --navy: #2e5896;
+  --navy-2: #3a6cb4;
+  --navy-fg: #eef4fc;
+  --navy-soft: #1c2635;
+  --navy-soft-bd: #2c3d57;
+
+  --active: #3cbb8c;
+  --active-bg: #14251f;
+  --open: #d8a340;
+  --open-bg: #271f12;
+
+  --ai: #a79cf2;
+  --ai-bg: #1d1e2e;
+  --ai-bd: #343559;
+
+  --agent-bg: #1b2433;
+  --agent-bd: #2b384c;
+
+  --warn: #e2a469;
+  --warn-bg: #2a2015;
+  --warn-bd: #553f22;
+
+  --skel: #232833;
+  --skel-hi: #2c323d;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3);
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+}
+
+/* ── 共用元件樣式 ──────────────────────────────────────────────────── */
+
+.ac-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+
+/* Eyebrow 徽章：AGENTCOPILOT / 選擇組織 / 載入中 / 無組織 */
+.ac-eyebrow {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  color: var(--text-3);
+}
+
+.ac-mono {
+  font-family: var(--font-mono);
+}
+
+.ac-title {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ac-subtitle {
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+
+.ac-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-2);
+}
+
+.ac-status-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  color: var(--text-3);
+}
+
+.ac-input {
+  height: 40px;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 13.5px;
+}
+
+.ac-input:focus {
+  outline: none;
+  border-color: var(--navy-2);
+  background: var(--surface);
+}
+
+.ac-btn-primary {
+  height: 40px;
+  border-radius: 8px;
+  background: var(--navy);
+  color: var(--navy-fg);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+
+.ac-btn-primary:hover:not(:disabled) {
+  background: var(--navy-2);
+}
+
+.ac-btn-primary:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+.ac-alert-warn {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-bd);
+  color: var(--warn);
+  border-radius: 8px;
+  font-size: 12px;
+}
+
+/* 骨架屏 shimmer —— 1b 載入中狀態 */
+.ac-skel {
+  background: var(--skel);
+  border-radius: 6px;
+}
+
+.ac-skel-shimmer {
+  background: linear-gradient(90deg, var(--skel) 25%, var(--skel-hi) 37%, var(--skel) 63%);
+  background-size: 400% 100%;
+  animation: ac-shimmer 1.4s ease-in-out infinite;
+}
+
+@keyframes ac-shimmer {
+  0% { background-position: 100% 50%; }
+  100% { background-position: 0 50%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ac-skel-shimmer {
+    animation: none;
+  }
+}
