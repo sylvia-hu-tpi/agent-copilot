@@ -64,7 +64,7 @@ function focusBox(i: number) {
 
 function onDigitInput(i: number, event: Event) {
   const input = event.target as HTMLInputElement
-  const value = input.value.replace(/\D/g, '')
+  const value = input.value.toUpperCase().replace(/[^0-9A-Z]/g, '')
 
   if (value.length > 1) {
     // 貼上整串驗證碼時，從目前這一格開始逐格填入
@@ -96,7 +96,7 @@ function onKeydown(i: number, event: KeyboardEvent) {
 }
 
 function onPaste(i: number, event: ClipboardEvent) {
-  const text = event.clipboardData?.getData('text')?.replace(/\D/g, '')
+  const text = event.clipboardData?.getData('text')?.toUpperCase().replace(/[^0-9A-Z]/g, '')
   if (!text) return
   event.preventDefault()
   fill(text, i)
@@ -253,7 +253,7 @@ function backToEmail() {
 
       <h1 class="ac-title">輸入驗證碼</h1>
       <p class="ac-subtitle mt-2">
-        已寄送至 <span class="ac-mono">{{ maskedEmail }}</span>，10 分鐘內有效。
+        已寄送至 <span class="ac-mono">{{ maskedEmail }}</span>，15 分鐘內有效。
       </p>
 
       <div class="mt-6 flex justify-between gap-2">
@@ -263,8 +263,10 @@ function backToEmail() {
           :ref="el => { if (el) boxes[i] = el as HTMLInputElement }"
           :value="digits[i]"
           type="text"
-          inputmode="numeric"
+          inputmode="text"
           autocomplete="one-time-code"
+          autocapitalize="characters"
+          spellcheck="false"
           maxlength="1"
           :aria-label="`驗證碼第 ${i + 1} 碼`"
           class="size-14 rounded-[9px] border text-center font-[var(--font-mono)] text-[22px] outline-none transition-colors"
