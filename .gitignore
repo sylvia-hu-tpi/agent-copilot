@@ -13,3 +13,6 @@ scripts/spike/out/
 
 # codegraph
 .codegraph/
+
+# 會議草擬文件
+docs/meeting-draft/
