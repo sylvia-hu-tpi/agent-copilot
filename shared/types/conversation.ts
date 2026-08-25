@@ -44,12 +44,35 @@ export interface Operator {
   name: string
 }
 
+/**
+ * 對話的服務模式 —— 對應官方介面 Composer 上方的下拉選單（§10.6）。
+ *
+ * ⚠️ 這是**對話層級的共用狀態**，不是每位客服各自的偏好。
+ *    任一位客服切換，其他所有人（含我方）都會跟著改變。
+ */
+export type ConversationMode = 'manual' | 'hybrid' | 'automation'
+
 export interface Conversation {
+  /** 對話 id（裸 UUID）。訊息查詢用這個 */
   id: string
+  /**
+   * team_conversation 記錄的 id（`tcu_` 前綴）。
+   *
+   * ⚠️ JOIN / LEAVE / 切換 mode **都必須用這個**，不能用 `id`（§10.6）。
+   * ⚠️ 只有 `conversations.get()` 會回傳，**清單 payload 沒有** ——
+   *    因此從對話列表要 JOIN 之前，必須先取一次詳情。
+   */
+  teamConversationId?: string
   channel: string
   contactId: string
   status: string
   name: string
+  /**
+   * `null` 代表從未 JOIN。
+   * ⚠️ `automation` 有歧義：可能沒人，也可能有人但選了 Automation Only（唯讀）。
+   *    判定「是否有他人可能送出訊息」請用 `manual | hybrid`，見 §10.2。
+   */
+  mode?: ConversationMode | null
   /** 當前在此對話中的 operator 清單 —— presence 與 JOIN/LEAVE 推斷的依據 */
   operators: Operator[]
   updatedAt: string

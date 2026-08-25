@@ -1094,21 +1094,43 @@ export interface ConversationControl {
 4. **mode 可能隨時被改變**（客服自己改、或從官方介面改），
    因此它是輪詢要偵測的一級狀態 —— §9.3.1 的清單輪詢已涵蓋（`updated_at` 會跳動）。
 
-#### ⚠️ 待確認：我方能不能「設定」mode
+#### ✅ 寫入方式已確認：切換模式與 JOIN 是同一支端點
 
-**SDK 沒有任何設定 mode 的端點** —— 手寫 resource 與 generated API 全域搜尋皆無
-（`conversations` 只有 `join` / `leave` / `updateStatus` / `updateName` /
-`assignTeamMember` / `removeTeamMember`）。
+2026-08-25 由官方介面的網路請求實測取得：
 
-因此目前只能**讀**不能**寫**。這有兩種後果，取決於 iMBrace 的回覆：
+```
+POST /channel-service/v1/team_conversations/_join
+{ "team_conversation_id": "tcu_042cae1b-…", "mode": "hybrid" }
+```
 
-- **若有未公開的端點** → Composer 的模式選單可與官方介面完全對等
-- **若真的沒有** → 我方的模式選單只能是**唯讀指示器**，並提示「請至 iMBrace 官方介面切換」。
-  ⚠️ 這同時代表「切換為全真人模式」這顆按鈕**做不出來**，
-  上表主管接管的 `aiReplies = false` 也無法由我方寫入 —— §10.6 的主管接管設計會受影響。
+**這正是 SDK `conversations.join()` 打的端點** —— 先前判定「SDK 無法設定 mode」是錯的，
+它一直都做得到，只是 SDK 的型別沒有把 `mode` 宣告出來（靠索引簽章傳入即可）。
 
-**已列為對 iMBrace 的追問（H-1 改寫）。** 原本 H-1 問的是「單一對話的 AI 暫停 API」，
-現在知道平台已有這個概念（mode），問題精確化為「mode 的寫入端點與 Hybrid 的 API 值」。
+因此：
+
+- **JOIN** = 這支端點帶 `mode: 'manual'`（官方介面按 JOIN 的預設值）
+- **切換模式** = 對已 JOIN 的對話**再打一次同一支端點**，換不同的 mode
+- 兩者不是兩個動作，是同一個動作的不同參數
+
+實作見 `server/services/imbrace.ts` 的 `joinConversation()` / `setConversationMode()` /
+`leaveConversation()`。
+
+> ### ⚠️ 兩個不照著寫就會失敗的地方
+>
+> **① 識別碼必須是 `tcu_` 開頭的 team_conversation id，不是對話 id。**
+> 兩者都是 UUID 形狀，傳錯不會有型別錯誤，而平台對錯誤的 id 可能只是靜默不作用 ——
+> 症狀是「按了 JOIN 但沒反應」。ACL 的 `assertTeamConversationId()` 會當場擋下。
+>
+> **② `tcu_` id 只有 `conversations.get()` 會回傳，清單 payload 沒有。**
+> 因此「從對話列表按 JOIN」必須先取一次詳情才拿得到識別碼。
+> 這是 M1 實作對話列表時要預先安排的一次額外請求。
+>
+> **③ SDK 型別把 `conversation_id` 宣告成必填，但實際 API 只要
+> `{ team_conversation_id, mode }`。** 此不一致已由 ACL 的 `joinBody()` 單點吸收。
+
+> ⚠️ **切換 mode 會影響該對話的所有人**，包含正在官方介面工作的同事。
+> 這不是本地偏好設定，UI 上必須讓客服意識到這一點 ——
+> 尤其切到 `automation` 會讓所有人的 Composer 都變成唯讀。
 
 #### 這個鎖的邊界（必須誠實標示）
 
@@ -1884,14 +1906,14 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 20 | 🆕 **AI 回應延遲 5～12 秒** | 🔵 **已確認（新增）** | 右欄若等全部算完才渲染，客服會以為當掉 | 實測中位數 **5.0s**、最慢 **12.2s**、首字 **2.2s**。**M2 必須做漸進顯示**：骨架先出，摘要／情緒／建議卡各自獨立載入，建議卡串流逐字顯示，並提供「重新產生」入口（因 #19 品質不穩） |
 | 21 | 🆕 **客戶資料幾乎是空的** | 🟡 **已確認（新增）** | demo 右欄的「客戶資訊卡」無內容可顯示 | 實測 19 筆 Contact：`display_name` 100% 但值是 `TWN#UK2594` 這類代號；`email`／`phone_number`／`company_name`／`birthday`／`location` **填充率皆為 0%**；`avatar_url` 僅 21%。**待決策**：改從 CRM board 關聯取得（`contact` 帶 `board_id`／`board_item_id`），或此區塊 MVP 先拿掉 |
 | 22 | ~~**`messages.list()` 無 `conversation_id` 也無 `since`**~~ | ✅ **已解除（不再阻塞 M1）** | ~~§9 整套輪詢策略的地基~~ | 原判「三種策略皆不可行」是**量測錯誤**：`precisionOf()` 以字串相等比對，而對話清單給裸 UUID、訊息帶 `conv_` 前綴，於是「取回 70 則全部正確的訊息」被算成 precision 0%。修正後 `raw-conversation-id` **precision 100%**，且不帶 `conversation_id` 會 400（代表過濾強制且真實）。`since` 類參數確實不支援（八種全被忽略），但訊息**由新到舊排序**，`limit=N` 直接就是最新 N 則 → §9.3 的緩解措施成本遠低於原本設想的最壞情況。詳見 §9.3 的識別碼說明 |
-| 23 | 🆕 **無法由 API 設定對話 mode** | 🔴 **已確認（新增）** | 「切換為全真人模式」與主管接管的 `aiReplies=false` 可能都做不出來 | SDK 手寫 resource 與 generated API **全域搜尋皆無** mode 寫入端點；`conversations` 只有 `join`／`leave`／`updateStatus`／`updateName`／`assignTeamMember`／`removeTeamMember`。若確實沒有，我方的模式選單只能是**唯讀指示器**並提示「請至官方介面切換」，§10.6 主管接管設計需重新評估。已列為對 iMBrace 的追問（H-1 改寫） |
+| 23 | ~~**無法由 API 設定對話 mode**~~ | ✅ **已解除（同日內翻案）** | ~~「切換為全真人模式」與主管接管可能做不出來~~ | 原判「SDK 無 mode 寫入端點」**是錯的**。由官方介面網路請求實測：`POST /v1/team_conversations/_join` body `{team_conversation_id, mode}` —— **切換模式與 JOIN 是同一支端點**，而 SDK `conversations.join()` 打的正是它，只是型別未宣告 `mode`。⚠️ 但識別碼必須用 `tcu_` 開頭的 team_conversation id，且該 id **只有 `get()` 會回傳、清單 payload 沒有** → 從列表 JOIN 前需先取詳情。實作見 §10.6 |
 
 ### 19.2 目前最需要收斂的三件事
 
 | 優先 | 事項 | 為何是它 |
 |---|---|---|
 | 🔴 1 | **#11 語音／圖片文字化** | 唯一還能讓總工時再增 5–10 人日的變數。**必須用含語音與圖片的對話跑 `02-multimodal.ts`** |
-| 🔴 2 | **#23 mode 能不能寫** | ~~#19 取數~~ 已解除（#22）、~~#3 Presence~~ 已解決（`mode`）、~~#12 AI 停不停~~ 已釐清（預設 Manual）。新的第二順位：**平台有三種模式但 SDK 只能讀不能寫**。若寫不了，「切換為全真人模式」與主管接管都做不出來 —— 這是 §10.6 一整節的存廢問題，且只能問 iMBrace |
+| 🟡 2 | **從列表 JOIN 需要多一次請求** | ~~#19 取數~~、~~#3 Presence~~、~~#12 AI 停不停~~、~~#23 mode 寫入~~ 皆已解除。剩下的是實作層取捨：`tcu_` id 不在清單 payload 中，「從對話列表直接按 JOIN」必須先 `get()` 一次。要在列表載入時預取（N 次請求）還是按下 JOIN 當下才取（多一次來回延遲）—— M1 開工時決定即可，不阻塞 |
 | 🔴 3 | **#13 發送者身分** | 決定撞單防護（產品核心價值）能否成立 |
 
 **待向 iMBrace 確認的完整清單見 `docs/IMBRACE_QUESTIONS.md`**（可直接轉貼給對方）。

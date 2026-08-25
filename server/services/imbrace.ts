@@ -182,3 +182,89 @@ export async function exchangeOrganizationToken(
     refreshToken: exchanged.refresh_token || undefined,
   }
 }
+
+// ── JOIN / LEAVE / 模式切換（docs/ARCHITECTURE.md §10.6）─────────────────
+//
+// ⚠️ 2026-08-25 由官方介面的網路請求實測確認：
+//    **切換模式與 JOIN 是同一支端點** —— POST /v1/team_conversations/_join，
+//    body 為 `{ team_conversation_id, mode }`。SDK 的 conversations.join()
+//    打的正是這支，只是它的型別把欄位宣告成 `conversation_id`。
+//
+// ⚠️ 兩個不照著寫就會失敗的地方：
+//    ① 識別碼必須是 `tcu_` 開頭的 team_conversation id，不是對話 id。
+//       兩者完全不同，見 mappers.normalizeConversationId 的說明。
+//       清單 payload **不含** tcu id，必須先 conversations.get() 取得。
+//    ② SDK 型別宣告的是 `conversation_id`，但實際 API 要的是
+//       `team_conversation_id`。靠 JoinConversationInput 的索引簽章傳進去。
+
+/** 對話的服務模式。與 shared/types/conversation.ts 的 ConversationMode 同義 */
+export type ImbraceConversationMode = 'manual' | 'hybrid' | 'automation'
+
+/**
+ * JOIN 一個對話，並指定服務模式。
+ *
+ * @param teamConversationId `tcu_` 開頭的 id（**不是**對話 id）
+ * @param mode 官方介面按下 JOIN 時預設 `manual`（AI 關閉）
+ */
+export async function joinConversation(
+  client: ImbraceClient,
+  teamConversationId: string,
+  mode: ImbraceConversationMode = 'manual',
+): Promise<unknown> {
+  assertTeamConversationId(teamConversationId, 'joinConversation')
+  return client.conversations.join(joinBody(teamConversationId, mode))
+}
+
+/**
+ * 切換服務模式。與 JOIN 是同一支端點 —— 對已 JOIN 的對話再打一次即為切換。
+ *
+ * ⚠️ mode 是**對話層級的共用狀態**：切換會影響該對話的所有人，
+ *    包含正在官方介面工作的同事。這不是本地偏好設定。
+ */
+export async function setConversationMode(
+  client: ImbraceClient,
+  teamConversationId: string,
+  mode: ImbraceConversationMode,
+): Promise<unknown> {
+  assertTeamConversationId(teamConversationId, 'setConversationMode')
+  return client.conversations.join(joinBody(teamConversationId, mode))
+}
+
+export async function leaveConversation(
+  client: ImbraceClient,
+  teamConversationId: string,
+): Promise<unknown> {
+  assertTeamConversationId(teamConversationId, 'leaveConversation')
+  return client.conversations.leave(joinBody(teamConversationId))
+}
+
+/**
+ * ⚠️ SDK 把 `conversation_id` 宣告成必填，但實測官方介面送出的 body **只有**
+ *    `{ team_conversation_id, mode }`。型別與實際 API 不一致，此處以單一 cast
+ *    集中吸收 —— 這是整個檔案唯一需要繞過 SDK 型別的地方。
+ */
+function joinBody(
+  teamConversationId: string,
+  mode?: ImbraceConversationMode,
+): Parameters<ImbraceClient['conversations']['join']>[0] {
+  return {
+    team_conversation_id: teamConversationId,
+    ...(mode ? { mode } : {}),
+  } as unknown as Parameters<ImbraceClient['conversations']['join']>[0]
+}
+
+/**
+ * 傳錯識別碼時當場報錯。
+ *
+ * ⚠️ 這個防呆有存在必要：對話 id 與 tcu id 都是 UUID 形狀，傳錯不會有型別錯誤，
+ *    而平台對錯誤的 id 可能只是靜默不作用 —— 症狀是「按了 JOIN 但沒反應」。
+ */
+function assertTeamConversationId(id: string, caller: string): void {
+  if (!id?.startsWith('tcu_')) {
+    throw new Error(
+      `${caller}() 需要 team_conversation id（tcu_ 開頭），收到的是 "${id}"。`
+      + '對話 id 與 team_conversation id 是兩個不同的東西 ——'
+      + '請先用 conversations.get() 取得詳情，其 id 欄位才是 tcu_（見 §10.6）',
+    )
+  }
+}

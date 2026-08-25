@@ -216,9 +216,18 @@ export function toConversation(raw: SdkConversation): Conversation {
   //    search() 的 id 就是對話 id，但 get() 的 id 是 tcu_ 開頭的關聯記錄 id ——
   //    若直接用 raw.id，同一個對話經由兩支 API 取得會得到兩個不同的鍵，
   //    CopilotSession、presence、EventBus topic 全部對不起來。
-  const withConvId = raw as SdkConversation & { conversation_id?: string }
+  const withConvId = raw as SdkConversation & {
+    conversation_id?: string
+    mode?: string | null
+  }
+  // `tcu_` 開頭者才是 team_conversation 記錄 id（JOIN/LEAVE/mode 要用）；
+  // 清單 payload 的 id 是對話 id，沒有 tcu → 維持 undefined
+  const teamConversationId = raw.id?.startsWith('tcu_') ? raw.id : undefined
+
   return {
     id: normalizeConversationId(withConvId.conversation_id ?? raw.id),
+    teamConversationId,
+    mode: (withConvId.mode ?? null) as Conversation['mode'],
     channel: raw.channel_type,
     contactId: raw.contact_id,
     status: raw.status,
