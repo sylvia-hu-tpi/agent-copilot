@@ -68,8 +68,8 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 渲染模式 | **`ssr: false` + `nuxt build`（node-server preset）** | 登入後才用的內部工具，零 SEO、資料全動態，SSR 無收益卻帶來 hydration 與 token 同步的麻煩 |
 | 認證 | **OTP 取得 access token，存於 BFF session** | 憑證不進瀏覽器；JOIN／回覆能正確歸屬到個別客服，保留稽核軌跡 |
 | 即時機制 | **第一版輪詢 + SSE；一週後換 webhook** | iMBrace SDK 目前無公開推播機制。以 provider 抽象隔離，換來源時上層不動 |
-| AI 來源 | ~~混合：iMBrace 內建 + 自訂 prompt~~ → **全部自訂 prompt 打 `ai.complete()`** | ⚠️ **2026-08-25 修正**：`messageSuggestion` 回傳型別是 `{ suggestions: string[] }`，無信心度、無 SOP 引用，無法支撐建議卡的呈現（見 §19 #18）。它只能當低品質 fallback |
-| 知識庫 | ~~第一版 Boards RAG~~ → **`KnowledgeProvider` 抽象，第一版自建向量檢索** | ⚠️ **2026-08-25 修正**：SDK 只有 `processEmbedding`（建立），**沒有檢索 API**。改用已公開的 `ai.embed()` 自建索引，SOP 量小足以在記憶體／Redis 算 cosine，且分數自控（見 §19 #1） |
+| AI 來源 | 🔴 **待定** —— 見 `docs/PLATFORM_CAPABILITY.md` | ⚠️ **2026-08-25 實測**：`ai.complete()`、`ai.embed()`、`messageSuggestion` **三個端點皆回 404**（API Key 與 access token 皆然）。唯一存在的推論路徑是 `aiAgent.streamChat`（綁定預設 agent），但組織內 27 個 agent 目前全部無法執行。**已列為對 iMBrace 的第一優先確認事項（§0）** |
+| 知識庫 | 🔴 **待定** —— `KnowledgeProvider` 抽象不變 | ⚠️ **2026-08-25 實測**：無任何語意檢索端點；原規劃的 `ai.embed()` 自建路線亦因 404 不成立。平台已有 311 個 RAG 檔案與 20 個 Knowledge Hub，但只能由 AI Agent 內部消費。**能力邊界待 iMBrace 回覆 §0-3** |
 | 持久層 | **iMBrace Data Boards（業務資料）+ 記憶體／Redis（熱狀態）** | Boards 是 CRM 資料庫，不適合高頻寫入的 session 狀態 |
 | 分散式狀態 | **介面 day-1 設計為 async，M4 換 Redis 實作** | SSE 連線表、presence、輪詢鎖在多副本下必須共享 |
 | 多對話 | **分頁籤切換，背景持續監控但只跑輕量分析** | 完整 AI 分析僅在前景聚焦的對話執行，成本自然收斂 |
@@ -377,18 +377,31 @@ export default defineNuxtConfig({
 
 ### 7.1 登入流程
 
-iMBrace 的 OTP 登入是三段式（✅ 已對照 SDK 型別確認，方法名以下方為準）：
+iMBrace 的 OTP 登入是三段式（✅ 已實測跑通）：
 
 ```
-① auth.signinEmailRequest(email)          → 寄出驗證碼
-② auth.authenticate({ email, otp })       → accessToken + organizations[]（含 role / is_admin）
-③ auth.exchangeAccessToken(organizationId) → { token, refresh_token }
+① client.requestOtp(email)                 → 寄出驗證碼
+② client.loginWithOtp(email, otp)          → login_acc_ token + organizations[]（含 role）
+③ client.selectOrganization(organizationId) → acc_ token（+ refresh_token）
 ```
 
-> **2026-08-25 更新**（見 `docs/SDK_FINDINGS.md`）：
+> **⚠️ 必須用 `client.*` 的便利方法，不可用底層的 `client.auth.*`。**
+>
+> `auth.authenticate()` 只回傳資料、**不會保存 token**，後續呼叫等於未認證會 401。
+> `client.loginWithOtp()` 才會把 token 存進 `TokenManager`。
+>
+> 同理 `auth.exchangeAccessToken()` 需要請求本身帶 `x-organization-id`，
+> `client.selectOrganization()` 會先 `setOrganizationId` 再呼叫。
+> 若需保留 `refresh_token`（`selectOrganization` 會丟棄它），
+> 可參考 `scripts/spike/00-auth.ts` 的手動流程。
+
+> **2026-08-25 實測結果**：
 > - 第 ② 步**一次回傳 token 與組織清單**，不需再呼叫 `organizations.list()`
-> - `organizations[]` 帶 `role?: string` 與 `is_admin?: boolean` → **主管判定可沿用平台角色**（§19 #16）
+> - `organizations[]` 帶 `role`（實測值 `admin`）與 `is_admin`（實測值 `false`）
+>   → 主管判定**可望**沿用平台角色，但兩欄位語意不一致，值域待確認（H-5）
 > - 第 ③ 步回傳 `refresh_token` → **token 可續期**，客服不會在工作中被迫重跑 OTP
+> - `organizations.list()` 僅 access token 可呼叫，API Key 會 401
+>   → 印證「以客服個人 token 執行」的設計是對的
 
 **全部在 Nitro 執行**，瀏覽器只拿到一個 session cookie。
 
@@ -513,13 +526,18 @@ export interface KnowledgeProvider {
 
 **實作優先序**
 
+> 🔴 **2026-08-25：實作順位待定**，取決於 iMBrace 對 `IMBRACE_QUESTIONS.md` §0-3 的回覆。
+
 | 順位 | 實作 | 狀態 |
 |---|---|---|
-| 1 | `LocalVectorProvider` | ✅ **第一版採用** —— `ai.embed()` 自建索引，分數自控（詳見 §12.2） |
-| 2 | `BoardsSearchProvider` | ✅ 可實作 —— `boards.search()`，Meilisearch 相容關鍵字檢索，有條目 ID |
+| ? | `AgentKnowledgeProvider` | 🔴 **最可能的方向** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。前提是 agent 可用（§0-1），且能取得引用來源（§0-3a） |
+| ? | `BoardsSearchProvider` | 🟡 備案 —— `boards.search()` 為 Meilisearch 相容關鍵字檢索，**有條目 ID**。待確認能否取回分數 |
 | 3 | `StaticSopProvider` | ✅ 可實作 —— 讀 `config/sop.yaml`，開發期與離線 fallback |
-| — | ~~`BoardsRagProvider`~~ | ❌ **2026-08-25 撤銷** —— `processEmbedding()` 之後沒有檢索 API |
-| — | `ImbraceKnowledgeProvider` | ⏳ 待 API 開通（若日後開放，替換即可）|
+| — | ~~`BoardsRagProvider`~~ | ❌ 撤銷 —— `processEmbedding()` 之後沒有檢索 API |
+| — | ~~`LocalVectorProvider`~~ | ❌ 撤銷 —— 依賴的 `ai.embed()` 回 404 |
+
+> **無論最終選哪一條，`KnowledgeProvider` 介面本身不變。**
+> 這正是抽象層的目的：外部能力邊界未定時，開發不必停下來等。
 
 ### 8.3 狀態與事件匯流排
 
@@ -1061,16 +1079,20 @@ confidence = f(檢索分數, 模型自評, 上下文完整度)
 > **最後一步不存在**。全套 `.d.ts` 搜尋 `knowledge|semantic|retriev` 只找到建立與列檔，
 > 沒有任何查詢端點（見 `docs/SDK_FINDINGS.md` §4）。
 
-**改採的實作優先序**：
+**候選路徑（🔴 待 iMBrace 回覆 `IMBRACE_QUESTIONS.md` §0-3 後定案）**：
 
-| 順位 | 實作 | 可行性 | 說明 |
-|---|---|---|---|
-| 1 | **`LocalVectorProvider`（自建）** | ✅ **建議** | `ai.embed({model, input[]})` 已公開。SOP 量小（數百條），離線建索引 + 記憶體／Redis 算 cosine 即可。**分數完全自控**，§11.6 的 confidence 校準公式可完整實作 |
-| 2 | `BoardsSearchProvider` | ✅ 可行 | `boards.search(boardId, {q, filter, limit})`，Meilisearch 相容。**有條目 ID**，足以滿足憲法第 5 條的白名單後驗。但屬關鍵字檢索非語意，同義詞會漏；分數需確認能否開啟 `showRankingScore` |
-| 3 | `StaticSopProvider` | ✅ 可行 | 讀 `config/sop.yaml`，開發期與離線 fallback |
-| ❌ | 掛 Knowledge Hub 給 AI Agent 再問它 | 不建議 | 回傳自由文字，無條目 ID 與分數，**違反憲法第 5 條** |
+| 路徑 | 可行性 | 說明 |
+|---|---|---|
+| **掛 Knowledge Hub 給 AI Agent 再問它** | 🔴 **目前最可能** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub，且組織內已有掛載知識庫的 agent（如 `TBC_T2_RAG問答_Agent`）。**關鍵未知**：agent 回應能否附帶引用來源與分數（§0-3a/c） |
+| `boards.search(boardId, {q, filter, limit})` | 🟡 備案 | Meilisearch 相容關鍵字檢索，**有條目 ID**，足以滿足憲法第 5 條的白名單後驗。屬關鍵字非語意，同義詞會漏；分數待確認 |
+| `StaticSopProvider` | ✅ 開發期 | 讀 `config/sop.yaml`，離線 fallback |
+| ~~自建向量檢索~~ | ❌ 已排除 | 依賴的 `ai.embed()` 回 404 |
 
-若 iMBrace 日後開放語意檢索 API，替換 provider 即可，上層不動 —— 這正是抽象層的價值。
+> **若最終無法取得分數**，介面上的「信心度 92%」可以拿掉 —— 這是可接受的降級，
+> 但**引用來源（SOP 編號）不可省**，否則憲法第 5 條（`sopId` 白名單後驗）失去依據，
+> 模型將可能杜撰不存在的 SOP。此為產品品質的底線。
+
+無論最終選哪一條，替換 provider 即可，上層不動 —— 這正是抽象層的價值。
 
 ### 12.3 知識庫快查 UX
 
