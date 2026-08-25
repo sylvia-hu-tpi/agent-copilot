@@ -12,6 +12,7 @@
  */
 
 import type { ImbraceClient, ConversationMessage, PagedResponse } from '@imbrace/sdk'
+import { unwrapPaged } from './mappers.js'
 
 export type FetchStrategy =
   /** SDK 原生 list，用 q 帶 conversation id */
@@ -36,12 +37,7 @@ function precisionOf(msgs: ConversationMessage[], convId: string): number {
 }
 
 function unwrap(res: PagedResponse<ConversationMessage> | ConversationMessage[] | unknown): ConversationMessage[] {
-  if (Array.isArray(res)) return res as ConversationMessage[]
-  const r = res as Record<string, unknown>
-  for (const key of ['data', 'items', 'results', 'hits']) {
-    if (Array.isArray(r?.[key])) return r[key] as ConversationMessage[]
-  }
-  return []
+  return unwrapPaged<ConversationMessage>(res)
 }
 
 /**

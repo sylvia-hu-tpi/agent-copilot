@@ -216,3 +216,19 @@ export function diffOperators(
       .map(o => ({ type: 'leave' as const, operator: o })),
   ]
 }
+
+/**
+ * 解開 SDK 的分頁回應。
+ *
+ * ⚠️ 為何需要這個：SDK 的型別標成 `PagedResponse<T>`，但實測回傳的容器鍵不一致
+ * （`data` / `items` / `results` / `hits` 都出現過），也有直接回陣列的情況。
+ * 型別靠不住，只能在執行期逐一探。這正是防腐層該吸收的髒東西。
+ */
+export function unwrapPaged<T>(res: unknown): T[] {
+  if (Array.isArray(res)) return res as T[]
+  const r = res as Record<string, unknown> | null | undefined
+  for (const key of ['data', 'items', 'results', 'hits']) {
+    if (Array.isArray(r?.[key])) return r[key] as T[]
+  }
+  return []
+}

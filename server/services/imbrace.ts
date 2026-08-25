@@ -8,6 +8,7 @@
 
 import { ImbraceClient } from '@imbrace/sdk'
 import type { Environment } from '@imbrace/sdk'
+import type { OrganizationChoice } from '../../shared/types/auth.js'
 
 export interface SessionCredentials {
   accessToken: string
@@ -59,4 +60,125 @@ export function anonymousClient(opts: ClientOptions = {}): ImbraceClient {
     baseUrl: opts.baseUrl,
     timeout: opts.timeout,
   })
+}
+
+// ── 登入流程的防腐層（docs/ARCHITECTURE.md §5.1 / §7.1）────────────────
+//
+// ⚠️ 本區塊存在的理由：SDK 的登入 API 有三個不照著寫就整個系統起不來的坑，
+//    而錯誤形態是 401 而非明確報錯，很難從症狀反推。把它們全部關在這裡，
+//    route handler 只看得到乾淨的函式。
+//
+// ⚠️ 本檔被 scripts/spike 以 tsx 直接 import，**不得**使用 Nitro auto-import
+//    （useRuntimeConfig / createError 等）。此處只丟原生 Error。
+
+/** loginWithOtp 的原始回傳形狀（SDK 型別是 Record<string, unknown>，此處補回實際形狀） */
+interface RawLoginResponse {
+  /** SDK 依序找 accessToken / token / access_token，三者擇一存在 */
+  accessToken?: string
+  token?: string
+  access_token?: string
+  user_id?: string
+  userId?: string
+  display_name?: string
+  name?: string
+  organizations?: Array<{
+    organization_id: string
+    display_name: string
+    role?: string
+    is_admin?: boolean
+    status?: string
+  }>
+}
+
+export interface LoginResult {
+  operatorId: string
+  operatorName: string
+  /**
+   * `login_acc_` 前綴的中間 token。
+   *
+   * ⚠️ SDK 只把它存進 private 的 TokenManager，沒有公開 getter，
+   *    但 loginWithOtp 會把原始回應整包 spread 出來 —— 這是唯一取得它的途徑。
+   *    必須存進 BFF session：第 ③ 步是另一個 HTTP 請求，屆時 client 已重建，
+   *    TokenManager 裡什麼都沒有（§5.1 ①）。
+   */
+  loginToken: string
+  organizations: OrganizationChoice[]
+}
+
+/**
+ * 第 ② 步：驗證 OTP。
+ *
+ * ⚠️ 必須用 `client.loginWithOtp()`，不可用 `client.auth.authenticate()` ——
+ *    後者只回傳資料、不會把 token 存進 TokenManager，
+ *    導致第 ③ 步的 exchange 等於未認證而 401。
+ */
+export async function loginWithOtp(
+  client: ImbraceClient,
+  email: string,
+  otp: string,
+): Promise<LoginResult> {
+  const raw = await client.loginWithOtp(email, otp) as RawLoginResponse
+
+  const operatorId = raw.user_id ?? raw.userId
+  if (!operatorId) throw new Error('登入回應缺少 user_id')
+
+  const loginToken = raw.accessToken ?? raw.token ?? raw.access_token
+  if (!loginToken) throw new Error('登入回應缺少 access token')
+
+  return {
+    operatorId,
+    loginToken,
+    operatorName: raw.display_name ?? raw.name ?? email,
+    organizations: (raw.organizations ?? []).map(o => ({
+      id: o.organization_id,
+      name: o.display_name,
+      role: o.role,
+      isAdmin: o.is_admin,
+      status: o.status,
+    })),
+  }
+}
+
+export interface ExchangeResult {
+  accessToken: string
+  /** ⚠️ 這正是 client.selectOrganization() 會丟掉的東西 —— 沒有它客服會被迫重跑 OTP */
+  refreshToken?: string
+}
+
+/**
+ * 第 ③ 步：以組織 id 換發 `acc_` token，**並保留 refresh_token**。
+ *
+ * ⚠️ 為何不用 `client.selectOrganization()`：那支便利方法只保留 `token`，
+ *    丟掉 `refresh_token`（§5.1 ③）。但也不能直接呼叫 `client.auth.exchangeAccessToken()` ——
+ *    exchange 端點要求請求本身帶 `x-organization-id` header，
+ *    而設定它的 `client.http` 在 SDK 中是 private。
+ *
+ *    因此這裡複製 selectOrganization 的前半段（setOrganizationId）再自行 exchange。
+ *    **這個 cast 是整個專案唯一允許存取 SDK private 成員的地方** ——
+ *    若 SDK 日後開放保留 refresh_token 的官方做法，只需改這一個函式。
+ */
+export async function exchangeOrganizationToken(
+  client: ImbraceClient,
+  organizationId: string,
+): Promise<ExchangeResult> {
+  const withHttp = client as unknown as {
+    http?: { setOrganizationId?: (id: string | undefined) => void }
+  }
+  if (typeof withHttp.http?.setOrganizationId !== 'function') {
+    // SDK 內部結構變動時要立刻炸開，而不是靜默送出沒有 x-organization-id 的請求
+    throw new Error(
+      '@imbrace/sdk 內部結構已變更：找不到 client.http.setOrganizationId。'
+      + '請重新確認 exchangeAccessToken 的組織標頭要如何設定（見 §5.1 ③）',
+    )
+  }
+  withHttp.http.setOrganizationId(organizationId)
+
+  const exchanged = await client.auth.exchangeAccessToken(organizationId)
+  if (!exchanged?.token) throw new Error('exchange 回應缺少 token')
+
+  client.setAccessToken(exchanged.token)
+  return {
+    accessToken: exchanged.token,
+    refreshToken: exchanged.refresh_token || undefined,
+  }
 }

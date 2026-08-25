@@ -64,3 +64,31 @@ export interface ConversationControl {
     at: string
   }
 }
+
+// ── Presence（docs/ARCHITECTURE.md §10.2）───────────────────────────────
+
+export type PresenceState = 'viewing' | 'composing' | 'joined'
+
+/**
+ * ⚠️ `source` 不是除錯欄位，是 UI 的必要輸入。
+ *
+ * §10.2：`sse` 代表「此刻確實開著這個對話」，`message` 只代表「N 分鐘前發言過」。
+ * 把後者顯示成「正在檢視」會讓客服以為有人守著而實際沒人 —— 比不顯示更糟。
+ * 三來源的涵蓋範圍與可信度不同，PresenceBar 必須據此分開呈現。
+ */
+export type PresenceSource =
+  /** ① 自家 SSE 上報 —— 只涵蓋我方使用者，延遲 < 200ms，可信度高 */
+  | 'sse'
+  /** ② 訊息 `u_` 前綴反推 —— 涵蓋官方介面的同事，僅代表「曾經發言」 */
+  | 'message'
+  /** ③ JOIN/LEAVE webhook —— 全涵蓋，待規格（M4） */
+  | 'webhook'
+
+export interface PresenceEntry {
+  operatorId: string
+  operatorName: string
+  state: PresenceState
+  source: PresenceSource
+  /** 此狀態的發生時間（ISO8601）。source 為 `message` 時即該則訊息的時間 */
+  at: string
+}
