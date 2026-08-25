@@ -69,7 +69,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 認證 | **OTP 取得 access token，存於 BFF session** | 憑證不進瀏覽器；JOIN／回覆能正確歸屬到個別客服，保留稽核軌跡 |
 | 即時機制 | **第一版輪詢 + SSE；webhook 規格到位後替換** | iMBrace SDK 目前無公開推播機制。以 provider 抽象隔離，換來源時上層不動 |
 | 輪詢頻率 | **前景 3s／背景 30s**（§9.2 修訂表） | ⚠️ **2026-08-25 實測**：`since`／`after`／`since_id` **全部被忽略**，每次都是全量取回；回應中**無任何 rate limit 標頭**可自我調節。取保守值，待書面規格再定案 |
-| Presence | **自家 SSE + `u_` 前綴反推**，兩來源合併（§10.2） | ⚠️ **2026-08-25 實測**：`Conversation.users[]` **12/12 全為空**，即使該對話確有 `u_` 客服發言 → **此欄位不可用**。盲區由 §10.4 送出前檢查兜底 |
+| Presence | **四來源合併**：自家 SSE + `u_` 前綴反推 + **對話 `mode`** + webhook（M4）（§10.2） | ⚠️ `users[]` 不可用（實測為**團隊名冊**而非該對話參與者）。✅ **`mode ∈ {manual, hybrid}` 代表有人能送出訊息**，JOIN 時立刻跳動、不需對方發言，且在清單 payload 中（成本為零）。原本「同事已 JOIN 但未發言」的盲區已解除；`automation` 對「無人」與「有人但唯讀」仍無法區分，但唯讀者送不出訊息，不構成撞單風險 |
 | AI 來源 | 🟡 **iMBrace AI Agent（第一階段）**，介面留待替換 | **2026-08-25 實測修正**：`ai.complete()`、`ai.embed()`、`messageSuggestion` 確實 404，但 **`aiAgent.streamChat` 有 11/27 個 agent 可用**，且 JSON 結構化輸出 4/4 次可解析。原記載「27 個全部無法執行」為抽測外推的錯誤結論 |
 | 知識庫 | 🟡 **透過掛知識庫的 AI Agent**，`KnowledgeProvider` 抽象不變 | **2026-08-25 實測修正**：無**獨立**檢索端點（此結論不變），但 agent 的 SSE `tool-output-available` 事件會吐出 `RAGknowledge` 工具輸出，**含檔名與 chunk 原文** → 引用來源拿得到。仍缺：**相關度分數**、**檢索品質調校手段**（實測問「電梯困人」未命中同名 SOP 檔） |
 | 持久層 | **iMBrace Data Boards（業務資料）+ 記憶體／Redis（熱狀態）** | Boards 是 CRM 資料庫，不適合高頻寫入的 session 狀態 |
@@ -1792,7 +1792,7 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 
 **內容**
 - 對話列表、訊息流（虛擬滾動）、Composer、join / leave
-- **Presence 三來源合併**（自家 SSE + `u_` 前綴反推；webhook 留待 M4）—— 見 §10.2
+- **Presence 四來源合併**（自家 SSE + `u_` 前綴反推 + 對話 `mode`；webhook 留待 M4）—— 見 §10.2
 - SSE 管線 + 自動重連
 - `MessageSource` 抽象 + `PollingMessageSource` + 共享訂閱 + 自適應頻率（§9.2 修訂表）
 - **只取最新 N 則 + 本地 `lastMessageId` 比對**（無增量拉取的緩解，§9.3）
