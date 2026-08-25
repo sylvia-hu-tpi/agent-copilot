@@ -1,21 +1,12 @@
 {
-  "compilerOptions": {
-    "target": "ES2023",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "lib": ["ES2023"],
-    "types": ["node"],
-    "strict": true,
-    "noUncheckedIndexedAccess": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "noEmit": true,
-    "paths": {
-      "~~/*": ["./*"],
-      "#shared/*": ["./shared/*"]
-    }
-  },
-  "include": ["shared/**/*", "server/**/*", "scripts/**/*"],
-  "exclude": ["node_modules", ".output", ".nuxt"]
+  // 由 `nuxt prepare` 產生 .nuxt/tsconfig.*.json（app / server / shared / node 各一份）。
+  // 本檔只做 solution-style 匯總，供 IDE 解析；實際檢查由 `npm run typecheck` 執行。
+  "files": [],
+  "references": [
+    { "path": "./.nuxt/tsconfig.app.json" },
+    { "path": "./.nuxt/tsconfig.server.json" },
+    { "path": "./.nuxt/tsconfig.shared.json" },
+    { "path": "./.nuxt/tsconfig.node.json" },
+    { "path": "./tsconfig.scripts.json" }
+  ]
 }

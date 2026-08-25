@@ -16,3 +16,8 @@ scripts/spike/out/
 
 # 會議草擬文件
 docs/meeting-draft/
+
+# Nuxt 建置產物
+dist/
+.nitro/
+*.tsbuildinfo

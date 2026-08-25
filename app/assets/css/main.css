@@ -1,0 +1,7 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+/*
+ * 設計基調見 docs/ARCHITECTURE.md §14.3。
+ * 主題 token 待 M1 UI 收斂後再集中定義於此。
+ */

@@ -1,0 +1,22 @@
+{
+  // spike 腳本以 tsx 直接執行，不經 Nuxt/Nitro。
+  // ⚠️ 因此 scripts/ 只能 import「不使用 Nitro auto-import」的 server 檔案
+  //    （目前為 server/services/imbrace.ts、server/utils/redact.ts）。
+  //    一旦某個 server 檔案開始用 defineEventHandler / useRuntimeConfig，
+  //    它就不再能被 spike 直接 import —— 請改抽出純函式共用。
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "noEmit": true
+  },
+  "include": ["scripts/**/*"],
+  "exclude": ["node_modules", ".output", ".nuxt"]
+}
