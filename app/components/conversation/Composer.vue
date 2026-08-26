@@ -109,7 +109,7 @@ defineExpose({ focus })
     <!-- ① 不能送出時，一定要說明是哪一種原因 -->
     <div
       v-if="blockedReason"
-      class="flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[11.5px]"
+      class="flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[0.875rem]"
       :style="{
         background: 'var(--surface-2)',
         borderColor: 'var(--border)',
@@ -142,7 +142,7 @@ defineExpose({ focus })
         :disabled="disabled"
         :placeholder="blockedReason ? t('composer.placeholderReadonly') : t('composer.placeholder')"
         :aria-label="t('composer.placeholder')"
-        class="max-h-40 min-h-[42px] w-full resize-y bg-transparent text-[13px] leading-relaxed outline-none placeholder:opacity-60 disabled:cursor-not-allowed"
+        class="max-h-40 min-h-[42px] w-full resize-y bg-transparent text-[0.96875rem] leading-relaxed outline-none placeholder:opacity-60 disabled:cursor-not-allowed"
         :style="{ color: 'var(--text)' }"
         @input="onInput"
         @keydown="onKeydown"
@@ -163,7 +163,7 @@ defineExpose({ focus })
       </button>
     </div>
 
-    <div class="flex items-center justify-between gap-3 text-[10.5px]" :style="{ color: 'var(--text-3)' }">
+    <div class="flex items-center justify-between gap-3 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
       <span>{{ t('composer.hint') }}</span>
       <!-- ⚠️ 憲法 8.4：讓客服看得到草稿確實被保住了 -->
       <span v-if="draft.trim()" class="flex items-center gap-1">

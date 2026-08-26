@@ -13,6 +13,44 @@
 import type { Conversation } from '#shared/types/conversation'
 import { someoneElseCanSend } from '#shared/types/conversation'
 
+/** 頭像色階：沿用既有 token 配對，不另外發明新色票 */
+const AVATAR_PALETTE = [
+  { bg: 'var(--navy-soft)', fg: 'var(--navy)' },
+  { bg: 'var(--active-bg)', fg: 'var(--active)' },
+  { bg: 'var(--ai-bg)', fg: 'var(--ai)' },
+  { bg: 'var(--agent-bg)', fg: 'var(--navy-2)' },
+  { bg: 'var(--warn-bg)', fg: 'var(--warn)' },
+  { bg: 'var(--open-bg)', fg: 'var(--open)' },
+] as const
+
+/** 依名稱／代號決定固定的頭像配色，同一對話每次渲染都要拿到同一組顏色 */
+function avatarColor(key: string): { bg: string, fg: string } {
+  let hash = 0
+  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length]!
+}
+
+/**
+ * 頭像縮寫：`TWN#GW4772` 這類代號取 `#` 後兩個字母（如 `GW`）；
+ * 真人姓名（如「高翊庭」）無此樣式，中文取首字、其餘取前兩碼並轉大寫。
+ */
+function avatarLabel(c: Conversation): string {
+  const src = (c.name || c.contactId || '').trim()
+  const coded = src.match(/#([a-zA-Z]{2})/)
+  if (coded) return coded[1]!.toUpperCase()
+  if (!src) return '?'
+  return /[一-鿿]/.test(src[0]!) ? src.slice(0, 1) : src.slice(0, 2).toUpperCase()
+}
+
+/**
+ * 頻道 icon：自訂圖檔，放在 `public/icons/`（見檔名對應）。
+ * 沒有對應圖檔的頻道維持原本的文字徽記。
+ */
+const CHANNEL_ICON: Record<string, string> = {
+  web: '/icons/channel-web.png',
+  line: '/icons/channel-line.png',
+}
+
 defineProps<{
   items: Conversation[]
   activeId: string | null
@@ -55,7 +93,7 @@ function relativeTime(iso?: string): string {
           type="search"
           :placeholder="$t('common.search')"
           :aria-label="$t('common.search')"
-          class="h-full w-full bg-transparent text-[12.5px] outline-none placeholder:opacity-60"
+          class="h-full w-full bg-transparent text-[0.9375rem] outline-none placeholder:opacity-60"
           @keydown.enter="emit('refresh')"
         >
       </div>
@@ -86,7 +124,7 @@ function relativeTime(iso?: string): string {
 
     <p
       v-else-if="items.length === 0"
-      class="px-3 py-8 text-center text-[12px]"
+      class="px-3 py-8 text-center text-[0.90625rem]"
       :style="{ color: 'var(--text-3)' }"
     >
       {{ $t('sidebar.empty') }}
@@ -104,7 +142,12 @@ function relativeTime(iso?: string): string {
           :aria-current="c.id === activeId ? 'true' : undefined"
           @click="emit('select', c.id)"
         >
-          <div class="flex items-center gap-1.5">
+          <div class="flex items-center gap-2">
+            <span
+              class="ac-mono flex size-7 shrink-0 items-center justify-center rounded-full text-[0.8125rem] font-semibold"
+              :style="{ background: avatarColor(c.name || c.contactId).bg, color: avatarColor(c.name || c.contactId).fg }"
+            >{{ avatarLabel(c) }}</span>
+
             <!-- 未讀徽記：只在非聚焦對話上亮 -->
             <span
               v-if="unread.has(c.id)"
@@ -112,16 +155,24 @@ function relativeTime(iso?: string): string {
               :style="{ background: 'var(--navy-2)' }"
               :aria-label="$t('sidebar.unread')"
             />
-            <span class="ac-mono min-w-0 flex-1 truncate text-[12.5px] font-medium">
+            <span class="ac-mono min-w-0 flex-1 truncate text-[0.9375rem] font-medium">
               {{ c.name || c.contactId }}
             </span>
-            <time class="ac-mono shrink-0 text-[10.5px]" :style="{ color: 'var(--text-3)' }">
+            <time class="ac-mono shrink-0 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
               {{ relativeTime(c.lastMessageAt ?? c.updatedAt) }}
             </time>
           </div>
 
-          <div class="mt-1 flex items-center gap-1.5 text-[10.5px]">
+          <div class="mt-1 flex items-center gap-1.5 pl-9 text-[0.8125rem]">
+            <img
+              v-if="CHANNEL_ICON[c.channel]"
+              :src="CHANNEL_ICON[c.channel]"
+              :alt="c.channel"
+              :title="c.channel"
+              class="size-3.5 shrink-0 object-contain"
+            >
             <span
+              v-else
               class="rounded-full px-1.5 py-0.5"
               :style="{ background: 'var(--surface-3)', color: 'var(--text-2)' }"
             >{{ c.channel }}</span>
@@ -139,7 +190,7 @@ function relativeTime(iso?: string): string {
               :style="{ background: 'var(--active-bg)', color: 'var(--active)' }"
               :title="$t('presence.unidentified')"
             >
-              <UIcon name="i-lucide-user-check" class="size-2.5" />
+              <UIcon name="i-lucide-user-check" class="size-3.5" />
             </span>
           </div>
         </button>

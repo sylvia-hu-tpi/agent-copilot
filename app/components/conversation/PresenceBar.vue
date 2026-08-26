@@ -55,7 +55,7 @@ function displayName(entry: PresenceEntry): string {
 
 <template>
   <div
-    class="flex min-h-[30px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-[11.5px]"
+    class="flex min-h-[30px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-[0.875rem]"
     :style="{ color: 'var(--text-3)' }"
   >
     <!-- ① 自家 SSE：確定在線 -->

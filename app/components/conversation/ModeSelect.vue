@@ -48,7 +48,7 @@ function toneOf(mode: ConversationMode): Record<string, string> {
         :aria-checked="current === opt"
         :disabled="disabled || busy"
         :title="t(`mode.${opt}Hint`)"
-        class="rounded-full border px-2.5 py-0.5 text-[11px] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+        class="rounded-full border px-2.5 py-0.5 text-[0.84375rem] transition-colors disabled:cursor-not-allowed disabled:opacity-50"
         :style="current === opt
           ? toneOf(opt)
           : { borderColor: 'var(--border)', color: 'var(--text-3)' }"
@@ -58,15 +58,15 @@ function toneOf(mode: ConversationMode): Record<string, string> {
       </button>
     </div>
 
-    <span v-if="current === null" class="text-[11px]" :style="{ color: 'var(--text-3)' }">
+    <span v-if="current === null" class="text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">
       {{ t('mode.none') }}
     </span>
-    <span v-if="busy" class="text-[11px]" :style="{ color: 'var(--text-3)' }">
+    <span v-if="busy" class="text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">
       {{ t('mode.switching') }}
     </span>
 
     <!-- ⚠️ 常駐警語。這不是提示，是防止誤操作的必要資訊 -->
-    <p class="w-full text-[10.5px] leading-snug" :style="{ color: 'var(--text-3)' }">
+    <p class="w-full text-[0.8125rem] leading-snug" :style="{ color: 'var(--text-3)' }">
       {{ t('mode.sharedWarning') }}
     </p>
   </div>

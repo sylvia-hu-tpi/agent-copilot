@@ -30,17 +30,25 @@ const statusLabel = computed(() => {
       class="flex shrink-0 items-center gap-3 border-b px-4 py-2.5"
       :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
     >
-      <NuxtLink to="/" class="ac-eyebrow transition-opacity hover:opacity-70">AGENTCOPILOT</NuxtLink>
-      <span
+      <NuxtLink to="/" class="ac-eyebrow shrink-0 transition-opacity hover:opacity-80">AGENTCOPILOT</NuxtLink>
+
+      <span v-if="auth.me?.orgName" aria-hidden="true" class="shrink-0" :style="{ color: 'var(--border-strong)' }">|</span>
+
+      <NuxtLink
         v-if="auth.me?.orgName"
-        class="truncate text-[12.5px]"
+        to="/organization"
+        class="flex min-w-0 items-center gap-1 truncate text-[0.9375rem] transition-opacity hover:opacity-70"
         :style="{ color: 'var(--text-2)' }"
-      >{{ auth.me.orgName }}</span>
+        :title="$t('organization.switch')"
+      >
+        <span class="truncate">{{ auth.me.orgName }}</span>
+        <UIcon v-if="auth.organizations.length > 1" name="i-lucide-chevron-down" class="size-3 shrink-0" />
+      </NuxtLink>
 
       <!-- 連線狀態：只在不正常時才出現，正常時不佔視覺注意力 -->
       <span
         v-if="statusLabel"
-        class="flex items-center gap-1.5 text-[11px]"
+        class="flex items-center gap-1.5 text-[0.84375rem]"
         :style="{ color: 'var(--text-3)' }"
       >
         <UIcon name="i-lucide-loader-circle" class="size-3 animate-spin" />
@@ -48,12 +56,12 @@ const statusLabel = computed(() => {
       </span>
 
       <div class="ml-auto flex items-center gap-3">
-        <span class="truncate text-[12.5px]" :style="{ color: 'var(--text-2)' }">
+        <span class="truncate text-[0.9375rem]" :style="{ color: 'var(--text-2)' }">
           {{ auth.me?.operatorName }}
         </span>
         <button
           type="button"
-          class="flex items-center gap-1.5 text-[11.5px] transition-opacity hover:opacity-70"
+          class="flex items-center gap-1.5 text-[0.875rem] transition-opacity hover:opacity-70"
           :style="{ color: 'var(--text-3)' }"
           @click="logout"
         >

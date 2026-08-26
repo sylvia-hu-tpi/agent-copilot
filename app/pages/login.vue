@@ -190,7 +190,7 @@ function backToEmail() {
     <form v-if="step === 'email'" class="px-7 pb-6 pt-7" @submit.prevent="sendOtp">
       <div class="mb-5 flex items-center justify-between">
         <span class="ac-eyebrow">AGENTCOPILOT</span>
-        <span class="ac-mono text-[11px]" :style="{ color: 'var(--text-3)' }">v1.0 · internal</span>
+        <span class="ac-mono text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">v1.0 · internal</span>
       </div>
 
       <h1 class="ac-title">登入</h1>
@@ -210,10 +210,10 @@ function backToEmail() {
             placeholder="you@company.com"
             autofocus
             required
-            class="h-full w-full bg-transparent text-[13.5px] outline-none placeholder:opacity-60"
+            class="h-full w-full bg-transparent text-[1rem] outline-none placeholder:opacity-60"
           >
         </div>
-        <p class="mt-1.5 flex items-center gap-1.5 text-[11px]" :style="{ color: 'var(--text-3)' }">
+        <p class="mt-1.5 flex items-center gap-1.5 text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">
           <UIcon name="i-lucide-info" class="size-3 shrink-0" />
           僅接受已建檔的內部網域
         </p>
@@ -269,7 +269,7 @@ function backToEmail() {
           spellcheck="false"
           maxlength="1"
           :aria-label="`驗證碼第 ${i + 1} 碼`"
-          class="size-14 rounded-[9px] border text-center font-[var(--font-mono)] text-[22px] outline-none transition-colors"
+          class="size-14 rounded-[9px] border text-center font-[var(--font-mono)] text-[1.53125rem] outline-none transition-colors"
           :style="error
             ? { background: 'var(--warn-bg)', borderColor: 'var(--warn-bd)', color: 'var(--warn)' }
             : { background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text)' }"
@@ -294,7 +294,7 @@ function backToEmail() {
       </button>
 
       <div class="mt-4 flex items-center justify-between">
-        <span class="text-[11.5px]" :style="{ color: 'var(--text-3)' }">
+        <span class="text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
           沒收到？
           <template v-if="remaining > 0">
             <span class="ac-mono">{{ countdown }}</span> 後可重新寄送
@@ -302,7 +302,7 @@ function backToEmail() {
         </span>
         <button
           type="button"
-          class="flex items-center gap-1.5 text-[11.5px] transition-opacity disabled:opacity-40"
+          class="flex items-center gap-1.5 text-[0.875rem] transition-opacity disabled:opacity-40"
           :style="{ color: 'var(--text-2)' }"
           :disabled="remaining > 0 || pending"
           @click="resend"

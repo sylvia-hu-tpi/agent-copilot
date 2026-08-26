@@ -80,13 +80,13 @@ async function logout() {
       :style="{ borderColor: 'var(--border-dash)' }"
     >
       <UIcon name="i-lucide-building-2" class="size-[22px]" :style="{ color: 'var(--text-3)' }" />
-      <p class="mt-3 text-[13.5px] font-medium">此帳號尚未加入任何組織</p>
+      <p class="mt-3 text-[1rem] font-medium">此帳號尚未加入任何組織</p>
       <p class="ac-subtitle mt-1.5">
         請聯絡系統管理員將你加入客服組織後，再重新登入。
       </p>
       <button
         type="button"
-        class="mt-4 rounded-lg border px-3 py-1.5 text-[12px] transition-colors"
+        class="mt-4 rounded-lg border px-3 py-1.5 text-[0.90625rem] transition-colors"
         :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
         @click="auth.refresh()"
       >
@@ -100,7 +100,7 @@ async function logout() {
     <header class="border-b px-[22px] pb-4 pt-5" :style="{ borderColor: 'var(--border)' }">
       <div class="flex items-center justify-between">
         <span class="ac-eyebrow">選擇組織</span>
-        <span class="ac-mono text-[11.5px]" :style="{ color: 'var(--text-3)' }">
+        <span class="ac-mono text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
           {{ auth.me?.email }}
         </span>
       </div>
@@ -123,13 +123,13 @@ async function logout() {
           @click="choose(org.id)"
         >
           <span
-            class="flex size-[38px] shrink-0 items-center justify-center rounded-[9px] text-[13px] font-medium"
+            class="flex size-[38px] shrink-0 items-center justify-center rounded-[9px] text-[0.96875rem] font-medium"
             :style="{ background: 'var(--surface-3)', color: 'var(--text-2)' }"
           >{{ initialsOf(org) }}</span>
 
           <span class="min-w-0 flex-1">
-            <span class="block truncate text-[14px] font-medium">{{ org.name }}</span>
-            <span class="ac-mono block truncate text-[11.5px]" :style="{ color: 'var(--text-3)' }">
+            <span class="block truncate text-[1.03125rem] font-medium">{{ org.name }}</span>
+            <span class="ac-mono block truncate text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
               {{ org.id }}<template v-if="org.role"> · {{ org.role }}</template>
             </span>
           </span>
@@ -148,12 +148,12 @@ async function logout() {
       class="flex items-center justify-between border-t px-[22px] py-3"
       :style="{ borderColor: 'var(--border)' }"
     >
-      <span class="text-[11.5px]" :style="{ color: 'var(--text-3)' }">
+      <span class="text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
         組織清單由後台權限決定，無法自行加入。
       </span>
       <button
         type="button"
-        class="flex items-center gap-1.5 text-[11.5px] transition-opacity hover:opacity-70"
+        class="flex items-center gap-1.5 text-[0.875rem] transition-opacity hover:opacity-70"
         :style="{ color: 'var(--text-2)' }"
         @click="logout"
       >

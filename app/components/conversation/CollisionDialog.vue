@@ -63,10 +63,10 @@ function timeOf(at: string): string {
       />
       <div class="min-w-0 flex-1 space-y-2">
         <div>
-          <p class="text-[12.5px] font-semibold" :style="{ color: 'var(--warn)' }">
+          <p class="text-[0.9375rem] font-semibold" :style="{ color: 'var(--warn)' }">
             {{ t('collision.title') }}
           </p>
-          <p class="mt-0.5 text-[12px]" :style="{ color: 'var(--text)' }">{{ headline }}</p>
+          <p class="mt-0.5 text-[0.90625rem]" :style="{ color: 'var(--text)' }">{{ headline }}</p>
         </div>
 
         <!-- ① 一定要看得到對方說了什麼，否則客服無從判斷 -->
@@ -76,10 +76,10 @@ function timeOf(at: string): string {
             <li
               v-for="m in collision.messages"
               :key="m.id"
-              class="rounded-md border px-2 py-1.5 text-[12px] leading-relaxed"
+              class="rounded-md border px-2 py-1.5 text-[0.90625rem] leading-relaxed"
               :style="{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--text)' }"
             >
-              <span class="ac-mono mr-1.5 text-[10.5px]" :style="{ color: 'var(--text-3)' }">
+              <span class="ac-mono mr-1.5 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
                 {{ timeOf(m.at) }}
               </span>
               <span class="whitespace-pre-wrap break-words">{{ m.text || '（無文字內容）' }}</span>
@@ -91,7 +91,7 @@ function timeOf(at: string): string {
           <!-- ② 不可藏起來：我們的偵測有誤判可能，堵死會逼客服去官方介面繞過 -->
           <button
             type="button"
-            class="rounded-md border px-2.5 py-1 text-[12px] transition-colors disabled:opacity-50"
+            class="rounded-md border px-2.5 py-1 text-[0.90625rem] transition-colors disabled:opacity-50"
             :style="{ borderColor: 'var(--warn-bd)', color: 'var(--warn)' }"
             :disabled="sending"
             @click="emit('sendAnyway')"
@@ -100,7 +100,7 @@ function timeOf(at: string): string {
           </button>
           <button
             type="button"
-            class="rounded-md px-2.5 py-1 text-[12px] transition-opacity hover:opacity-70"
+            class="rounded-md px-2.5 py-1 text-[0.90625rem] transition-opacity hover:opacity-70"
             :style="{ color: 'var(--text-2)' }"
             :disabled="sending"
             @click="emit('review')"
@@ -109,7 +109,7 @@ function timeOf(at: string): string {
           </button>
           <button
             type="button"
-            class="rounded-md px-2.5 py-1 text-[12px] transition-opacity hover:opacity-70"
+            class="rounded-md px-2.5 py-1 text-[0.90625rem] transition-opacity hover:opacity-70"
             :style="{ color: 'var(--text-3)' }"
             :disabled="sending"
             @click="emit('discard')"

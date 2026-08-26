@@ -33,13 +33,19 @@ const BASE_HEIGHT = 62
 const CHARS_PER_LINE = 42
 const LINE_HEIGHT = 20
 const ATTACHMENT_HEIGHT = 26
+/** 圖片縮圖的高度上限（見 MessageBubble.vue 的 `max-h-55` = 220px）+ 邊框與間距 */
+const IMAGE_ATTACHMENT_HEIGHT = 228
 
 function estimateHeight(m: Message): number {
   const lines = Math.max(1, Math.ceil((m.text?.length ?? 0) / CHARS_PER_LINE))
   const explicitBreaks = (m.text?.match(/\n/g)?.length ?? 0)
+  const attachmentsHeight = (m.attachments ?? []).reduce(
+    (sum, a) => sum + (a.kind === 'image' && a.url ? IMAGE_ATTACHMENT_HEIGHT : ATTACHMENT_HEIGHT),
+    0,
+  )
   return BASE_HEIGHT
     + (lines - 1 + explicitBreaks) * LINE_HEIGHT
-    + (m.attachments?.length ?? 0) * ATTACHMENT_HEIGHT
+    + attachmentsHeight
 }
 
 const source = computed(() => props.messages)
@@ -91,7 +97,7 @@ async function jumpToBottom(): Promise<void> {
         <div v-if="hasMore || loadingMore" class="flex justify-center py-2">
           <button
             type="button"
-            class="rounded-md px-2 py-1 text-[11.5px] transition-opacity hover:opacity-70 disabled:opacity-50"
+            class="rounded-md px-2 py-1 text-[0.875rem] transition-opacity hover:opacity-70 disabled:opacity-50"
             :style="{ color: 'var(--text-3)' }"
             :disabled="loadingMore"
             @click="emit('loadOlder')"
@@ -113,7 +119,7 @@ async function jumpToBottom(): Promise<void> {
       <button
         v-if="!stickToBottom && messages.length > 0"
         type="button"
-        class="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[11.5px] shadow-sm"
+        class="absolute bottom-3 left-1/2 flex -translate-x-1/2 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[0.875rem] shadow-sm"
         :style="{ background: 'var(--surface)', borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
         @click="jumpToBottom"
       >

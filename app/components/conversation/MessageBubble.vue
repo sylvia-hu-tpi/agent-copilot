@@ -76,7 +76,7 @@ const attachmentIcon: Record<string, string> = {
 
 <template>
   <div class="flex flex-col gap-1 px-4 py-1.5" :class="alignRight ? 'items-end' : 'items-start'">
-    <div class="flex items-center gap-1.5 px-1 text-[10.5px]" :style="{ color: 'var(--text-3)' }">
+    <div class="flex items-center gap-1.5 px-1 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
       <UIcon :name="senderIcon" class="size-3" />
       <span class="font-medium">{{ senderLabel }}</span>
       <span v-if="mine" class="ac-mono">·</span>
@@ -85,7 +85,7 @@ const attachmentIcon: Record<string, string> = {
 
     <div
       class="max-w-[min(78%,44rem)] rounded-xl border px-3 py-2 leading-relaxed"
-      :class="isInternal ? 'text-[11.5px] border-dashed opacity-70' : 'text-[13px]'"
+      :class="isInternal ? 'text-[0.875rem] border-dashed opacity-70' : 'text-[0.96875rem]'"
       :style="isInternal
         ? { background: 'var(--surface-2)', borderColor: 'var(--border-dash)', color: 'var(--text-3)' }
         : { background: tone.bg, borderColor: tone.bd, color: tone.fg }"
@@ -100,30 +100,47 @@ const attachmentIcon: Record<string, string> = {
       <p v-if="message.text" class="whitespace-pre-wrap break-words" :class="{ 'ac-mono': isInternal }">{{ message.text }}</p>
 
       <!--
-        ⚠️ M1 只顯示檔名與型別。`image`／`pdf` 實測有直接可用的 url，
-           縮圖與 vision／文件分析的描述是 M2 的範圍（§11.4）；
-           舊資料型 `file` 無 url，僅能標示「無法預覽」。
+        ⚠️ `image`／`pdf` 有直接可用的 url，直接顯示縮圖／可點擊開啟；
+           文件分析出的描述文字是另一回事（§11.4），不影響這裡的預覽。
+           舊資料型 `file` 無 url，維持「無法預覽」標示。
       -->
-      <ul v-if="message.attachments?.length" class="mt-1.5 space-y-1">
-        <li
-          v-for="a in message.attachments"
-          :key="a.id"
-          class="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-[11.5px]"
-          :style="{ borderColor: 'var(--border-dash)', color: 'var(--text-2)' }"
-        >
-          <UIcon :name="attachmentIcon[a.kind] ?? 'i-lucide-paperclip'" class="size-3.5 shrink-0" />
-          <span class="ac-mono truncate">{{ a.filename }}</span>
-          <span class="shrink-0 opacity-70">{{ $t(`attachment.${a.kind}`) }}</span>
+      <ul v-if="message.attachments?.length" class="mt-1.5 space-y-1.5">
+        <li v-for="a in message.attachments" :key="a.id">
+          <a
+            v-if="a.kind === 'image' && a.url"
+            :href="a.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="block max-w-55 overflow-hidden rounded-md border"
+            :style="{ borderColor: 'var(--border-dash)' }"
+          >
+            <img :src="a.url" :alt="a.filename" class="block max-h-55 w-full object-cover">
+          </a>
+
+          <a
+            v-else-if="a.url"
+            :href="a.url"
+            target="_blank"
+            rel="noopener noreferrer"
+            class="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-[0.875rem] transition-opacity hover:opacity-70"
+            :style="{ borderColor: 'var(--border-dash)', color: 'var(--text-2)' }"
+          >
+            <UIcon :name="attachmentIcon[a.kind] ?? 'i-lucide-paperclip'" class="size-3.5 shrink-0" />
+            <span class="ac-mono truncate">{{ a.filename }}</span>
+            <span class="shrink-0 opacity-70">{{ $t(`attachment.${a.kind}`) }}</span>
+          </a>
+
+          <div
+            v-else
+            class="flex items-center gap-1.5 rounded-md border border-dashed px-2 py-1 text-[0.875rem]"
+            :style="{ borderColor: 'var(--border-dash)', color: 'var(--text-2)' }"
+          >
+            <UIcon :name="attachmentIcon[a.kind] ?? 'i-lucide-paperclip'" class="size-3.5 shrink-0" />
+            <span class="ac-mono truncate">{{ a.filename }}</span>
+            <span class="shrink-0 opacity-70">{{ $t('attachment.noPreview') }}</span>
+          </div>
         </li>
       </ul>
-
-      <p
-        v-if="!message.text && message.attachments?.length"
-        class="mt-1 text-[10.5px] italic"
-        :style="{ color: 'var(--text-3)' }"
-      >
-        {{ $t('attachment.noPreview') }}
-      </p>
     </div>
   </div>
 </template>

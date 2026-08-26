@@ -110,6 +110,19 @@ body {
   font-family: var(--font-ui);
 }
 
+/*
+ * 瀏覽器對 <button> 的預設游標是箭頭而非手指（不同於 <a>），
+ * Tailwind preflight 也不會補上 —— 專案內所有可點擊的 button 因此都要靠這條規則，
+ * 而不是逐一在元件上補 cursor-pointer class。
+ */
+button:not(:disabled) {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 /* ── 共用元件樣式 ──────────────────────────────────────────────────── */
 
 .ac-card {
@@ -119,12 +132,23 @@ body {
   box-shadow: var(--shadow);
 }
 
-/* Eyebrow 徽章：AGENTCOPILOT / 選擇組織 / 載入中 / 無組織 */
+/*
+ * Eyebrow 徽章：AGENTCOPILOT / 選擇組織。
+ *
+ * ⚠️ 2026-08-26 修正：畫布截圖（docs/wireframe/01-login_*.png、02-organization_*.png）
+ *    是藍底白字的實心徽章，先前這裡只抄到字級，漏了背景色 —— DESIGN_TOKENS.md §2 的
+ *    表格同樣只列字級，一併補正。
+ */
 .ac-eyebrow {
-  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  font-size: 0.84375rem; /* 13.5px */
   font-weight: 700;
   letter-spacing: .06em;
-  color: var(--text-3);
+  color: var(--navy-fg);
+  background: var(--navy);
+  padding: 3px 8px;
+  border-radius: 6px;
 }
 
 .ac-mono {
@@ -132,25 +156,25 @@ body {
 }
 
 .ac-title {
-  font-size: 19px;
+  font-size: 1.34375rem; /* 21.5px */
   font-weight: 700;
   color: var(--text);
 }
 
 .ac-subtitle {
-  font-size: 12.5px;
+  font-size: 0.9375rem; /* 15px */
   line-height: 1.6;
   color: var(--text-2);
 }
 
 .ac-label {
-  font-size: 12px;
+  font-size: 0.90625rem; /* 14.5px */
   font-weight: 500;
   color: var(--text-2);
 }
 
 .ac-status-label {
-  font-size: 10.5px;
+  font-size: 0.8125rem; /* 13px */
   font-weight: 700;
   letter-spacing: .08em;
   color: var(--text-3);
@@ -162,7 +186,7 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--border);
   color: var(--text);
-  font-size: 13.5px;
+  font-size: 1rem; /* 16px */
 }
 
 .ac-input:focus {
@@ -176,7 +200,7 @@ body {
   border-radius: 8px;
   background: var(--navy);
   color: var(--navy-fg);
-  font-size: 13.5px;
+  font-size: 1rem; /* 16px */
   font-weight: 500;
 }
 
@@ -189,12 +213,16 @@ body {
   cursor: not-allowed;
 }
 
+/*
+ * ⚠️ 2026-08-26：這裡原本漏掉，沒跟上第一輪的字級調整 —— 補上，
+ *    對齊 .ac-label 同樣源自原始 12px 的字級（12 → 13.5 → 14.5px）。
+ */
 .ac-alert-warn {
   background: var(--warn-bg);
   border: 1px solid var(--warn-bd);
   color: var(--warn);
   border-radius: 8px;
-  font-size: 12px;
+  font-size: 0.90625rem; /* 14.5px */
 }
 
 /* 骨架屏 shimmer —— 1b 載入中狀態 */

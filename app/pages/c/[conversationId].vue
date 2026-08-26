@@ -162,13 +162,13 @@ const title = computed(() =>
             <UIcon :name="sidebarCollapsed ? 'i-lucide-panel-left-open' : 'i-lucide-panel-left-close'" class="size-4" />
           </button>
 
-          <h1 class="ac-mono min-w-0 truncate text-[14px] font-semibold">{{ title }}</h1>
+          <h1 class="ac-mono min-w-0 truncate text-[1.03125rem] font-semibold">{{ title }}</h1>
 
           <div class="ml-auto flex shrink-0 items-center gap-2">
             <button
               v-if="!view.viewerJoined.value"
               type="button"
-              class="ac-btn-primary h-8 px-3 text-[12.5px]"
+              class="ac-btn-primary h-8 px-3 text-[0.9375rem]"
               :disabled="view.busy.value"
               @click="view.join()"
             >
@@ -177,7 +177,7 @@ const title = computed(() =>
             <button
               v-else
               type="button"
-              class="h-8 rounded-lg border px-3 text-[12.5px] transition-colors disabled:opacity-50"
+              class="h-8 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
               :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
               :disabled="view.busy.value"
               @click="view.leave()"
@@ -222,7 +222,7 @@ const title = computed(() =>
 
       <p
         v-else-if="view.messages.value.length === 0"
-        class="flex flex-1 items-center justify-center text-[12.5px]"
+        class="flex flex-1 items-center justify-center text-[0.9375rem]"
         :style="{ color: 'var(--text-3)' }"
       >
         {{ $t('conversation.empty') }}

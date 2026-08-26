@@ -57,7 +57,7 @@ function select(id: string): void {
     <section class="flex min-h-0 flex-1 items-center justify-center">
       <div class="max-w-sm space-y-2 px-6 text-center">
         <UIcon name="i-lucide-messages-square" class="size-8" :style="{ color: 'var(--text-3)' }" />
-        <p class="text-[13px]" :style="{ color: 'var(--text-2)' }">
+        <p class="text-[0.96875rem]" :style="{ color: 'var(--text-2)' }">
           {{ $t('conversation.selectPrompt') }}
         </p>
       </div>
