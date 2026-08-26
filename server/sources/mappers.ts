@@ -100,14 +100,18 @@ export function createSenderResolver(
 // ─────────────────────────────────────────────────────────────
 
 const EXT_KIND: ReadonlyArray<readonly [RegExp, Attachment['kind']]> = [
-  [/\.(mp3|m4a|aac|ogg|opus|wav|amr|caf)$/i, 'audio'],
   [/\.(jpe?g|png|gif|webp|heic|bmp)$/i, 'image'],
-  [/\.(mp4|mov|webm|avi|mkv)$/i, 'video'],
+  [/\.pdf$/i, 'pdf'],
 ]
 
 /**
- * SDK 的 MessageType 是 text|image|quick_reply|file|pdf —— 沒有 audio。
- * 實測資料中語音與圖片都可能落在 'file'，因此需再看檔名副檔名。
+ * SDK 的 MessageType 是 text|image|quick_reply|file|pdf。
+ * 實測資料中圖片也可能落在 'file'，因此 `file` 需再看檔名副檔名。
+ *
+ * ⚠️ **`pdf` 不可併入 `file`**（§11.4）。兩者的能力邊界相反：
+ * `pdf` 有直接可用的 url、走 vision／文件分析、已納入 MVP；
+ * 舊資料型 `file` 只有 `{name, media_id}`、無 url、排除在 MVP 外。
+ * 併成同一個值不會有型別錯誤，只會讓 UI 把可分析的 PDF 標成「無法預覽」。
  */
 export function detectAttachmentKind(
   type: string,
@@ -115,7 +119,7 @@ export function detectAttachmentKind(
 ): Attachment['kind'] | null {
   if (type === 'text' || type === 'quick_reply') return null
   if (type === 'image') return 'image'
-  if (type === 'pdf') return 'file'
+  if (type === 'pdf') return 'pdf'
 
   const name = filename ?? ''
   for (const [re, kind] of EXT_KIND) {
@@ -125,7 +129,8 @@ export function detectAttachmentKind(
 }
 
 /**
- * 實測的附件 content 形狀：`{ name, media_id }`。
+ * 實測的附件 content 形狀依型別而定（§11.4、§19.1 #11）：
+ * `image`／`pdf` 帶直接可用的 `url`；舊資料型 `file` 只有 `{ name, media_id }`。
  * SDK 的 MessageContent 型別未宣告 media_id，故此處自行擴充。
  */
 interface AttachmentContent {
@@ -207,16 +212,18 @@ export function toMessage(
         id: c.media_id ?? raw.id,
         kind,
         filename: filename || raw.id,
-        // ⚠️ 實測 content 沒有 url，只有 media_id —— 取檔需另外解析。
+        // ⚠️ `image`／`pdf` 有直接可用的 url；舊資料型 `file` 只有 media_id，
+        //    此處會是 undefined —— 取檔需另外解析（§19.1 #11）。
         url: c.url,
-        // ⚠️ 平台未提供轉錄或圖片描述。caption 是使用者附註，不是 AI 產生的
-        //    描述，兩者不可混用（見 IMBRACE_QUESTIONS H-2c）。
+        // ⚠️ 平台未提供轉錄或圖片描述（H-2a）。caption 是上傳時系統帶入的
+        //    原始檔名，非使用者輸入也非 AI 描述，且客戶上傳時為空（H-2c）——
+        //    因此不可拿它當描述來源，vision／文件分析是必要的。
         transcriptSource: 'none',
       }]
     : undefined
 
-  // 統一的可分析文字。附件訊息在平台未文字化的情況下會是空字串 ——
-  // 這正是 M2 是否需自建 STT / vision 的判斷依據。
+  // 統一的可分析文字。平台不做描述／OCR，因此附件訊息在 M1 多半是空字串
+  // （客戶上傳時連 caption 都沒有）—— M2 由自建 vision／文件分析補上。
   const text = c.text ?? c.caption ?? ''
 
   return {

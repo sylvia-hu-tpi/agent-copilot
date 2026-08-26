@@ -13,12 +13,19 @@ export type SenderType = 'customer' | 'ai' | 'agent' | 'unknown'
 
 export interface Attachment {
   id: string
-  kind: 'image' | 'audio' | 'video' | 'file'
+  /**
+   * ⚠️ `pdf` 必須與 `file` 分開 —— 兩者的能力邊界完全不同（§11.4）：
+   * `image`／`pdf` 有直接可用的 `url`，走自建 vision／文件分析，已納入 MVP；
+   * 舊資料型 `file` 只有 `{name, media_id}`、無 url，僅顯示檔名標示「無法預覽」。
+   * 併成同一個值就抹掉了這個區分，UI 會把可分析的 PDF 當成不可預覽的檔案。
+   *
+   * 不含 `audio`／`video`：iMBrace 平台不支援語音訊息，且客戶端上傳介面
+   * 只接受圖片與 PDF（H-2a／H-2e 已確認）。
+   */
+  kind: 'image' | 'pdf' | 'file'
   filename: string
   url?: string
-  /** 語音時長（秒） */
-  durationSec?: number
-  /** 平台端或我方產生的文字化內容（STT 轉錄 / 圖片描述 / OCR） */
+  /** 我方產生的文字化內容（vision／文件分析）。平台不提供描述或 OCR */
   transcript?: string
   /** transcript 的來源，供成本控制與品質判斷 */
   transcriptSource?: 'platform' | 'ours' | 'none'
@@ -34,7 +41,7 @@ export interface Message {
     id?: string
     name?: string
   }
-  /** 統一的可分析文字：原文、語音轉錄、或圖片描述 */
+  /** 統一的可分析文字：原文，或附件的 vision／文件分析描述 */
   text: string
   attachments?: Attachment[]
 }

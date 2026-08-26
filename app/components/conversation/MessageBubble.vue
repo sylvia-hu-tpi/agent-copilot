@@ -69,8 +69,7 @@ const time = computed(() => {
 
 const attachmentIcon: Record<string, string> = {
   image: 'i-lucide-image',
-  audio: 'i-lucide-mic',
-  video: 'i-lucide-video',
+  pdf: 'i-lucide-file-text',
   file: 'i-lucide-paperclip',
 }
 </script>
@@ -101,8 +100,9 @@ const attachmentIcon: Record<string, string> = {
       <p v-if="message.text" class="whitespace-pre-wrap break-words" :class="{ 'ac-mono': isInternal }">{{ message.text }}</p>
 
       <!--
-        ⚠️ 附件目前只顯示檔名 —— 實測 content 只有 { name, media_id }，沒有 url，
-           取檔需另外解析 media_id（IMBRACE_QUESTIONS H-2d）。這是 M1 刻意接受的暫行方案。
+        ⚠️ M1 只顯示檔名與型別。`image`／`pdf` 實測有直接可用的 url，
+           縮圖與 vision／文件分析的描述是 M2 的範圍（§11.4）；
+           舊資料型 `file` 無 url，僅能標示「無法預覽」。
       -->
       <ul v-if="message.attachments?.length" class="mt-1.5 space-y-1">
         <li
