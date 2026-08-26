@@ -10,6 +10,12 @@
 > 目前涵蓋 **1a（登入）／1b（選擇組織）**。1c／1d（主工作區）截圖已備妥，文字規格待後續擴充。
 >
 > 對應頁面：`app/pages/login.vue`（1a）、`app/pages/organization.vue`（1b）。見 `ARCHITECTURE.md` §5.1。
+>
+> ⚠️ **2026-08-26**：`app/layouts/console.vue`（工作區頂欄）的 LOGO 已改用 `.ac-eyebrow`
+> （見下方修正後的規格，與 1a/1b 共用同一顆元件，非猜測值），但同一個頂欄裡的「｜」分隔線、
+> 組織名稱可點擊切換＋chevron，以及 `app/components/conversation/Sidebar.vue`（對話列表的頭像／
+> 頻道 icon）**沒有**對應的 1c 逐字規格（見上一段「文字規格待後續擴充」），是依現有 token 與既有
+> 頁面風格做的**臨場判斷**。若之後正式產出 1c 的 Copilot 面板設計，建議一併把這幾處定案，而不是只補右欄。
 
 | Artboard | 說明 | 截圖 |
 |---|---|---|
@@ -84,7 +90,7 @@
 | 用途 | size | weight | 備註 |
 |---|---|---|---|
 | 標題（登入／輸入驗證碼） | 19px | 700 | |
-| Eyebrow 徽章（AGENTCOPILOT／選擇組織／artboard 編號） | 11px | 700 | letter-spacing .06em |
+| Eyebrow 徽章（AGENTCOPILOT／選擇組織／artboard 編號） | 11px | 700 | letter-spacing .06em；**實心藍底白字**（`background:var(--navy)`／`color:var(--navy-fg)`），非純文字，2026-08-26 校正——先前這裡漏記背景色 |
 | 說明文字（subtitle） | 12.5px | 400 | line-height 1.6 |
 | 欄位 label | 12px | 500 | |
 | 輸入框文字 | 13.5px | 400 | OTP 格另計，見下 |
@@ -95,6 +101,14 @@
 | 組織 meta（org_id · role） | 11.5px | 400 | `IBM Plex Mono` |
 | 狀態標籤（載入中／無組織／送出中／錯誤／驗證碼錯誤） | 10.5px | 700 | letter-spacing .08em，color `var(--text-3)` |
 | 錯誤內文 | 12px | 400 | color `var(--warn)` |
+
+> ⚠️ **刻意背離本表數字，已分兩輪調整**：2026-08-26 第一輪全面加大約 1.5px 並從固定 px
+> 改為 `rem`；同日第二輪再加大約 1px。兩輪疊加後，本表原始數字與實際顯示大小相差約 2.5px
+> （如 `12.5px` 原表值 → 實作 `text-[0.90625rem]` ≈ 14.5px）。改用 `rem` 也讓瀏覽器/OS 的
+> 字級偏好設定能生效。實作值見 `app/assets/css/main.css`（`.ac-title`／`.ac-eyebrow`／
+> `.ac-subtitle` 等）與各元件的 `text-[…rem]` class，不等於本表所列的原始凍結數字。
+> **日後若依附錄流程重新核對畫布，字級這一項不要照畫布數字改回去**——這是使用者確認過、
+> 分兩次做的刻意調整，不是尚未同步的落差。
 
 ---
 
