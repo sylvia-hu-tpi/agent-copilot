@@ -21,13 +21,17 @@
 
 ## 2. 重試／退避策略的實作位置與參數
 
-**Decision**: 新增 `server/services/ai/retry-policy.ts`，提供一個純函式 `classifyFailure(error) → 'transient' | 'permanent'` 與一個 `withRetry(fn, opts)` 執行器：指數退避（例如 1s → 4s，兩次以內），自首次失敗起算總重試時間預算 30 秒（含執行時間），逾預算即停止並轉為 `error` 狀態。`copilot-analysis.ts` 呼叫 `AIProvider` 時統一經過此執行器包裹。429 不進入此重試迴圈，而是交給既有的全域退避機制（若尚未存在全域 429 佇列，本功能只需確保**不**在區塊層級各自重試造成風暴，全域退避佇列的完整實作可留待 M3 依實際 rate limit 規格補齊，詳見 `IMBRACE_QUESTIONS.md`）。
+**Decision**: 新增 `server/services/ai/retry-policy.ts`，提供一個純函式 `classifyFailure(error) → 'transient' | 'rate-limited' | 'permanent'` 與一個 `withRetry(fn, opts)` 執行器。
 
-**Rationale**: FR-014 明確區分暫時性（逾時／429／5xx）與非暫時性失敗，且要求重試進度可視（「重試中 (1/2)」），與單純的「失敗就顯示錯誤」邏輯不同，需要獨立、可單元測試的策略模組而非散落在呼叫端各自 try/catch。獨立模組也符合憲法 2.4 的反面教訓——不是為了抽象而抽象，而是因為這段邏輯本身有非平凡的狀態機（判別 → 退避 → 計數 → 逾預算轉態），值得有自己的測試（`test/ai-retry-policy.test.ts`）。
+**規範性數值一律以 `spec.md` FR-014 為唯一權威來源**，本檔不再重述可能過期的副本；實作與測試皆引用該處：單次呼叫逾時 15 秒、退避 1s → 4s、自首次失敗起算總預算 40 秒（含執行時間）、最多 2 次重試。逾預算或次數用盡即轉 `error`。`copilot-analysis.ts` 呼叫 `AIProvider` 時統一經過此執行器包裹。
+
+`classifyFailure()` 刻意回傳三值而非二值：`'rate-limited'`（429）在 M2 的處置與 `'permanent'` 相同（直接轉 `error`、不自動重試），但兩者的**原因**不同，M3 全域退避佇列建立時只有 `'rate-limited'` 會改接佇列。若現在為省事而把 429 併入 `'permanent'`，M3 將無從辨識哪些失敗該進佇列——這正是 `IMBRACE_QUESTIONS.md` G-2 書面規格到位後最容易被漏掉的接縫。
+
+**Rationale**: FR-014 明確區分暫時性（單次逾時／5xx）、rate limit（429）與非暫時性失敗（含 Zod 驗證失敗），且要求重試進度可視（「重試中 (1/2)」），與單純的「失敗就顯示錯誤」邏輯不同，需要獨立、可單元測試的策略模組而非散落在呼叫端各自 try/catch。獨立模組也符合憲法 2.4 的反面教訓——不是為了抽象而抽象，而是因為這段邏輯本身有非平凡的狀態機（判別 → 退避 → 計數 → 逾預算轉態），值得有自己的測試（`test/ai-retry-policy.test.ts`）。
 
 **Alternatives considered**：
 - 直接複用 `app/stores/stream.ts` 既有的 SSE 重連退避邏輯：兩者退避的對象不同（一個是連線層級的重連，一個是單次 AI 呼叫層級的重試），耦合會讓修改其中一個時意外影響另一個，否決；但退避數列的**參數選擇**（先短後長、加上上限）沿用相同直覺。
-- 全部交給 `AIProvider` 實作內部自行重試：會讓 `MockAIProvider` 與未來 `ImbraceAgentProvider` 各自重複實作退避邏輯，且無法統一套用 FR-014 的「總時間 ≤ 30 秒」全域上限（跨兩次呼叫的預算需要在呼叫方累計），否決。
+- 全部交給 `AIProvider` 實作內部自行重試：會讓 `MockAIProvider` 與未來 `ImbraceAgentProvider` 各自重複實作退避邏輯，且無法統一套用 FR-014 的「總預算 ≤ 40 秒」上限（跨兩次呼叫的預算需要在呼叫方累計），否決。
 
 ## 3. 附件唯一輪（無文字）在情緒序列中的資料形狀
 

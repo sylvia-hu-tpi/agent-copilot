@@ -23,8 +23,8 @@ analyzing ──(成功)──▶ ready
 analyzing ──(暫時性失敗)──▶ retrying
 analyzing ──(非暫時性失敗)──▶ error
 retrying ──(重試成功)──▶ ready
-retrying ──(重試仍失敗 且 次數<2 且 未逾30秒)──▶ retrying
-retrying ──(次數用盡 或 逾30秒 或 非暫時性)──▶ error
+retrying ──(重試仍失敗 且 次數<2 且 未逾40秒)──▶ retrying
+retrying ──(次數用盡 或 逾40秒 或 非暫時性 或 429)──▶ error
 error ──(客服手動重試，FR-008)──▶ analyzing
 ready ──(新的增量分析觸發，FR-004)──▶ analyzing   ⚠️ 已顯示內容不清空，見下方「呈現規則」
 ```
