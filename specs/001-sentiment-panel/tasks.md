@@ -128,8 +128,8 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 - [x] T028 [P] 於 `i18n/locales/zh-TW.json` 補齊情緒面板文案（empty／analyzing／retrying／error／重試按鈕／情緒示警標籤），憲法 8.5
 - [x] T029 [P] 更新 `docs/ARCHITECTURE.md` §11.5 的 `SentimentPoint` 型別範例以反映 `kind` 判別欄位與 `SentimentMarker` 的新增（data-model.md 附註），並 grep 確認無其他文件仍引用舊形狀（`CLAUDE.md` 正典修改後的必要動作）
-- [ ] T030 依 [quickstart.md](./quickstart.md) 手動走完三個情境的驗證步驟
-  > ⚠️ **2026-08-26 記錄**（實作 session 無瀏覽器存取，本項留給使用者親自操作）：
+- [x] T030 依 [quickstart.md](./quickstart.md) 手動走完三個情境的驗證步驟
+  > ⚠️ **2026-08-26 記錄**（實作 session 無瀏覽器存取，本項由使用者親自操作完成）：
   >
   > 使用者已在真實 `IMBRACE_ENV=stable` 環境親自操作並回報兩個問題，皆已定位、修復、
   > 補上迴歸測試並重新驗證全綠（見下方「已由使用者操作發現並修復」）。之後使用者也已
@@ -168,6 +168,16 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
   >    依 `sentimentBlock.timeline` 已涵蓋的 messageId 集合過濾。
   >    兩項修復皆已補上迴歸測試（`test/copilot-analysis.test.ts` 新增 5 個測試），
   >    typecheck／156 個 vitest／build／smoke 全數重新驗證通過。
+  >
+  > **順帶修復的既有 UI 缺口**（使用者實機操作時發現，嚴格說不屬於本功能規格，但影響
+  > 本次驗收的可用性，一併處理）：
+  > 3. 右欄 Copilot 面板未比照左側欄做拖曳調寬把手（純屬本次新增右欄時的疏漏）。
+  >    修復：`app/pages/c/[conversationId].vue` 新增拖曳把手，範圍 320–520px、預設 380px
+  >    （依 `docs/DESIGN_TOKENS.md` §7.1 的設計稿數字），寬度存 `localStorage`。
+  > 4.（既有 M1 缺口，非本功能引入）側欄清單的 `mode`／小綠人圖示只在整批重載
+  >    （`conversations.load()`）時更新，JOIN／LEAVE／切換模式當下不會連動，
+  >    客服會覺得「按了 JOIN 但列表沒反應」。修復：新增 watcher，`view.control.value.mode`
+  >    一有變化就直接同步進側欄快取的對應項目，不必整批重打 API。
 - [x] T031 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認全綠
 
 ---
