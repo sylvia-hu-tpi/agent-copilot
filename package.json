@@ -33,7 +33,9 @@
     "build:only": "nuxt build",
     "spike:presence": "tsx scripts/spike/12-presence-watch.ts",
     "spike:write": "tsx scripts/spike/13-write-path.ts",
-    "spike:files": "tsx scripts/spike/14-contact-files.ts"
+    "spike:files": "tsx scripts/spike/14-contact-files.ts",
+    "spike:copilot-agents": "tsx scripts/spike/15-copilot-agents.ts",
+    "spike:verify-provider": "tsx scripts/spike/16-verify-copilot-provider.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",
