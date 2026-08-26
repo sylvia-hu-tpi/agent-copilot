@@ -11,7 +11,7 @@ export type AnalysisBlockStatus =
   | 'empty'      // 尚無可供分析內容（FR-009）——例如剛 JOIN 且客戶尚無發言
   | 'analyzing'  // 首次分析進行中（FR-011）
   | 'retrying'   // 暫時性失敗後自動重試中，need 附帶重試次數（FR-014）
-  | 'ready'      // 已有可顯示內容（可能是漸進呈現中的部分欄位，FR-011）
+  | 'ready'      // 該區塊本身已完成（另一區塊可能仍在 analyzing——區塊層級漸進呈現，FR-011 2026-08-26 修訂）
   | 'error'      // 自動重試用盡或非暫時性失敗，等待手動重試（FR-006、FR-008）
 ```
 
@@ -39,6 +39,9 @@ ready ──(新的增量分析觸發，FR-004)──▶ analyzing   ⚠️ 已�
 export interface SummaryBlock {
   status: AnalysisBlockStatus
   retryAttempt?: number          // status === 'retrying' 時的當前次數（1 或 2），對應 FR-014「重試中 (1/2)」
+  /** 本輪失敗序列的首次失敗時間戳（ISO8601），僅 status ∈ {retrying, error} 時有值，成功或未曾失敗時為 undefined。
+   *  供前端／測試驗證 FR-014 的 40 秒預算是否過期（now - firstFailureAt），不需自行推算或另外存底（2026-08-26 新增，CHK036） */
+  firstFailureAt?: string
   summary: ConversationSummary | null   // status 為 empty/analyzing（首次）/error（從未成功過）時可能為 null
   updatedAt: string              // ISO8601，本次區塊狀態變化的時間
 }
@@ -71,6 +74,8 @@ export interface ConversationSummary {
 export interface SentimentBlock {
   status: AnalysisBlockStatus
   retryAttempt?: number
+  /** 同 SummaryBlock.firstFailureAt，語意與用途相同（2026-08-26 新增，CHK036） */
+  firstFailureAt?: string
   /** 全量時間軸（含分數點與純附件標記），依時間排序。前端自行取最近 50 點繪 sparkline（FR-015） */
   timeline: SentimentTimelineEntry[]
   /** 依全量 timeline 算出的統計值，供未來全程回顧使用；不受「僅繪最近 50 點」影響（FR-015） */
@@ -111,12 +116,35 @@ export type SentimentTimelineEntry = SentimentPoint | SentimentMarker
 不落地為資料型別，而是前端／後端共用的純函式（`shared/utils/` 或 `shared/types/copilot.ts` 內的 helper）：
 
 ```ts
+/** 單點是否落入示警等級——僅供「這一點本身」的判斷，不是面板目前的示警狀態 */
 export function isSentimentAlert(label: SentimentPoint['label']): boolean {
   return label === 'frustrated' || label === 'angry'
 }
+
+/**
+ * 面板「目前」是否應顯示示警——具遲滯（hysteresis）的解除規則（FR-003 2026-08-26 修訂）。
+ *
+ * ⚠️ 不能只看最新一點：客戶連續多則挫折/生氣發言中，若只因最後一則語氣稍微和緩
+ * 就判定「已解除」，會在客戶其實仍在氣頭上時告訴客服「沒事了」——假訊號比沒有示警更糟。
+ * 觸發沿用 isSentimentAlert()（單點達挫折/生氣即觸發）；解除則要求回升到「擔憂」以下
+ * （calm／neutral），「擔憂」本身仍視為尚未脫離風險的中繼區間、持續示警。
+ *
+ * 純函式，僅讀 timeline（全量，不受最近 50 點顯示上限影響），不需要額外的持久化狀態——
+ * 從最新一點往回找，先遇到 calm／neutral 即代表已解除，先遇到 frustrated／angry 則仍在示警中。
+ */
+export function isSentimentAlerting(timeline: SentimentTimelineEntry[]): boolean {
+  for (let i = timeline.length - 1; i >= 0; i--) {
+    const entry = timeline[i]
+    if (entry.kind !== 'point') continue // SentimentMarker 不參與判定（FR-012）
+    if (entry.label === 'frustrated' || entry.label === 'angry') return true
+    if (entry.label === 'calm' || entry.label === 'neutral') return false
+    // label === 'concerned'：中繼區間，尚未解除，繼續往回找
+  }
+  return false
+}
 ```
 
-對應 FR-003、spec.md Assumptions 的「以標籤絕對等級判定，不採單輪下降幅度」決策。
+對應 FR-003、spec.md Assumptions 的「以標籤絕對等級判定，不採單輪下降幅度」決策；解除的遲滯規則見 FR-003 2026-08-26 修訂。
 
 ## CopilotAnalysisState（獨立於 CopilotSession，`server/state/types.ts`）
 

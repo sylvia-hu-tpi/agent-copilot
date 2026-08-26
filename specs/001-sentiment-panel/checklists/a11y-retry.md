@@ -13,64 +13,64 @@
 
 ## A. 示警呈現要素的完整性（FR-003／憲法 8.1）
 
-- [ ] CHK001 「圖示」要素的語意來源是否已定義——固定一枚示警圖示，或隨情緒標籤（挫折／生氣）而異？[Completeness, Spec §FR-003]
-- [ ] CHK002 「文字標籤」的內容是否已定義——指情緒標籤本身（「挫折」／「生氣」），或另一段示警文案？若兩者並存，其分工是否寫明？[Ambiguity, Spec §FR-003]
-- [ ] CHK003 「挫折」與「生氣」兩級是否需要彼此可區分的呈現，或共用同一組示警樣式？[Gap, Spec §FR-003]
-- [ ] CHK004 示警的作用範圍是否已定義——標記於該筆評分點上，或整個情緒區塊層級的示警帶？[Gap, Spec §FR-003]
-- [ ] CHK005 示警的解除條件是否已定義——情緒標籤回升後既有示警應消失，或保留「本段對話曾出現」的痕跡？[Gap, Edge Case]
-- [ ] CHK006 「主動示警」對螢幕閱讀器使用者如何成立是否已定義？三要素只解決色覺辨識，未涵蓋看不到畫面的情況。[Gap, Constitution §8.1]
-- [ ] CHK007 顏色要素是否附帶可量化的對比度門檻（如 WCAG AA 4.5:1），使「有顏色」不等同於「隨便上色即通過」？[Measurability, Gap]
+- [x] CHK001 「圖示」要素的語意來源是否已定義——固定一枚示警圖示，或隨情緒標籤（挫折／生氣）而異？[Completeness, Spec §FR-003]
+- [x] CHK002 「文字標籤」的內容是否已定義——指情緒標籤本身（「挫折」／「生氣」），或另一段示警文案？若兩者並存，其分工是否寫明？[Ambiguity, Spec §FR-003]
+- [x] CHK003 「挫折」與「生氣」兩級是否需要彼此可區分的呈現，或共用同一組示警樣式？[Gap, Spec §FR-003]
+- [x] CHK004 示警的作用範圍是否已定義——標記於該筆評分點上，或整個情緒區塊層級的示警帶？[Gap, Spec §FR-003]
+- [x] CHK005 示警的解除條件是否已定義——情緒標籤回升後既有示警應消失，或保留「本段對話曾出現」的痕跡？[Gap, Edge Case]
+- [x] CHK006 「主動示警」對螢幕閱讀器使用者如何成立是否已定義？三要素只解決色覺辨識，未涵蓋看不到畫面的情況。[Gap, Constitution §8.1]
+- [x] CHK007 顏色要素是否附帶可量化的對比度門檻（如 WCAG AA 4.5:1），使「有顏色」不等同於「隨便上色即通過」？[Measurability, Gap]
 
 ## B. 憲法 8.1 在其他狀態資訊上的適用邊界
 
-- [ ] CHK008 FR-009 的「尚無資料／載入中／錯誤三者視覺可區分」是否明確要求同樣符合 8.1 三要素，或僅要求「可區分」？[Consistency, Spec §FR-009 ↔ Constitution §8.1]
-- [ ] CHK009 `retrying`（重試中）狀態的呈現是否也受 8.1 約束？FR-014 目前只要求在文字上可與「分析中」分辨。[Gap, Spec §FR-014]
-- [ ] CHK010 FR-012 的純附件中性標記，其呈現是否已表態適用或不適用 8.1（該標記同屬狀態資訊）？[Coverage, Spec §FR-012]
-- [ ] CHK011 憲法 8.1「擴大適用至所有狀態資訊」與本規格逐條呈現要求之間的適用邊界，是否已寫在 spec 或 plan 中，而非留給實作者逐條推斷？[Traceability, Constitution §8.1]
+- [x] CHK008 FR-009 的「尚無資料／載入中／錯誤三者視覺可區分」是否明確要求同樣符合 8.1 三要素，或僅要求「可區分」？[Consistency, Spec §FR-009 ↔ Constitution §8.1]
+- [x] CHK009 `retrying`（重試中）狀態的呈現是否也受 8.1 約束？FR-014 目前只要求在文字上可與「分析中」分辨。[Gap, Spec §FR-014]
+- [x] CHK010 FR-012 的純附件中性標記，其呈現是否已表態適用或不適用 8.1（該標記同屬狀態資訊）？[Coverage, Spec §FR-012]
+- [x] CHK011 憲法 8.1「擴大適用至所有狀態資訊」與本規格逐條呈現要求之間的適用邊界，是否已寫在 spec 或 plan 中，而非留給實作者逐條推斷？[Traceability, Constitution §8.1]
 
 ## C. 示警判定條件的可測性（FR-003／SC-003）
 
-- [ ] CHK012 示警判定的輸入是否明確——「最新一筆評分點」或「本次更新新增的任一筆評分點」？[Ambiguity, Spec §FR-003 ↔ Tasks §T020]
-- [ ] CHK013 歷史輪曾落至挫折／生氣但最新輪已回升時，示警的應有狀態是否已定義？[Gap, Edge Case]
-- [ ] CHK014 情緒標籤的等級集合與其排序是否已在需求層列舉完整，使「落至該兩級」有唯一解？[Completeness, Spec §FR-003, Assumptions]
-- [ ] CHK015 SC-003 的「被客服看見」是否已轉換為可客觀觀察的條件（例如示警已渲染且無需捲動、或事件送達後 N 秒內），而非主觀判定？[Measurability, Spec §SC-003]
-- [ ] CHK016 SC-003 是否已定義量測的起訖點，使其與 SC-005 的 10 秒門檻不致重複計時或互相涵蓋？[Clarity, Spec §SC-003, §SC-005]
+- [x] CHK012 示警判定的輸入是否明確——「最新一筆評分點」或「本次更新新增的任一筆評分點」？[Ambiguity, Spec §FR-003 ↔ Tasks §T020]
+- [x] CHK013 歷史輪曾落至挫折／生氣但最新輪已回升時，示警的應有狀態是否已定義？[Gap, Edge Case]
+- [x] CHK014 情緒標籤的等級集合與其排序是否已在需求層列舉完整，使「落至該兩級」有唯一解？[Completeness, Spec §FR-003, Assumptions]
+- [x] CHK015 SC-003 的「被客服看見」是否已轉換為可客觀觀察的條件（例如示警已渲染且無需捲動、或事件送達後 N 秒內），而非主觀判定？[Measurability, Spec §SC-003]
+- [x] CHK016 SC-003 是否已定義量測的起訖點，使其與 SC-005 的 10 秒門檻不致重複計時或互相涵蓋？[Clarity, Spec §SC-003, §SC-005]
 
 ## D. 重試／退避時序參數的可量化（FR-014）
 
-- [ ] CHK017 「指數退避」是否已量化為具體數列（初始延遲、倍率、單次上限）？spec 與 plan 僅有定性描述，唯一數值以「例如 1s → 4s」出現在 research.md。[Measurability, Spec §FR-014, Research #2]
-- [ ] CHK018 是否需要抖動（jitter）已明確表態（要或明確不要）？無表態會讓時序斷言與實作各自解釋。[Gap, Spec §FR-014]
-- [ ] CHK019 「最多 2 次」是否明確為「首次呼叫之外再 2 次（合計 3 次呼叫）」，而非合計 2 次呼叫？[Ambiguity, Spec §FR-014, Data-model `retryAttempt`]
-- [ ] CHK020 30 秒預算的終止語意是否已定義——「不得再發起新的重試」或「最後一次重試須在此前回應完畢」？[Ambiguity, Spec §FR-014 ↔ Research #2「含執行時間」]
-- [ ] CHK021 單次 AI 呼叫的逾時門檻是否已定義？缺此值則「逾時屬暫時性失敗」無從判定，30 秒預算亦無法推導出可斷言的時序。[Gap, Spec §FR-014]
-- [ ] CHK022 30 秒預算為每區塊各自一份或摘要與情緒共用一份，是否已定義？[Gap, Spec §FR-014, Assumptions（兩區塊獨立成敗）]
-- [ ] CHK023 時序斷言的容許誤差是否已定義（或明確授權以假時鐘量測），使「≤ 30 秒」不成為隨機器負載浮動的不穩定斷言？[Measurability, Gap]
-- [ ] CHK024 失敗路徑下「客服最久多久會看到結論」是否有端到端上限？SC-005 排除重試路徑並轉由 FR-014 規範，但 30 秒僅為重試預算、不含首次呼叫耗時。[Gap, Spec §SC-005, §FR-014]
+- [x] CHK017 「指數退避」是否已量化為具體數列（初始延遲、倍率、單次上限）？spec 與 plan 僅有定性描述，唯一數值以「例如 1s → 4s」出現在 research.md。[Measurability, Spec §FR-014, Research #2]
+- [x] CHK018 是否需要抖動（jitter）已明確表態（要或明確不要）？無表態會讓時序斷言與實作各自解釋。[Gap, Spec §FR-014]
+- [x] CHK019 「最多 2 次」是否明確為「首次呼叫之外再 2 次（合計 3 次呼叫）」，而非合計 2 次呼叫？[Ambiguity, Spec §FR-014, Data-model `retryAttempt`]
+- [x] CHK020 30 秒預算的終止語意是否已定義——「不得再發起新的重試」或「最後一次重試須在此前回應完畢」？[Ambiguity, Spec §FR-014 ↔ Research #2「含執行時間」]
+- [x] CHK021 單次 AI 呼叫的逾時門檻是否已定義？缺此值則「逾時屬暫時性失敗」無從判定，30 秒預算亦無法推導出可斷言的時序。[Gap, Spec §FR-014]
+- [x] CHK022 30 秒預算為每區塊各自一份或摘要與情緒共用一份，是否已定義？[Gap, Spec §FR-014, Assumptions（兩區塊獨立成敗）]
+- [x] CHK023 時序斷言的容許誤差是否已定義（或明確授權以假時鐘量測），使「≤ 30 秒」不成為隨機器負載浮動的不穩定斷言？[Measurability, Gap]
+- [x] CHK024 失敗路徑下「客服最久多久會看到結論」是否有端到端上限？SC-005 排除重試路徑並轉由 FR-014 規範，但 30 秒僅為重試預算、不含首次呼叫耗時。[Gap, Spec §SC-005, §FR-014]
 
 ## E. 失敗分類的覆蓋度（FR-014 第一、二項）
 
-- [ ] CHK025 429 的處理在 FR-014 內部是否一致？第一項將 429 列為「MUST 以指數退避自動重試最多 2 次」，第四項卻要求 429 改走全域退避、不由區塊各自重試。[Conflict, Spec §FR-014]
-- [ ] CHK026 「全域退避策略」本身是否有可驗收的定義（退避時序、佇列行為、跨區塊協調）？research.md 將完整實作延後至 M3，使本功能的 429 分支缺少驗收依據。[Gap, Research #2]
-- [ ] CHK027 AI 輸出未通過 Zod 驗證（憲法 4.2）屬暫時性或非暫時性失敗，是否已歸類？此類失敗在 FR-014 的兩個分類中皆未列舉。[Coverage, Gap, Spec §FR-014]
-- [ ] CHK028 連線層級錯誤（連線中斷、DNS 失敗、請求被中止）是否已歸類？FR-014 僅列舉逾時／429／5xx 與認證失敗／請求無效，未涵蓋全集。[Coverage, Gap]
-- [ ] CHK029 分類規則是否寫成可窮舉的判定依據（含未列舉錯誤的預設歸類），使每一條實作分支都有需求可對照？[Measurability, Spec §FR-014, Tasks §T021]
+- [x] CHK025 429 的處理在 FR-014 內部是否一致？第一項將 429 列為「MUST 以指數退避自動重試最多 2 次」，第四項卻要求 429 改走全域退避、不由區塊各自重試。[Conflict, Spec §FR-014]
+- [x] CHK026 「全域退避策略」本身是否有可驗收的定義（退避時序、佇列行為、跨區塊協調）？research.md 將完整實作延後至 M3，使本功能的 429 分支缺少驗收依據。[Gap, Research #2]
+- [x] CHK027 AI 輸出未通過 Zod 驗證（憲法 4.2）屬暫時性或非暫時性失敗，是否已歸類？此類失敗在 FR-014 的兩個分類中皆未列舉。[Coverage, Gap, Spec §FR-014]
+- [x] CHK028 連線層級錯誤（連線中斷、DNS 失敗、請求被中止）是否已歸類？FR-014 僅列舉逾時／429／5xx 與認證失敗／請求無效，未涵蓋全集。[Coverage, Gap]
+- [x] CHK029 分類規則是否寫成可窮舉的判定依據（含未列舉錯誤的預設歸類），使每一條實作分支都有需求可對照？[Measurability, Spec §FR-014, Tasks §T021]
 
 ## F. 重試狀態呈現與手動重試（FR-006／FR-008／FR-014 第三項）
 
-- [ ] CHK030 重試進度的必要資訊是否已定義（當前／總次數是否必要、是否需呈現下次重試倒數）？「重試中 (1/2)」為規範或僅為例示尚未表明。[Clarity, Spec §FR-014]
-- [ ] CHK031 手動重試（FR-008）是否重新給予一份完整的自動重試次數與 30 秒預算，是否已定義？[Gap, Spec §FR-008, §FR-014]
-- [ ] CHK032 手動重試是否有節流或次數上限的可量化要求？Edge Case 要求「持續失敗不得演變成干擾操作」，但未給可判定的條件。[Measurability, Spec Edge Cases]
-- [ ] CHK033 `analyzing`／`retrying` 期間重試入口的應有狀態是否已在需求層定義（停用、隱藏、或允許點擊後被拒）？契約已定義該情況回 409，spec 未表態。[Gap, Contracts copilot-retry-api §409 ↔ Spec §FR-008]
-- [ ] CHK034 客服切離對話（FR-010）期間正在進行的自動重試，其計數與 30 秒預算的延續行為是否已定義？[Coverage, Edge Case, Spec §FR-010]
+- [x] CHK030 重試進度的必要資訊是否已定義（當前／總次數是否必要、是否需呈現下次重試倒數）？「重試中 (1/2)」為規範或僅為例示尚未表明。[Clarity, Spec §FR-014]
+- [x] CHK031 手動重試（FR-008）是否重新給予一份完整的自動重試次數與 30 秒預算，是否已定義？[Gap, Spec §FR-008, §FR-014]
+- [x] CHK032 手動重試是否有節流或次數上限的可量化要求？Edge Case 要求「持續失敗不得演變成干擾操作」，但未給可判定的條件。[Measurability, Spec Edge Cases]
+- [x] CHK033 `analyzing`／`retrying` 期間重試入口的應有狀態是否已在需求層定義（停用、隱藏、或允許點擊後被拒）？契約已定義該情況回 409，spec 未表態。[Gap, Contracts copilot-retry-api §409 ↔ Spec §FR-008]
+- [x] CHK034 客服切離對話（FR-010）期間正在進行的自動重試，其計數與 30 秒預算的延續行為是否已定義？[Coverage, Edge Case, Spec §FR-010]
 
 ## G. 跨文件鏈的一致性與可追溯性
 
-- [ ] CHK035 退避的**規範性數值應落在哪一層文件**是否已確立？spec.md 與 plan.md 皆只有定性描述，唯一數值在 research.md 且標為「例如」，實作與測試因此缺少單一權威來源。[Traceability, Spec §FR-014 ↔ Plan Constraints ↔ Research #2]
-- [ ] CHK036 資料模型是否承載了驗收 30 秒預算所需的可觀測欄位（如首次失敗時間戳或剩餘預算）？`retryAttempt` 僅承載次數。[Completeness, Data-model §SummaryBlock／§SentimentBlock]
-- [ ] CHK037 tasks 對 429 的處理（T021 將 429 歸為 `transient` 並交由 `withRetry()`）是否與 FR-014「429 走全域退避、不在區塊層級重試」一致？[Conflict, Tasks §T021 ↔ Spec §FR-014]
-- [ ] CHK038 兩個區塊的重試進度呈現要求是否對稱？T026 為 `SentimentGauge` 定義了 `retrying` 進度，`SummaryCard`（T015／T025）僅涵蓋 empty／analyzing／ready／error。[Consistency, Tasks §T015／§T025 ↔ §T026, Spec §FR-014]
-- [ ] CHK039 quickstart 的退避驗證步驟是否具備可執行的量測程序（如何觸發、如何取得時序、以何為通過判準）？目前僅為「觀察自動重試行為」的定性描述。[Measurability, Quickstart 情境三 步驟 4]
-- [ ] CHK040 示警與重試相關的所有面向使用者文字（示警標籤、重試進度、錯誤說明）是否都有對應的 i18n 需求落點？[Coverage, Tasks §T028, Constitution §8.5]
+- [x] CHK035 退避的**規範性數值應落在哪一層文件**是否已確立？spec.md 與 plan.md 皆只有定性描述，唯一數值在 research.md 且標為「例如」，實作與測試因此缺少單一權威來源。[Traceability, Spec §FR-014 ↔ Plan Constraints ↔ Research #2]
+- [x] CHK036 資料模型是否承載了驗收 30 秒預算所需的可觀測欄位（如首次失敗時間戳或剩餘預算）？`retryAttempt` 僅承載次數。[Completeness, Data-model §SummaryBlock／§SentimentBlock]
+- [x] CHK037 tasks 對 429 的處理（T021 將 429 歸為 `transient` 並交由 `withRetry()`）是否與 FR-014「429 走全域退避、不在區塊層級重試」一致？[Conflict, Tasks §T021 ↔ Spec §FR-014]
+- [x] CHK038 兩個區塊的重試進度呈現要求是否對稱？T026 為 `SentimentGauge` 定義了 `retrying` 進度，`SummaryCard`（T015／T025）僅涵蓋 empty／analyzing／ready／error。[Consistency, Tasks §T015／§T025 ↔ §T026, Spec §FR-014]
+- [x] CHK039 quickstart 的退避驗證步驟是否具備可執行的量測程序（如何觸發、如何取得時序、以何為通過判準）？目前僅為「觀察自動重試行為」的定性描述。[Measurability, Quickstart 情境三 步驟 4]
+- [x] CHK040 示警與重試相關的所有面向使用者文字（示警標籤、重試進度、錯誤說明）是否都有對應的 i18n 需求落點？[Coverage, Tasks §T028, Constitution §8.5]
 
 ## Notes
 
@@ -94,7 +94,23 @@
 | CHK027、CHK028、CHK029 | Zod 驗證失敗歸為非暫時性；新增「未列舉失敗預設為非暫時性」的兜底規則 | `spec.md` FR-014 |
 | CHK038 | `SummaryCard` 補上 `retrying` 進度顯示，與 `SentimentGauge` 對稱 | `tasks.md` T025 |
 | CHK039 | quickstart 的退避驗證改寫為可執行程序，含通過判準與 ±300ms 容差 | `quickstart.md` 情境三 步驟 4 |
+| CHK006、CHK007 | 示警文字標籤加 `aria-live="polite"`；顏色對比 MUST 符合 WCAG AA 4.5:1 | `spec.md` FR-003 |
+| CHK001、CHK002、CHK003、CHK004 | **刻意不鎖定**具體圖示／文案／單點或區塊層級——`docs/DESIGN_TOKENS.md` §7.2 對此的描述信度低（肉眼讀圖）且用詞與現行標籤集合不符，改為要求 `/speckit-implement` 動工前先核對 Claude Design 畫布上 `CopilotPanel` 現行版本，落差需先釐清再動工；僅鎖定「兩級 MUST 可互相區分」這條硬性下限 | `spec.md` FR-003 2026-08-26 修訂、`tasks.md` T020 |
+| CHK008、CHK009、CHK010、CHK011 | 明確引用：`empty`／`analyzing`／`retrying`／`ready`／`error` 五態與 FR-012 中性標記，同受憲法 8.1（v2.0.0 已擴大適用至所有狀態資訊）約束，非僅情緒示警 | `spec.md` FR-009 補充 |
+| CHK014 | 標籤完整順序 `calm < neutral < concerned < frustrated < angry` 明確列舉並對應 `data-model.md` 列舉值 | `spec.md` Assumptions 補充 |
+| CHK012、CHK013 | 示警判定輸入為**本次更新新增的任一筆評分點**（不只看最新一點），避免 debounce 批次中間曾落入挫折/生氣、但最後一則語氣稍緩就被掩蓋；解除條件見下一列 | `spec.md` FR-003 2026-08-26 修訂 |
+| CHK005（修正） | ⚠️ 本欄 2026-08-26 首次記錄時誤寫為「反映最新一筆評分點，回升即自動消失」，經使用者指出「單看最新一點會被一則語氣稍緩、但情緒實際未解決的訊息誤導清除」而推翻。**現行決策**：解除需最新一筆評分點回升至「擔憂」以下（`calm`／`neutral`），「擔憂」仍視為中繼風險區間、持續示警；新增純函式 `isSentimentAlerting(timeline)` 以遲滯（hysteresis）邏輯落地，取代原本只看單點的 `isSentimentAlert(label)` 呼叫方式 | `spec.md` FR-003 2026-08-26 修訂、`data-model.md`「示警判定」、`tasks.md` T002／T018／T020 |
+| CHK015、CHK016 | SC-003「下一次面板更新內即被看見」定義為「攜帶示警的 `summary.updated`／`sentiment.updated` 事件送達即算」，與 SC-005 共用同一次事件送達時間，不重複計時、不另量測前端渲染完成時間 | `spec.md` SC-003 2026-08-26 補充 |
+| CHK030 | 重試進度只顯示「重試中 (n/2)」次數，不額外顯示倒數秒數 | `tasks.md` T025（既有文案維持不變，僅明確排除倒數需求） |
+| CHK031 | 手動重試視同全新冷啟動，重新獲得完整的 FR-014 重試預算（最多 2 次、40 秒）——與 `copilot-retry-api.md` 既有「等同冷啟動的該區塊部分」描述一致，無需修改 | `contracts/copilot-retry-api.md`（既有文字已涵蓋，本次僅確認） |
+| CHK032 | 不額外加節流——既有「非 `error` 狀態回 409」已防止重疊觸發手動重試 | `contracts/copilot-retry-api.md`（既有 409 語意已涵蓋，本次僅確認） |
+| CHK033 | `analyzing`／`retrying` 期間重試按鈕 MUST 維持可見但停用（`disabled`），不得直接隱藏 | `tasks.md` T025、T026 |
+| CHK034 | FR-010 補跑視同一次全新的 `runIncremental()` 呼叫，擁有自己獨立的一份重試預算，不延續離開前尚未用完的次數 | `tasks.md` T010c |
+| CHK036 | `SummaryBlock`／`SentimentBlock` 新增 `firstFailureAt?: string`，`withRetry()` 回報首次失敗時間戳，供前端／測試驗證 40 秒預算是否過期 | `data-model.md`、`tasks.md` T006、T010 |
+| CHK040 | 既有 T028（i18n 任務）已列「情緒示警標籤」與「重試按鈕」，涵蓋本次新增的示警／重試呈現文案，未發現遺漏 | `tasks.md` T028（既有範圍已涵蓋，本次僅確認） |
 
-**尚未處理**：A、B、C 三類（CHK001–CHK016）與 CHK030–CHK034、CHK036、CHK040 皆仍待決——這些多屬需要產品判斷的呈現規則（圖示語意、示警解除條件、螢幕閱讀器行為、手動重試節流），不宜由實作端逕自定案。
+**尚未處理**：無——CHK001–CHK040 全數已由本次 `/speckit-analyze` 追查與使用者決策處理完畢（CHK001–004 為刻意不鎖定視覺細節、留待實作前核對設計畫布，非留白遺漏）。
+
+**2026-08-26（勾選狀態更新）**：CHK001–016、CHK030–034、CHK036、CHK040 這 21 項的決策由使用者在本次對話中逐條親自確認（含 CHK005 一次因使用者發現原推薦方案的邏輯漏洞而推翻重做）；CHK017–029、CHK035、CHK037–039 這 12 項的規格修訂雖處理於更早一輪，經使用者本次對話中確認「那批我也確認過了」後一併勾選。CHK001–CHK040 全數 `[x]`。
 
 > ⚠️ 修訂 FR-014 的數值時，`spec.md`／`plan.md`／`research.md`／`data-model.md`／`contracts/`／`tasks.md`／`quickstart.md`／`docs/ARCHITECTURE.md` §17 韌性表與 §18 M3 **共九處**都會受影響。2026-08-26 這次已全數同步，下次修改請重跑 `grep -rn "40 秒\|15 秒\|1s → 4s\|429" specs/ docs/`。
