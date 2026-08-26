@@ -32,7 +32,8 @@
     "spike:contract": "tsx scripts/spike/11-working-agents.ts",
     "build:only": "nuxt build",
     "spike:presence": "tsx scripts/spike/12-presence-watch.ts",
-    "spike:write": "tsx scripts/spike/13-write-path.ts"
+    "spike:write": "tsx scripts/spike/13-write-path.ts",
+    "spike:files": "tsx scripts/spike/14-contact-files.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",
