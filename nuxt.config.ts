@@ -35,6 +35,10 @@ const ENV_BRIDGE: Record<string, string> = {
   NUXT_AI_API_KEY: 'AI_API_KEY',
   NUXT_REDIS_URL: 'REDIS_URL',
   NUXT_PUBLIC_IMBRACE_ENV: 'IMBRACE_ENV',
+  // specs/001-sentiment-panel 換上 ImbraceAgentProvider（見 server/services/ai/）——
+  // 兩個 agent 是使用者在 iMBrace 後台手動建立的，assistant_id 因環境而異，不可寫死進程式碼
+  NUXT_IMBRACE_SUMMARY_AGENT_ID: 'IMBRACE_SUMMARY_AGENT_ID',
+  NUXT_IMBRACE_SENTIMENT_AGENT_ID: 'IMBRACE_SENTIMENT_AGENT_ID',
 }
 for (const [nuxtKey, plainKey] of Object.entries(ENV_BRIDGE)) {
   const plain = process.env[plainKey]
@@ -77,6 +81,8 @@ export default defineNuxtConfig({
     webhookSecret: '',
     aiApiKey: '',
     redisUrl: '',
+    imbraceSummaryAgentId: '',
+    imbraceSentimentAgentId: '',
 
     public: {
       appName: 'AgentCopilot',
