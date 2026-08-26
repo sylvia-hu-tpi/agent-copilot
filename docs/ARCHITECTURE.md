@@ -1339,11 +1339,11 @@ boards.linkItems()                                      # 關聯至 Contact
 | 故障 | 降級策略 | 阻斷使用者？ |
 |---|---|---|
 | SDK 讀取超時 | 保留舊訊息流，頂部黃條「連線不穩，重試中」，指數退避 | ❌ 否 |
-| AI 分析失敗 | 暫時性失敗（逾時／429／5xx）先指數退避自動重試最多 2 次、總時間上限 30 秒，區塊顯示「重試中 (n/2)」；其餘錯誤或重試用盡後顯示「暫時無法分析 [重試]」。其他區塊照常運作 | ❌ 否 |
+| AI 分析失敗 | 暫時性失敗（單次呼叫逾時 15s／5xx）先指數退避自動重試最多 2 次（1s → 4s）、總預算 40 秒，區塊顯示「重試中 (n/2)」；**429 不在此列**（見下方 Rate limit 列）；其餘錯誤（含 Zod 驗證失敗）或重試用盡後顯示「暫時無法分析 [重試]」。其他區塊照常運作。數值定案見 `specs/001-sentiment-panel/spec.md` FR-014 | ❌ 否 |
 | 知識庫失敗 | 建議卡降級為無 SOP 引用的通用建議，並明確標示「未引用知識庫」 | ❌ 否 |
 | SSE 斷線 | 指數退避重連（1s → 30s）；重連後以本地 `lastMessageId` 對帳補齊（不靠 `Last-Event-ID`，見 §9.5）；斷線期間切 HTTP 輪詢 fallback | ❌ 否 |
 | Token 過期（401） | 清 session 導回登入，URL 保留 `conversationId`，登入後回到原處 | ✅ 是（但無痛） |
-| Rate limit（429） | 全域退避 + 佇列，禁止重試風暴 | ❌ 否 |
+| Rate limit（429） | **目標狀態**：全域退避 + 佇列，禁止重試風暴。**M2 現況**：rate limit 書面規格未到（`IMBRACE_QUESTIONS.md` G-2），佇列參數無從設計，故 429 直接轉錯誤狀態供手動重試——只保證「不製造重試風暴」這個下限。全域佇列已列入 §18 M3 驗收 | ❌ 否 |
 | 送出訊息失敗 | 樂觀 UI 標記「傳送失敗 [重試]」，草稿存 `localStorage` 絕不遺失 | ❌ 否 |
 | Webhook 重送／亂序 | event id 冪等去重 + 30s 對帳輪詢補漏 | ❌ 否 |
 | **撞單偵測（別人已回覆）** | 攔下並提示，提供 [仍要送出] [捨棄] [重新產生] | ✅ **是（刻意的）** |
@@ -1469,7 +1469,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M3 — 知識庫與結案
 
-**內容**：依 #19 RAG 品質的回覆結果，定案知識庫來源（沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`，見 §8.2、§12.2）；知識庫快查（inline 面板，見 §12.3）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script。
+**內容**：依 #19 RAG 品質的回覆結果，定案知識庫來源（沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`，見 §8.2、§12.2）；知識庫快查（inline 面板，見 §12.3）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前 M2 一律讓 429 直接轉錯誤狀態，見 §17 韌性表）。
 
 **驗收**：
 - [ ] 自然語言快查能回傳含 SOP 編號的結果；分數欄位依實際 provider 有值則顯示、`null` 則留空
@@ -1477,8 +1477,9 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] 摘要可編輯後才寫入 Board
 - [ ] 重複觸發摘要為覆蓋而非新增
 - [ ] LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用
+- [ ] **429 由全域退避佇列統一處理**，摘要／情緒分析與輪詢等呼叫端不再各自重試；`classifyFailure()` 的 `'rate-limited'` 分類改接佇列，並回頭修訂 `specs/001-sentiment-panel/spec.md` FR-014 的 429 分支與 Assumptions
 
-**外部依賴**：Data Board schema 需先建立
+**外部依賴**：Data Board schema 需先建立；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格
 
 ---
 
