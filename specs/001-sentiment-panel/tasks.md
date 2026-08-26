@@ -169,6 +169,13 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
   >    兩項修復皆已補上迴歸測試（`test/copilot-analysis.test.ts` 新增 5 個測試），
   >    typecheck／156 個 vitest／build／smoke 全數重新驗證通過。
   >
+  > **2026-08-27 追記**：本檔上方多處提到「`MockAIProvider` 永遠回傳 `score: 70`／
+  > `label: neutral`、情緒示警與故障 UI 現行環境驗不到」——這些描述的是 001 這個功能
+  > 交付當下的狀態，**已被後續動作取代**：`useAIProvider()`（`server/services/ai/index.ts`）
+  > 已換上真的 `ImbraceAgentProvider`，正式環境不再走 Mock（僅缺憑證時的開發期降級才用）。
+  > 詳見 `docs/ARCHITECTURE.md` §8.2b 與 `scripts/spike/16-verify-copilot-provider.ts`。
+  > 本檔以下維持原樣不改字，僅在此註記時序，避免誤讀成「現在還是這樣」。
+  >
   > **順帶修復的既有 UI 缺口**（使用者實機操作時發現，嚴格說不屬於本功能規格，但影響
   > 本次驗收的可用性，一併處理）：
   > 3. 右欄 Copilot 面板未比照左側欄做拖曳調寬把手（純屬本次新增右欄時的疏漏）。

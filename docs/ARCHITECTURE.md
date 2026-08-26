@@ -578,13 +578,19 @@ export interface AIProvider {
 }
 ```
 
+> **2026-08-27**：`suggest()` 尚未落地（建議卡屬後續功能），目前 `shared/types/copilot.ts` 的
+> `AIProvider` 介面只有 `summarize`／`analyzeSentiment` 兩個方法——刻意不預先加上用不到的方法，
+> 等建議卡動工時再擴充（見該檔案內的介面註解）。
+
 | 順位 | 實作 | 狀態 |
 |---|---|---|
-| 1 | `ImbraceAgentProvider` | ✅ **M2 採用** —— 呼叫 `aiAgent.streamChat`，結構化輸出靠 prompt（4/4 次可 `JSON.parse`），Zod 驗證 + 重試 + 降級不可省（見 §11.7） |
-| 開發期 | `MockAIProvider` | ✅ M2 UI 先行完成用，回傳固定樣本資料 |
+| 1 | `ImbraceAgentProvider` | ✅ **已實作**（`server/services/ai/imbrace-agent-provider.ts`，2026-08-27）——呼叫 `aiAgent.streamChat`，兩個 agent 由使用者於 iMBrace 後台手動建立（`AgentCopilot_摘要_agent`／`AgentCopilot_情緒評分_agent`，`assistant_id` 存於 `.env.local` 的 `IMBRACE_SUMMARY_AGENT_ID`／`IMBRACE_SENTIMENT_AGENT_ID`）。結構化輸出靠 prompt（非平台原生 `response_format`），Zod 驗證 + 重試 + 降級見 §11.7 與下方「JSON 抽取」小節。實測 `summarize()`／`analyzeSentiment()` 各連續 9/9 次成功（`scripts/spike/16-verify-copilot-provider.ts`，含真實語意品質，如「客戶多次反應網路斷線」正確標出 `repeat_contact`／`churn` 風險旗標） |
+| 開發期／降級 | `MockAIProvider` | ✅ 保留——`useAIProvider()` 缺 `IMBRACE_API_KEY`／組織 id／兩個 agent id 任一項時自動退回，並印出警告（`server/services/ai/index.ts`），供沒有正式憑證的開發環境使用 |
 | 備援 | `VikiAIProvider` | 🟡 介面已預留，未實作——打 viki public API，`SuggestionCard.confidence` 會開始有真實值 |
 
 > `AIProvider` 與 `KnowledgeProvider` 合起來，是「所有 AI 相關外部依賴」的唯一收斂點——不管未來走 iMBrace 還是 viki，上層都不用重寫。
+
+**⚠️ JSON 抽取：模型會在合法 JSON 前後加開場白／自我總結，即使 prompt 明確禁止**（2026-08-27 實測，`scripts/spike/15-copilot-agents.ts`）——常見兩種形態：前面加「Okay, I will...」這類開場白，或後面加「我已完成摘要...」這類自我總結，且是穩定出現的行為，不是隨機偶發。逼 prompt 100% 守規矩不可靠；正確做法是程式碼層面容錯：找文字中第一個 `{`／`[` 作為 JSON 起點（去掉前面的開場白），用 `JSON.parse` 錯誤回報的失敗位置切掉後面多餘的文字（見 `ImbraceAgentProvider` 的 `extractLeadingJson()`）。這個技巧對任何要求 iMBrace AI Agent 輸出結構化 JSON 的呼叫都通用，不限本功能。
 
 ### 8.3 狀態與事件匯流排
 
@@ -1130,6 +1136,41 @@ export interface ClosureSummary {
 - 輸出語言為繁體中文，語氣須符合客服規範
 - 溫度設低（建議 0.2–0.3）
 
+### 11.8 情緒面板已知限制（2026-08-27，`ImbraceAgentProvider` 上線後實測發現）
+
+三項互有關聯的限制，記錄下來但**刻意不在這輪處理**，留待後續任務評估：
+
+**① 冷啟動只看得到最新 50 則訊息，未涵蓋「完整歷史」**——`join.post.ts` 的 `fetchLatest()`
+不帶 `limit` 參數，預設只抓最新 50 則（`DEFAULT_MESSAGE_LIMIT`）。對話可長達 398 則
+（§9.3 實測上限），超過 50 則的對話，摘要卡與情緒走勢實際上看不到更早的內容，與
+FR-001「依該對話當下的**完整歷史**」的字面要求有落差。客服在畫面上手動「載入更多訊息」
+（`useConversationView.ts` 的 `loadOlder()`）純粹是給訊息流顯示用，**不會**回頭觸發分析——
+`GET /api/messages` 端點對分析管線沒有任何副作用。
+
+**② 情緒分析批次大小是機率賭注，非保證值**——真實對話 16 則客戶發言，單次呼叫（不分批）
+實測延遲 12.7～29.9 秒，遠超 FR-014 的 15 秒單次逾時。已改為每批固定 6 則依序呼叫（見
+`server/services/copilot-analysis.ts` 的 `SENTIMENT_CHUNK_SIZE`），但延遲不是單純隨則數
+線性增加、平台本身有明顯波動——4 則批次 3 次都在 8.5～9.7 秒，6 則批次量到 10.0～
+**18.6 秒**（超過 15 秒門檻），8 則批次曾連續三次嘗試全部逾時。批次切得越小，單次逾時
+機率越低，但長對話需要的批次數越多、總耗時越長，沒有一個批次大小能保證「絕對不逾時」；
+使用者已決定接受「偶爾需要客服手動重試」這個下限，6 是取捨後的中間值。
+
+**③ 分析結果沒有真正持久化，無法跨客服／跨伺服器重啟共用**——`CopilotAnalysisState`
+（`server/state/memory-store.ts`）目前是記憶體 + 2 小時滑動 TTL，設計目的是「客服切換
+對話框回來還看得到既有結果」（FR-010），不是永久保存。這代表：同一個對話換一位客服
+JOIN、或伺服器重啟過，即使訊息內容完全沒變，也會觸發全新的冷啟動分析——重複耗用 AI
+呼叫，且以 messageId 為粒度都是重算，不是只算真正新增的部分。
+
+若後續要處理，**這三項建議合併成同一個設計**（而非分開修）：把情緒評分點（含摘要
+所依賴的歷史）以 messageId 為 key 做真正的持久化快取，會同時讓「冷啟動不受 50 則上限
+限制」（未涵蓋的舊訊息判斷為「尚未分析過」即可依需要補做分析，而非整段重來）與
+「跨客服／跨重啟不必重算已分析過的訊息」一起成立。範圍不小——需要新的持久化層
+（`server/state/types.ts` 已預留 M4 Redis 的介面設計方向，但 Redis 目前完全未建置）、
+重新設計資料粒度（現在是「一個對話一份 JSON」，需要改成「以訊息為單位」），且情緒
+評分的 `drivers` 欄位本質是客戶原話摘出的關鍵詞（憲法 1.5 適用範疇）——**現行 2 小時
+TTL 某種程度上是天然的資料最小化，改成永久持久化是刻意的隱私姿態改變，需要明確拍板
+保留期限，不能當作單純的效能優化順手做掉**。建議獨立立案，不要跟其他任務合併。
+
 ---
 
 ## 12. 知識庫
@@ -1355,7 +1396,7 @@ boards.linkItems()                                      # 關聯至 Contact
 | 故障 | 降級策略 | 阻斷使用者？ |
 |---|---|---|
 | SDK 讀取超時 | 保留舊訊息流，頂部黃條「連線不穩，重試中」，指數退避 | ❌ 否 |
-| AI 分析失敗 | 暫時性失敗（單次呼叫逾時 15s／5xx）先指數退避自動重試最多 2 次（1s → 4s）、總預算 40 秒，區塊顯示「重試中 (n/2)」；**429 不在此列**（見下方 Rate limit 列）；其餘錯誤（含 Zod 驗證失敗）或重試用盡後顯示「暫時無法分析 [重試]」。其他區塊照常運作。數值定案見 `specs/001-sentiment-panel/spec.md` FR-014 | ❌ 否 |
+| AI 分析失敗 | 暫時性失敗（單次呼叫逾時 15s／5xx）先指數退避自動重試最多 2 次（1s → 4s）、總預算 40 秒，區塊顯示「重試中 (n/2)」；**429 不在此列**（見下方 Rate limit 列）；其餘錯誤（含 Zod 驗證失敗）或重試用盡後顯示「暫時無法分析 [重試]」。其他區塊照常運作。數值定案見 `specs/001-sentiment-panel/spec.md` FR-014。⚠️ 情緒分析對長對話會分批呼叫，批次大小是機率取捨、非保證不逾時，實測仍會偶爾觸發此列的重試/錯誤路徑——見 §11.8② | ❌ 否 |
 | 知識庫失敗 | 建議卡降級為無 SOP 引用的通用建議，並明確標示「未引用知識庫」 | ❌ 否 |
 | SSE 斷線 | 指數退避重連（1s → 30s）；重連後以本地 `lastMessageId` 對帳補齊（不靠 `Last-Event-ID`，見 §9.5）；斷線期間切 HTTP 輪詢 fallback | ❌ 否 |
 | Token 過期（401） | 清 session 導回登入，URL 保留 `conversationId`，登入後回到原處 | ✅ 是（但無痛） |
@@ -1476,6 +1517,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] AI 失敗時，訊息流與 Composer 仍完全可用
 - [ ] 建議卡的 `sopId` 若不在檢索結果白名單中，該卡被丟棄
 - [ ] `confidence` 無真實分數來源時顯示為留空，不得顯示模型自評的替代數字（§11.6②）
+- [ ] Copilot 面板五大區塊（摘要卡 `SummaryCard.vue`、情緒走勢 `SentimentGauge.vue`、建議卡、知識庫快查、對話紀錄／結案摘要——後三者尚未實作，待建置時一併核對）之圖示、色票、文案措辭、`error`／`retrying` 等狀態呈現，已對照 Claude Design 畫布 artboard 2a 原始檔 `CopilotPanel.dc.html`（見 `docs/DESIGN_TOKENS.md` §7）逐一核實；有落差者已訂正，或已記錄不採用的理由（2026-08-27 新增：`specs/001-sentiment-panel` FR-003 明文排除視覺樣式於原驗收範圍外，且 `tasks.md` T030 記錄此核對動作從未執行，此前為已知但無人排入排程的缺口）
+- [ ] 左側對話列表（`Sidebar.vue`）與中間對話訊息欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、`PresenceBar.vue`、`ModeSelect.vue`）已對照 Claude Design 畫布 artboard 1c（主工作區）核實（2026-08-27 新增，隨上一項一併提出）；⚠️ `docs/DESIGN_TOKENS.md` 目前 1c 只有截圖（`docs/wireframe/03-workspace_lightTheme.png`／`_darkTheme.png`），尚無逐字文字規格（見該檔第 10 行），核對前須先比對截圖，或依該檔附錄流程向畫布擁有者取得 1c 逐字規格再核對，不得憑既有 token 臨場判斷後就視為已核實
 
 **外部依賴**：無
 
