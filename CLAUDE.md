@@ -10,7 +10,7 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 
 | 檔案 | 是什麼的正典 |
 |---|---|
-| `docs/ARCHITECTURE.md` | 架構決策與**所有平台實測結論**。近 2000 行，用章節號索引 |
+| `docs/ARCHITECTURE.md` | 架構決策與**所有平台實測結論**。1600+ 行，用章節號索引 |
 | `docs/CONSTITUTION.md` | 程式碼約束（八條憲法）。寫 code 前必讀 |
 | `docs/IMBRACE_QUESTIONS.md` | 待向 iMBrace 確認的清單。⚠️ **唯一會離開這個 repo 的文件** |
 | `docs/PLATFORM_CAPABILITY.md`、`docs/SDK_FINDINGS.md` | 平台能力與 SDK 的實測記錄 |

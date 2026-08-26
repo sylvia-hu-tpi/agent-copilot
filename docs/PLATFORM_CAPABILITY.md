@@ -9,10 +9,15 @@
 
 ## 1. 結論
 
-**對話層 15 項能力全可用；AI 層部分可用。**
+**對話層能力全可用；AI 層部分可用。**
+
+> 📌 「15 項」這個數字曾被寫成「對話層 15 項」，是誤植。`06-capability-matrix.json` 探測的 21 項中有 15 項回 ✅，
+> 但那是**跨領域**的總數（含知識庫檔案、AI provider 清單、組織），不是對話層的項數。
+> 且其中一項（`getByConversationId` 取 operator 清單）已被後續實測推翻，目前實際為 **14/21**。
+> 逐項結果以下方 §4 的能力矩陣為準，不要再引用單一數字。
 
 ```
-✅ 對話 / 訊息 / 聯絡人 / Data Board / 知識庫檔案來源 / 頻道 ── 15 項全可用
+✅ 對話 / 訊息 / 聯絡人 / Data Board / 知識庫檔案來源 / 頻道 ── 見 §4 矩陣
 ✅ AI 推論（透過 AI Agent）─────────────────────────── 11/27 agent 可用
 ✅ image／pdf 型附件（有 url，僅缺描述與檔名）
 ❌ ai.complete / ai.embed / messageSuggestion ──────── 404
@@ -86,6 +91,7 @@
 | 對話 | 對話列表 | `conversations.search({businessUnitId})` | ✅ |
 | 對話 | 對話詳情（`tcu_` id / `mode` / `is_joined` / `users[]`） | `conversations.get(id)` → `GET /v1/team_conversations/{id}` | ✅ 裸 UUID 與 `conv_` 前綴皆可 |
 | 對話 | 該對話的 operator 清單 | 詳情的 `users[]` | ❌ 是團隊名冊，不是參與者（見 `ARCHITECTURE.md` §10.2） |
+| 對話 | ~~以對話 id 反查詳情~~ | ~~`conversations.getByConversationId`~~ | ❌ 兩種 id 形式皆回 `{data:[],total:0}`，**不要用**；改用 `conversations.get(id)` |
 | 對話 | 未處理佇列／檢視計數／可邀請同事 | `getOutstanding`／`getViewsCount`／`getInvitableUsers` | ✅ |
 | 訊息 | 取單一對話訊息 | `GET conversation_messages?conversation_id` | ✅（SDK 未公開此參數，需繞過） |
 | 訊息 | 增量拉取 | `?since` / `?after` / `?since_id` | ❌ 參數被忽略 |
@@ -160,7 +166,8 @@ viki 補的正好是方案 A 缺的兩項：`answer-attribution` 提供 SOP 引�
 |---|---|---|
 | 🔴 | `/v3/ai/completions`、`/v3/ai/embeddings` 是未部署還是未對外開放？有無計畫？ | 決定方案 A 是否還有機會 |
 | 🔴 | 兩個 AI provider 目前皆不可用，可否修復？ | 決定 Agent 路徑可用數量 |
-| 🔴 | 有無任何檢索 API 可回傳條目 ID + 相關度分數？ | 決定建議卡信心度能否成立 |
+| 🔴 **最優先** | **RAG 檢索品質可否調校？**（chunk 大小／top-k／中文斷詞／同義詞）實測問「電梯困人」未命中同名 SOP 檔（`IMBRACE_QUESTIONS.md` 0-3f） | **唯一可能讓建議卡整個上不了線的變數**——調不動則觸發換上 viki（§6） |
+| 🔴 | 有無任何檢索 API 可回傳條目 ID + 相關度分數？（0-3c） | 決定建議卡信心度能否成立。⚠️ 只缺分數可降級接受（留空），缺檢索品質不行 |
 | 🟠 | `messages` 是否支援增量拉取？ | 輪詢成本與 API 壓力 |
 | 🟠 | `role` 的值域為何？ | 主管強制介入的權限判定 |
 | 🟠 | `from` 的 `pub_` 前綴是否即為 AI workflow？ | 撞單防護的正確性 |

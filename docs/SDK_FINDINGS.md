@@ -13,7 +13,7 @@
 
 | 型別層原始推論 | 目前狀態 | 權威來源 |
 |---|---|---|
-| `ai.complete()` 無 `response_format` → structured output 做不到 | 🟡 部分成立：該端點根本 404；改走 agent + prompt，4/4 次可 `JSON.parse` | `ARCHITECTURE.md` §11.7 |
+| `ai.complete()` 無 `response_format` → structured output 做不到 | 🟡 部分成立：該端點根本 404；改走 agent + prompt，4/4 次可 `JSON.parse` | `ARCHITECTURE.md` §19.1 #17、§8.2b |
 | `messageSuggestion` 僅回字串陣列，無信心度／引用 | ✅ 成立，且更糟：端點本身 404 | `ARCHITECTURE.md` §19.1 #18 |
 | `messages.list()` 無 `conversation_id`／`since` | 🟡 部分成立：`conversation_id` 用 `?conversation_id=` 繞過 SDK 可用（precision 100%）；`since` 類參數確實不支援 | `ARCHITECTURE.md` §9.3 |
 | 知識庫 RAG 缺「檢索」端點 | ✅ 成立：無獨立檢索端點；但可透過 agent 的 SSE 事件取得引用來源 | `ARCHITECTURE.md` §8.2、§12.2 |
@@ -34,7 +34,7 @@
 |---|---|---|---|
 | C-2 | RAG 檢索的相關度分數 | `04` | 🔴 仍未解決，見 `IMBRACE_QUESTIONS.md` 0-3c |
 | ~~H-3~~ | 發送者身分 | `01` | ✅ 已解決 |
-| ~~H-2~~ | 附件文字化 | `02`、`14` | ✅ 已解決 |
+| H-2 | 附件文字化 | `02`、`14` | 🟡 主體已解決（`image`／`pdf` 有 url，平台不做描述→自建 vision）；**H-2d（URL 時效與授權）仍待 iMBrace 回覆**，見 `IMBRACE_QUESTIONS.md` |
 | ~~B-2~~ | 增量拉取 | `03` | ✅ 已確認不支援，有繞法 |
 | ~~E-2~~ | structured output | `05` | ✅ 已確認可用（prompt 層） |
 
@@ -42,9 +42,12 @@
 
 ## 對估算的影響
 
+> ⚠️ **這是 2026-08-25 型別分析當下的估算快照，不是目前進度。** M0／M1 皆已完成並通過驗收
+> （見 `ARCHITECTURE.md` §18），M1 那一列僅供追溯當初的判斷是否準確。
+
 | 項目 | 原估 | 目前 | 備註 |
 |---|---|---|---|
-| M1 對話主線 | 12–18 人日 | 12–18 | 維持原估——`users[]` 捷徑不成立，改走 `mode` 欄位 + 本地快路徑 |
+| M1 對話主線 | 12–18 人日 | ✅ 已完成 | 當初維持原估——`users[]` 捷徑不成立，改走 `mode` 欄位 + 本地快路徑 |
 | M2 Copilot 核心 | 12–16 人日 | 16–22 ↑ | 建議卡需完整自建；structured output 靠 prompt，需自建重試機制。**圖片／PDF vision 分析已知有直接可用的 URL，成本比最壞情況低，但此欄未針對它重新拆算** |
 | M3 知識庫與結案 | 10–14 人日 | 12–16 ↑ | RAG 檢索走 `AgentKnowledgeProvider` 或 `VikiKnowledgeProvider`，皆不需自建索引（原規劃的自建向量檢索已撤銷） |
 

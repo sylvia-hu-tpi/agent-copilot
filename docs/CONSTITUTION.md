@@ -7,7 +7,10 @@
 >
 > 完整架構說明見 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。
 >
-> 版本：v1.0 ｜ 2026-08-24
+> 版本：v1.1 ｜ 2026-08-26（v1.0：2026-08-24）
+>
+> **v1.1 修訂**：6.4、2.1、6.5 三條依實測結論更新——原文寫在「平台支援增量拉取」「Boards RAG
+> 可檢索」「需處理語音」三個已被推翻的假設上，照著寫會與 `ARCHITECTURE.md` §9.3／§8.2／§11.4 衝突。
 
 ---
 
@@ -49,7 +52,7 @@
 |---|---|
 | `ConversationEventSource` | JOIN / LEAVE 事件來源（輪詢 → webhook） |
 | `MessageSource` | 訊息來源（輪詢 → webhook / WS） |
-| `KnowledgeProvider` | 知識庫檢索（靜態 → Boards RAG → 官方 API） |
+| `KnowledgeProvider` | 知識庫檢索（靜態 → iMBrace AI Agent → viki） |
 | `StateStore` / `EventBus` | 狀態儲存（記憶體 → Redis） |
 
 ### 2.2 替換實作時，上層邏輯不得修改
@@ -148,17 +151,23 @@ UI 依此欄位是否為 `null` 決定顯示或留空——這讓 AI 來源在 i
 
 除了省 token，也避免摘要被整段重寫導致畫面跳動。
 
-### 6.4 增量拉取
+### 6.4 訊息拉取不得取回整串對話
 
-訊息一律以 `since=<messageId>` 拉取，不做全量。
+**平台不支援增量拉取**——`since`／`after`／`since_id` 等八種寫法實測全部被忽略（`ARCHITECTURE.md` §9.3）。
+因此約束改為：一律 `limit=N` 只取最新 N 則（訊息由新到舊排序），再以本地 `lastMessageId` 比對算出增量。
 
-### 6.5 媒體文字化結果必須快取
+**MUST NOT** 每輪取回整串對話（實測單一對話最多 398 則）。
+我方 BFF 對前端仍提供 `since=<messageId>` 參數（對帳與重連補齊用），那一層的增量是本地算出來的，不是平台給的。
 
-一張圖只做一次視覺分析、一段語音只做一次 STT，結果隨 message 永久保存。
+### 6.5 附件文字化結果必須快取
 
-**絕不可在每次全量分析時重複送原始媒體給模型** —— 這是成本失控最快的路徑。
+一張圖、一份 PDF 只做一次分析，結果隨 message 永久保存。
+（語音不在範圍內——iMBrace 平台不支援語音訊息，見 `ARCHITECTURE.md` §11.4。）
 
-AI 管線的輸入一律是 `Message.text`（原文／轉錄／圖片描述），不直接處理原始媒體。
+**絕不可在每次全量分析時重複送原始檔案給模型** —— 這是成本失控最快的路徑。
+
+AI 管線的輸入一律是 `Message.text`（原文／vision 或文件分析產生的描述），不直接處理原始檔案。
+**MUST NOT** 拿 `caption` 當描述來源——它是上傳時系統帶入的原始檔名，且客戶上傳時為空。
 
 ---
 

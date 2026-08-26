@@ -158,8 +158,10 @@ Node 26 轉 LTS 後不建議立即跟進，Node 24 支援至 2028-04 時間充�
                            │ @imbrace/sdk
 ┌──────────────────────────┼────────────────────────────────────┐
 │                      iMBrace 平台                              │
-│  conversations │ messages │ ai / messageSuggestion │ boards    │
-│  Knowledge / DocIQ │ webhook（JOIN/LEAVE，規格未定）            │
+│  conversations │ messages │ aiAgent.streamChat │ boards       │
+│  Knowledge Hub（僅能經 agent 間接檢索）                        │
+│  webhook（JOIN/LEAVE，規格未定）                               │
+│  ⚠️ ai.complete / ai.embed / messageSuggestion 皆 404，不存在   │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -280,7 +282,9 @@ AgentCopilot/
 │   │   ├── conversation-list-poller.ts  # 第一層：清單輪詢（§9.3.1）
 │   │   ├── polling-message-source.ts
 │   │   ├── webhook-event-source.ts  # 骨架先備好
-│   │   ├── boards-rag-provider.ts
+│   │   ├── message-fetch.ts         # 取數策略（raw-conversation-id，§9.3）
+│   │   ├── mappers.ts               # 防腐層：識別碼正規化、發送者判別、附件
+│   │   ├── agent-knowledge-provider.ts  # M2（§8.2）
 │   │   └── static-sop-provider.ts
 │   ├── services/
 │   │   ├── imbrace.ts               # SDK client factory（依 session token）
@@ -395,7 +399,10 @@ export default defineNuxtConfig({
     },
   },
 
-  typescript: { strict: true, typeCheck: true },
+  // ⚠️ 實際的 nuxt.config.ts 是 `typeCheck: false`，不是筆誤——本專案路徑含空白
+  //    （`03 FE products`），vue-tsc 的路徑處理會出錯。型別檢查改由 build script
+  //    串接（`npm run typecheck`），並未放鬆，理由詳見 nuxt.config.ts 的註解。
+  typescript: { strict: true, typeCheck: false },
 })
 ```
 
@@ -654,14 +661,16 @@ export interface EventBus {
 >
 > 查詢端點 `?conversation_id=` 兩種形式都接受，所以打得通不代表比得對。傳錯不會有型別錯誤，只會靜默不作用或比對永遠不相等——這個坑已造成過兩次實際損害：`precisionOf()` 曾把 100% 正確的取數判成 0%，差點誤判 M1 被阻塞；`toConversation()` 若取錯欄位，同一對話經 `search()` 與 `get()` 會得到兩個不同的鍵，症狀是「訊息進來了但面板沒反應」，極難追查。
 >
-> **`{id}` 這個路徑參數同時吃對話 id 與 `tcu_` id**，平台自行解析——`conversations.get(id)`（`GET /v1/team_conversations/{id}`）兩種形式皆可查到完整詳情；`conversations.getByByConversationId()` 反而兩種形式都回空，不要用。**正規形式取裸 UUID**，一律經 `mappers.normalizeConversationId()` / `sameConversation()` 轉換。實作見 `server/services/imbrace.ts` 的 `getConversationDetail()`。
+> **`{id}` 這個路徑參數同時吃對話 id 與 `tcu_` id**，平台自行解析——`conversations.get(id)`（`GET /v1/team_conversations/{id}`）兩種形式皆可查到完整詳情；`conversations.getByConversationId()` 反而兩種形式都回空（`{data:[],total:0}`），不要用。**正規形式取裸 UUID**，一律經 `mappers.normalizeConversationId()` / `sameConversation()` 轉換。實作見 `server/services/imbrace.ts` 的 `getConversationDetail()`。
 
-以 §9.2 頻率估算，20 位客服 × 平均 3 對話、共享訂閱後約 **9.4 req/s**，但每個請求的 payload 是全量而非增量（單一對話最多 398 則訊息），這才是真正的成本所在。**必要的緩解措施（M1 已完成）**：
+以 §9.2 頻率估算，20 位客服 × 平均 3 對話、共享訂閱後約 **9.4 req/s**，但每個請求的 payload 是全量而非增量（單一對話最多 398 則訊息），這才是真正的成本所在。**必要的緩解措施（前三項 M1 已完成，第 4 項仍未實測）**：
 
 1. `limit=N` 只取最新 N 則（N=50）——✅ 已確認訊息預設由新到舊排序，`limit=N` 直接就是最新 N 則，不需 `sort` 或 `skip=total-N`
 2. 本地以 `lastMessageId` 比對，只把新增部分推給前端（SSE payload 仍是增量的）
 3. 並發控制——同時 in-flight 請求上限 5
-4. `ETag` / `If-None-Match` 探測（若後端支援，尚未實測）
+4. ⏳ `ETag` / `If-None-Match` 探測——**尚未實測**，後端是否支援未知，不列入 M1 已完成範圍
+
+> `skip` 亦實測有效，可正常分頁回補歷史——首次載入若需完整歷史，走 `skip` 分頁而非一次全量。
 
 ### 9.3.1 清單輪詢：成本降一個量級
 
@@ -817,9 +826,9 @@ if (byOtherAgent.length > 0) {
 
 ### 10.5 第四個競爭者：AI 本身
 
-> **已確認**：按下 JOIN 之後，AI workflow 仍持續自動回覆。必須另外切換為 Manual Mode 才會停止——**JOIN 後的預設狀態是「AI 與真人同時運作」**。
+> **已確認**：JOIN 時預設進入 Manual Mode（AI 關閉），因此「AI 與真人同時運作」**不是預設狀態**。但客服可隨時切到 **Hybrid Mode**，此時 AI 仍持續自動回覆——**本節整段只在 Hybrid 模式下適用**（見 §10.6、§19.1 #12）。
 
-真人組織一則回覆需 20–40 秒；AI 回覆只需 1–2 秒。只要客戶在這段窗口內說了任何一句話，AI 幾乎必然搶先回覆，客服送出時可能重複 AI 已說過的內容、與 AI 說法矛盾、或承接一個已被帶往別處的話題。**因此協作模式（Hybrid Mode）下的撞單防護不是輔助功能，而是產品可用性的前提。**
+在 Hybrid 模式下，真人組織一則回覆需 20–40 秒；AI 回覆只需 1–2 秒。只要客戶在這段窗口內說了任何一句話，AI 幾乎必然搶先回覆，客服送出時可能重複 AI 已說過的內容、與 AI 說法矛盾、或承接一個已被帶往別處的話題。**因此協作模式（Hybrid Mode）下的撞單防護不是輔助功能，而是產品可用性的前提**——反過來說，Manual Mode 下把 AI 列入撞單檢查就是製造假警報（§10.4）。
 
 **協作模式必須補的三項設計**：
 
@@ -953,7 +962,8 @@ POST /channel-service/v1/team_conversations/_join
 ```ts
 // shared/types/conversation.ts
 
-export type SenderType = 'customer' | 'ai' | 'agent'
+/** ⚠️ `unknown` 是安全預設值：未知的 `from` 前綴一律歸此，不得預設為 `ai`（§19.1 #13） */
+export type SenderType = 'customer' | 'ai' | 'agent' | 'unknown'
 
 export interface Message {
   id: string
@@ -1053,6 +1063,8 @@ export interface ClosureSummary {
   channel: string
   contactId: string
   operators: string[]
+  joinedAt: string              // 對應 Board 的 joined_at
+  closedAt: string              // 對應 Board 的 closed_at
   summary: string
   intent: string
   category: string              // 受控詞彙，見 config/categories.yaml
@@ -1177,7 +1189,9 @@ boards.linkItems()                                      # 關聯至 Contact
 | `intent` | text | |
 | `category` | select | 受控詞彙 |
 | `resolution` | select | resolved / workaround / escalated / unresolved / customer_abandoned |
-| `sentiment_start` / `sentiment_end` / `sentiment_trough` | number | |
+| `actions_taken` | text[] | 受控詞彙。**與 `resolution` 分開**——前者是做了什麼，後者是結果狀態 |
+| `sentiment_outcome` | select | appeased / satisfied / still_negative / escalated |
+| `sentiment_start` / `sentiment_end` / `sentiment_trough` | number | 供報表統計，不直接顯示於介面 |
 | `cited_sops` | text[] | |
 | `follow_ups` | long text（JSON） | |
 | `confidence` | number | |
@@ -1185,6 +1199,10 @@ boards.linkItems()                                      # 關聯至 Contact
 | `reviewed_at` | datetime | |
 
 > 欄位需先透過 `createField()` 在平台上建立。建議寫一支一次性 setup script 置於 `scripts/`，讓環境可重建。
+>
+> ⚠️ 本表與 §11.5 的 `ClosureSummary` 必須逐欄對得上——少建一欄不會報錯，只會讓該維度在報表裡永遠是空的。
+
+**欄位對照**：`operators`／`summary`／`intent`／`category`／`resolution`／`actions_taken`／`sentiment_outcome`／`sentiment_start|end|trough`／`cited_sops`／`follow_ups`／`confidence`／`reviewed_by|at` 一一對應 `ClosureSummary` 的同名欄位（camelCase → snake_case）；`joined_at`／`closed_at` 對應 `joinedAt`／`closedAt`。
 
 ### 13.4 三個設計陷阱
 
@@ -1213,19 +1231,23 @@ boards.linkItems()                                      # 關聯至 Contact
 ┌────────┬──────────────────────┬─────────────────────┐
 │ Sidebar│   對話視窗（中欄）     │  Copilot 面板（右欄）│
 │        │                      │                     │
-│ 對話   │  PresenceBar         │  客戶情緒提示        │
+│ 對話   │  PresenceBar         │ ① 客戶情緒提示       │
 │ 列表   │  ─────────────       │  ─────────────      │
-│        │  MessageList         │  AI 轉接摘要         │
-│ 已JOIN │  （虛擬滾動）         │  ─────────────      │
-│ 徽記   │                      │  AI 語意即時建議     │
-│        │  ─────────────       │  （建議卡 ×N）       │
-│ 可收合 │  Composer            │  ─────────────      │
-│        │  （送出前撞單檢查）    │  知識庫自然語言快查  │
+│        │  MessageList         │ ② AI 語意即時建議    │
+│ 已JOIN │  （虛擬滾動）         │  （建議卡 ×N）       │
+│ 徽記   │                      │  ─────────────      │
+│        │                      │ ③ 知識庫自然語言快查 │
+│        │  ─────────────       │  ─────────────      │
+│ 可收合 │  Composer            │ ④ AI 階段對話紀錄    │
+│        │  （送出前撞單檢查）    │  ─────────────      │
+│        │                      │ ⑤ 結案摘要自動填入   │
 └────────┴──────────────────────┴─────────────────────┘
          ↑ 可拖曳調寬 ↑        ↑ 可拖曳調寬 ↑
 ```
 
 - Sidebar 可收合；中／右欄之間可拖曳調寬（不同客服對「對話 vs 建議」的比重偏好差異很大）；右欄可暫時全屏（閱讀長 SOP 時需要）；分欄寬度存於 `localStorage`
+
+> 右欄的五個區塊以 §14.1.1 為準，本圖與該節必須一致。**「AI 轉接摘要」不在右欄**——依 demo 對照它屬於左欄（見 `PLATFORM_CAPABILITY.md` §2）。
 
 ### 14.1.1 右欄的區塊與捲動
 
@@ -1455,6 +1477,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 標記 | 意義 |
 |---|---|
 | ✅ 已解除 | 風險消失或降至可忽略 |
+| 🟢 大幅緩解 | 風險仍在但已找到可行解，殘餘影響可接受 |
 | 🔵 已確認 | 風險確實存在，因應方式已定 |
 | 🟡 待實測／部分確認 | 仍有殘餘未知 |
 | 🔴 高優先 | 影響架構方向或核心功能能否成立 |
@@ -1472,14 +1495,14 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 6 | 無相關度分數可用（iMBrace 路徑） | 🔵 已確認，因應方式已定 | `confidence` 改為 nullable，非整個拿掉——無分數時留空，換上 viki 後自然回填，UI 不必重做（§8.2、§11.6） |
 | 7 | 多副本狀態共享 | ⚪ | 介面 day-1 async；M4 換 Redis |
 | 8 | ~~Nuxt UI Pro 授權~~ | ✅ 已解除 | v4 起 Pro 已併入主套件，125+ 元件全免費 MIT，商用無需額外授權 |
-| 9 | 對話內容送外部 LLM | 🟡 範圍可能擴大 | 若無 structured output／vision 模型，出境範圍從文字擴大到影像；合規政策待 iMBrace 回覆（E-3） |
+| 9 | 對話內容送外部 LLM | 🔵 已確認會擴大到影像 | M2 已定案自建 vision／文件分析（§11.4），因此出境範圍**確定**從文字擴大到圖片與 PDF，不再是「可能」。合規政策待 iMBrace 回覆（E-3），送出前須先確認公司資安政策 |
 | 10 | Data Board 欄位型別限制 | ⚪ | M3 前先實測，setup script 可重跑 |
 | 11 | 附件內容依型別而定 | 🟢 已用真實對話驗證 | `image`／`pdf` 皆有直接可用 url，只是缺描述與（客戶上傳時的）檔名，已納回 MVP；舊資料型 `file` 仍拿不到內容且來源不明，維持排除；`contact/files` 端點範圍為聯絡人層級，不得當對話附件清單用。細節與驗證過程見附錄 B |
 | 12 | JOIN 後 AI 是否仍自動回覆 | 🟢 已釐清 | JOIN 時預設 Manual（AI 關閉），非預設情況；Hybrid 模式下撞單真實存在，§10.5 只在此模式適用 |
-| 13 | ~~訊息發送者身分無法區分~~ | ✅ 已解除 | `from` 前綴判別：`con_`客戶／`u_`真人客服／`pub_`AI，398 則覆蓋率 100%。僅 `pub_` 語意細節與內部訊息判斷見 #24 |
+| 13 | ~~訊息發送者身分無法區分~~ | ✅ 已解除 | `from` 前綴判別：`con_`客戶／`u_`真人客服／`pub_`AI，398 則覆蓋率 100%。**未知前綴一律歸 `unknown`，不得預設為 `ai`**——預設成 `ai` 會讓撞單檢查把來源不明的訊息當成 AI 回覆。僅 `pub_` 語意細節與內部訊息判斷見 #24 |
 | 14 | 知識庫條目時效性 | ⚪ | `KnowledgeHit.updatedAt` 顯示於介面，過舊者標示提醒 |
 | 15 | 主管強制介入擋不住官方介面 | ⚪ | 介面誠實標示邊界；`removeTeamMember()` 實際效力待確認（H-4） |
-| 16 | ~~角色權限來源未定~~ | ✅ 多半已解除 | `OrganizationMembership` 帶 `role`／`is_admin`，實際有值則直接沿用平台角色 |
+| 16 | 角色權限來源未定 | 🟡 部分解除，尚未定案 | `OrganizationMembership` 帶 `role`（實測 `admin`）／`is_admin`（實測 `false`），可望沿用平台角色。**但兩欄位語意不一致、值域未知（H-5 仍待答）**，「哪個值代表能強制介入他人對話」尚無答案；在那之前 §10.6 的順位 2（設定檔白名單）仍是實際做法 |
 | 17 | 無平台層的 structured output 保證 | 🟡 已緩解 | `ai.complete()` 404，改走 agent 路徑：純靠 prompt 實測 4/4 次可直接 `JSON.parse`，仍須自建 Zod 驗證 + 重試 + 降級 |
 | 18 | `messageSuggestion` 端點不存在 | 🔵 已確認 | 端點回 404，建議卡完全自建，引用來源從 `RAGknowledge` 工具輸出解析 |
 | 19 | **RAG 檢索品質不可調校** | 🔴 已確認，最高優先 | 問「電梯困人」未命中同名 SOP 檔，chunk 大小／top-k／中文斷詞／同義詞全不在我方手上。已列 P0 追問 iMBrace（§0-3f）；調不動則觸發換上 viki |
@@ -1561,6 +1584,8 @@ M2 起的功能單元   → 走 /specify → /clarify → /plan → /tasks → /
 - iMBrace 規格確認後，更新 §19 與 `IMBRACE_QUESTIONS.md`，並將對應 provider 從「待實作」改為「已實作」
 - 本文件同時是 Spec Kit 的憲法來源，變更會影響後續所有 feature 的 plan 生成
 
+### 推翻既有結論時的必要步驟
+
 **改動任何實測結論後，必須 grep 舊說法**——同一個結論常散落在決策摘要、詳細章節、里程碑驗收、風險表、對外問題清單多個地方，改完一處容易誤以為全改完了：
 
 ```bash
@@ -1585,6 +1610,10 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 
 **Presence 與 `users[]`（§10.2）**：初版誤判 `Conversation.users[]` 是「該對話的 operator 清單」。二次實測發現：① 第一次量測看到 12/12 全空，其實是量錯位置——那是 `conversations.search()` 輕量 payload 裡本來就是 `null` 的欄位；② 用詳情端點 `get()` 重測後確實有 14 人，但兩個不同對話回傳同一批人，且含 `is_bot: true` 與 `team_user_role: observer`——證實是團隊名冊，不是對話參與者。這兩次錯誤結論都指向同一個最終判斷（`users[]` 不可用），但若照第一次的「理由」去補救，會走向完全錯誤的「等 webhook 補清單」路線；量測位置錯誤造成的假結論，危險之處不在結論本身，而在它推導出的下一步。第三次實測才找到真正可用的來源——`mode` 欄位。
 
+**presence 的其他候選欄位（§10.2）——都測過，都不能用**：除 `users[]` 外另測了三個，避免日後被重新提案。`is_joined` 雙向正確，但**是「我」的視角**（以該客服的 token 查詢），看不到同事；`is_agent_joined` **單向黏著**——JOIN 時 `null → true`，LEAVE 後維持 `true` 不回復，代表「曾經有人加入」而非「現在有人在」；`is_presence` 全程 `false`，與 JOIN 狀態無關、語意不明。四個候選中只有 `mode` 雙向正確且看得到同事。
+
+**`users[]` 的第二個受害者：發送者判別（§19.1 #13）**：`mappers.ts` 初版靠比對 `users[]` 反推發送者，`users[]` 為空時會把**所有 `u_` 真人客服誤判為 AI**，撞單防護直接失效。已改為 `from` 前綴判別（`senderTypeOf`）。⚠️ 這一項不因「`users[]` 其實有值」而緩解——它是團隊名冊，拿來反推發送者一樣是錯的。
+
 **`mode` 的資料模型（§10.6）**：型別文件曾同時存在兩套不相容的定義（`aiReplies`/`agentCanSend` 布林對 vs. 舊版 `aiMode: 'collab' | 'human_only'` 列舉），源自初版判斷「不要建模成列舉」是對的，但尚未確認兩個維度是否真的獨立。四個 `mode` 值全數實測後，確認 Automation Only 時「AI 會回、客服不能送」證實兩維度互相獨立，單一列舉表達不了，已統一為兩維度模型。
 
 **對話識別碼（§9.3）**：`precisionOf()` 初版以字串完全相等比對兩個識別碼，但對話清單給裸 UUID、訊息帶 `conv_` 前綴，導致「取回 70 則全部正確的訊息」被算成 precision 0%，一度誤判整個訊息取數策略不可行、M1 可能被阻塞。修正比對邏輯（改用 `sameConversation()` 而非字串相等）後，真實 precision 是 100%。
@@ -1594,6 +1623,8 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 **對話 mode 寫入端點（風險 #23）**：原判「SDK 無 mode 寫入端點」是錯的——由官方介面的網路請求直接觀察到 `POST /v1/team_conversations/_join` 帶 `mode` 參數即可寫入，且與 JOIN 是同一支端點，只是 SDK 型別沒有宣告 `mode` 欄位。
 
 **附件內容可否取得（風險 #11）**：最早只測過 4 則歷史 `file` 型訊息（`content` 只有 `{name, media_id}`，無 url），外推到「所有附件都拿不到內容」。之後用真實對話補測 `image`（1 則）與 `pdf`（2 則）樣本後推翻——兩者 `content` 都有直接可用的 url，只是平台不提供描述／OCR，且客戶上傳時連檔名（`caption`）都沒有（只有客服上傳的 PDF 才帶檔名）。過程中也用瀏覽器 Network 面板發現一個非 SDK 公開的 `/contact/{id}/files` 端點；因為是在官方介面「聯絡人資料」彈窗中觸發的請求，判斷其範圍是聯絡人層級（該聯絡人所有對話的附件）而非單一對話，因此明確排除用它列出「當前對話」的附件——改為直接用既有的訊息取數路徑（過濾 `type ∈ {image, pdf}`），已用 `14-contact-files.ts` 的 `H-2f-alt` 驗證兩者是同一個 channel-service 後端。
+
+**M1「4 秒內看到」的預算從哪來（§18 M1）**：這個數字量的是**客戶回覆**那條路徑——客戶的訊息不經我方 API，只能靠第一層清單輪詢發現（實測 `last_message_at` ≤2 秒更新，端到端約 1 秒）。另一條路徑是我方客服送出時 `poke()` 的捷徑（約 40ms），那條快得多，**不能拿它當驗收依據**。日後若要調整輪詢頻率，門檻是前者不是後者。
 
 **M1 驗收方法論**：原判「兩瀏覽器即時同步」與「斷線補齊」兩項只能靠真實瀏覽器人工驗證。後來發現這個判斷只有一半對——真正需要瀏覽器的只有 `EventSource` 本身（瀏覽器原生實作，不是我方程式碼），拆開後我方負責的部分全都可自動化：跨 session 的送出與接收、斷線與補齊由 `test/realtime-http.ts` 對建置後的 Nitro 用兩個獨立 cookie jar + `fetch` 手動解析 SSE 驗證；重連時機與退避策略由 `stream-store.test.ts` 對真正的前端 store 注入假斷線驗證。驗證測試本身也需要被信任——第一項檢查即為「兩位客服是不同的 operator」，避免共用 operatorId 導致 presence 自我排除與撞單過濾被測成假陽性。
 
