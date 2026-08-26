@@ -13,6 +13,7 @@ import type {
   Message,
   PresenceEntry,
 } from './conversation.js'
+import type { SentimentBlock, SummaryBlock } from './copilot.js'
 
 /**
  * Presence 快照 —— ⚠️ 不是單純的 `PresenceEntry[]`。
@@ -61,7 +62,7 @@ export interface CollisionReport {
   latestMessageId: string | null
 }
 
-/** M1 已實作的事件。M2/M3 的 summary / sentiment / suggestions 屆時再加。 */
+/** M1 已實作的事件；M2 新增 summary/sentiment（specs/001-sentiment-panel）。M3 的 suggestions 屆時再加。 */
 export type CopilotEvent =
   | { type: 'session.opened', conversationId: string, reason: 'join' | 'resume' }
   | { type: 'session.closed', conversationId: string, reason: 'leave' | 'resolved' }
@@ -69,6 +70,13 @@ export type CopilotEvent =
   | { type: 'presence.updated', conversationId: string, presence: PresenceSnapshot }
   | { type: 'control.updated', conversationId: string, control: ConversationControl }
   | { type: 'conversation.updated', conversationId: string, lastMessageAt?: string }
+  /**
+   * 摘要卡整塊覆蓋式更新（specs/001-sentiment-panel/contracts/copilot-sse-events.md）。
+   * ⚠️ 前端 MUST 整塊覆蓋既有顯示狀態，不做 partial merge —— 是否保留舊內容由 status 語意決定。
+   */
+  | { type: 'summary.updated', conversationId: string, summary: SummaryBlock }
+  /** 情緒 sparkline 整塊覆蓋式更新；timeline 攜帶全量（非 patch），見同一份契約文件 */
+  | { type: 'sentiment.updated', conversationId: string, sentiment: SentimentBlock }
   /** 心跳。⚠️ 不可省略：中間的 proxy 常在 60s 無資料時直接切斷連線 */
   | { type: 'stream.heartbeat', at: string }
 

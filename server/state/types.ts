@@ -10,6 +10,7 @@
 
 import type { OrganizationChoice } from '../../shared/types/auth.js'
 import type { PresenceEntry } from '../../shared/types/conversation.js'
+import type { SentimentBlock, SummaryBlock } from '../../shared/types/copilot.js'
 
 // ── BFF Session（§7.1 / §7.2）──────────────────────────────────────────
 
@@ -84,6 +85,23 @@ export interface CopilotSession {
   updatedAt: number
 }
 
+// ── CopilotAnalysisState（specs/001-sentiment-panel）───────────────────
+
+/**
+ * 摘要／情緒分析結果 —— **完全獨立於 `CopilotSession`**，不受 watcher 數量影響、
+ * 也不因客服切走而被清除（見上方 `CopilotSession` 註解的 2026-08-26 訂正）。
+ *
+ * 生命週期：sliding TTL 2 小時，每次讀取（切回檢視）或寫入（新一輪分析完成）皆續期。
+ * 詳見 specs/001-sentiment-panel/data-model.md「CopilotAnalysisState」一節。
+ */
+export interface CopilotAnalysisState {
+  conversationId: string
+  summaryBlock: SummaryBlock
+  sentimentBlock: SentimentBlock
+  /** debounce 計時器用的最後一次觸發時間戳（epoch ms），非對外欄位，供 copilot-analysis.ts 內部使用 */
+  lastAnalysisTriggerAt?: number
+}
+
 // ── 介面 ──────────────────────────────────────────────────────────────
 
 export interface StateStore {
@@ -96,6 +114,11 @@ export interface StateStore {
   getCopilotSession(convId: string): Promise<CopilotSession | null>
   setCopilotSession(s: CopilotSession): Promise<void>
   deleteCopilotSession(convId: string): Promise<void>
+
+  // 摘要／情緒分析狀態（與 CopilotSession 完全獨立的資料集，見上方型別註解）
+  getAnalysisState(convId: string): Promise<CopilotAnalysisState | null>
+  /** ttlMs：sliding TTL，每次呼叫皆以當下時間重新起算到期時間 */
+  setAnalysisState(s: CopilotAnalysisState, ttlMs: number): Promise<void>
 
   // Presence
   addPresence(convId: string, op: PresenceEntry, ttlMs: number): Promise<void>

@@ -9,6 +9,7 @@
  */
 
 import type {
+  CopilotAnalysisState,
   CopilotSession,
   Session,
   StateStore,
@@ -29,6 +30,7 @@ function alive<T>(e: Expiring<T> | undefined, now: number): e is Expiring<T> {
 export class MemoryStateStore implements StateStore {
   private sessions = new Map<string, Session>()
   private copilots = new Map<string, CopilotSession>()
+  private analysisStates = new Map<string, Expiring<CopilotAnalysisState>>()
   /** convId → (operatorId → entry) */
   private presence = new Map<string, Map<string, Expiring<PresenceEntry>>>()
   private pollLocks = new Map<string, number>()
@@ -82,6 +84,21 @@ export class MemoryStateStore implements StateStore {
 
   async deleteCopilotSession(convId: string): Promise<void> {
     this.copilots.delete(convId)
+  }
+
+  // ── CopilotAnalysisState（specs/001-sentiment-panel，比照 presence 的雙軌淘汰）───
+
+  async getAnalysisState(convId: string): Promise<CopilotAnalysisState | null> {
+    const entry = this.analysisStates.get(convId)
+    if (!alive(entry, Date.now())) {
+      this.analysisStates.delete(convId)
+      return null
+    }
+    return entry.value
+  }
+
+  async setAnalysisState(s: CopilotAnalysisState, ttlMs: number): Promise<void> {
+    this.analysisStates.set(s.conversationId, { value: s, expiresAt: Date.now() + ttlMs })
   }
 
   // ── Presence ───────────────────────────────────────────────────────
@@ -145,6 +162,9 @@ export class MemoryStateStore implements StateStore {
   sweep(now = Date.now()): void {
     for (const [id, s] of this.sessions) {
       if (s.expiresAt <= now) this.sessions.delete(id)
+    }
+    for (const [convId, entry] of this.analysisStates) {
+      if (!alive(entry, now)) this.analysisStates.delete(convId)
     }
     for (const [convId, byOperator] of this.presence) {
       for (const [operatorId, entry] of byOperator) {
