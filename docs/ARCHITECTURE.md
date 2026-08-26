@@ -91,7 +91,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | iMBrace | `@imbrace/sdk` | **僅在 server 端使用** |
 | 狀態管理 | Pinia | `auth` / `conversations` / `sessions` / `presence` |
 | 樣式 | Tailwind CSS v4 | |
-| 元件庫 | Nuxt UI | ⚠️ 部分進階元件屬 Pro，商用需確認授權 |
+| 元件庫 | Nuxt UI | ✅ v4 起 Pro 已併入主套件，125+ 元件全免費 MIT，商用無需額外授權（2026-08-26 確認，見 §19.1 #8） |
 | 圖示 | `@nuxt/icon` + Lucide | 按需載入 |
 | 深色模式 | `@nuxtjs/color-mode` | Nuxt UI 內建 |
 | i18n | `@nuxtjs/i18n`，預設 `zh-TW` | 第一版即導入 |
@@ -2137,7 +2137,7 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 5 | **SDK 無訊息層級推播** | 🔵 已確認 | 依賴輪詢，有延遲與 API 壓力 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS |
 | 6 | **無相關度分數可用（iMBrace 路徑）** | 🔵 **已確認，因應方式已定** | 信心度數字暫時沒有真實依據 | ~~自建 embedding 檢索分數~~ **`ai.embed()` 404，此路不通**；agent 的 RAG 工具回傳純文字亦無 score。**2026-08-26 決策**：`confidence` 欄位改為 nullable，不是整個拿掉——iMBrace 路徑無分數來源時 UI 留空，不估算填充；若日後換上 viki 的 `answer-attribution`（見 `PLATFORM_CAPABILITY.md` §6），同一欄位回填真實分數，UI 元件不必重做。詳見 §8.2、§11.6 |
 | 7 | 多副本狀態共享 | ⚪ | 上 K8s 後 SSE 推播直接失效 | 介面 day-1 async；M4 換 Redis |
-| 8 | Nuxt UI Pro 授權 | ⚪ | 商用可能需付費 | 開發前確認授權狀況，必要時以 Tailwind 自建替代元件 |
+| 8 | ~~Nuxt UI Pro 授權~~ | ✅ **已解除（2026-08-26）** | ~~商用可能需付費~~ | 此顧慮基於 Nuxt UI v2 時代的舊模式（Pro 元件另外收費）。**v4 起 Pro 已整併進主套件**：專案安裝的 `@nuxt/ui@4.11.0` 的 `package.json`／`LICENSE.md` 皆為純 MIT，未另外依賴 `@nuxt/ui-pro`；官方文件（[ui.nuxt.com/getting-started/license](https://ui.nuxt.com/getting-started/license)）確認 125+ 元件全部免費、商用不需額外付費。M2 大量使用 UI 元件前可放心採用 |
 | 9 | 對話內容送外部 LLM | 🟡 範圍可能擴大 | 資安／合規 | 若 #17 確認無 structured output、或無 vision 模型，則需外送外部服務，**出境範圍從文字擴大到語音與影像**。`05-ai-structured.ts` 會一併檢查 `is_vision_available` |
 | 10 | Data Board 欄位型別限制 | ⚪ | schema 可能需調整 | M3 前先實測，setup script 可重跑 |
 | 11 | **附件內容依型別而定：`image`／`pdf` 取得到，舊資料的 `file` 取不到** | 🟢 **2026-08-26 用真實圖片＋PDF 對話跑 `02-multimodal.ts`／`14-contact-files.ts` 後兩度更新** | `image`／`pdf` 型附件皆有直接可用的 URL，只是平台未做描述／OCR；客戶端上傳介面本身只接受這兩種格式 | **`image`／`pdf`（2026-08-26 新增樣本，推翻原判）**：原判「附件都拿不到」是**外推**——當時 398 則訊息中 `image`／`pdf` 皆 0 則，沒有實測樣本。用真實對話重測後（圖片 1 則、PDF 2 則），`content` 皆帶 `url`（`https://s3.ap-east-1.amazonaws.com/...`），且未加簽章／無時效參數（僅 3 樣本，`H-2d` 待更多驗證）。平台未產生描述或 OCR（`H-2a` 確認）。**`caption` 有明顯規律**：客服上傳的 PDF，`caption` = 原始檔名；**客戶上傳的（圖片與 PDF 皆然）目前樣本 `caption` 均為空**——客戶上傳才是真實場景主力，代表不能依賴 `caption` 顯示描述。**使用者截圖確認**：客戶端上傳介面的檔案篩選器只接受圖片與 PDF，Word/Excel 等格式在此管道根本傳不進來。**2026-08-26 決策：圖片與 PDF 一併納回 MVP**，走自建 vision／文件分析（見 §11.4），比原本假設的「無米可炊」成本低很多。**`file`（舊資料，非圖片/PDF，結論不變）**：`content` 是 `{name, media_id}`，沒有 url；SDK 全域搜尋 `media` 無任何端點，試打 4 條猜測路徑全 404。398 則歷史訊息中僅 4 則。**這 4 則的來源目前不明**——客戶端上傳介面無法產生此型別，可能來自其他管道或較舊版本。**維持排除在 MVP 外**，僅顯示檔名標示「無法預覽」。**語音**：iMBrace 平台據了解不支援語音訊息，維持不評估。**新發現**：`GET https://cloud.imbrace.co/api/channel-service/v1/contact/{contact_id}/files`（非 SDK 公開端點，使用者由瀏覽器 Network 面板找到）可列出附件，已用 `14-contact-files.ts` 驗證可用。**⚠️ 範圍是聯絡人層級**：使用者是在官方介面的「聯絡人資料」彈窗中發現此端點的，該情境本質上就是聯絡人視圖，強烈支持這是「聯絡人所有對話」而非單一對話的範圍（技術上仍待多對話樣本驗證）。**不得當成「此對話的附件清單」使用**，否則同一客戶多次對話時會混入不相關對話的附件（見 §11.4）。已列為對 iMBrace 的 P1 追問（`file` 型附件來源、`image`/`pdf` URL 時效、`contact/files` 端點合法性與範圍，`IMBRACE_QUESTIONS.md` H-2/H-2f） |
