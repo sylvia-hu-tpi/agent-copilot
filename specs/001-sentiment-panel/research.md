@@ -62,11 +62,15 @@ export interface SentimentMarker {
 **Alternatives considered**：
 - 直接串 `ImbraceAgentProvider`：會讓本功能的驗收依賴外部 AI 服務的可用性與延遲（實測中位數 5 秒、最慢 12.2 秒，見憲法 6.2），使「10 秒門檻」「重試邏輯」的測試變得不穩定且變慢，否決；且會提前引入 prompt／Zod schema 對齊的工作量，模糊本功能邊界。
 
-## 5. `CopilotSession` 擴充是否需要改動 `StateStore` 介面
+## 5. 摘要／情緒資料是否掛在 `CopilotSession` 上——是否需要改動 `StateStore` 介面
 
-**Decision**: 不需要。`StateStore.setCopilotSession(s: CopilotSession)` 簽名不變，僅擴充 `CopilotSession` 這個資料形狀本身（新增欄位）。呼叫端（`copilot-analysis.ts`）讀出既有 session、合併新欄位、整份寫回。
+> **2026-08-26 訂正**：本節原決策為「擴充 `CopilotSession`、不改動 `StateStore` 介面」，經 `/speckit-analyze` 發現會與 FR-010 衝突後推翻，改為下方決策。
 
-**Rationale**: 憲法 2.3 只要求方法本身是 async，未要求欄位固定；`server/state/types.ts` 檔頭註解本身已預告「AI 產物於 M2 加入——屆時新增欄位即可，不需改動 StateStore 介面」，本功能照原計畫執行即可，無需額外設計。
+**Decision**: **需要**改動 `StateStore` 介面——新增 `getAnalysisState`／`setAnalysisState` 兩個方法，操作一個獨立於 `CopilotSession` 的新資料形狀 `CopilotAnalysisState`（詳見 data-model.md），不擴充既有 `CopilotSession` 介面，也不沿用 `setCopilotSession`。
+
+**Rationale**: `CopilotSession` 的生命週期由 watcher refcount 管理——`server/services/session-manager.ts` 的 `releasePipeline()` 在 `watchers.length === 0` 時會整組刪除該對話的 `CopilotSession`（`store.deleteCopilotSession()`）。客服切離對話是正常操作，若摘要／情緒資料掛在同一個物件上，切走就會把分析成果一併刪除，客服切回時變成從零開始的 cold start，直接違反 FR-010「切走再切回，結果 MUST 被保留」。`server/state/types.ts` 檔頭原本預告「AI 產物於 M2 加入——屆時新增欄位即可，不需改動 StateStore 介面」，這個預告當時未考量到 watcher refcount 與分析成果生命週期不同的問題，本功能落地時一併訂正該註解。新方法比照既有 `addPresence(convId, entry, ttlMs)` 的 TTL 傳參模式，憲法 2.3（day-1 async）依然滿足。
+
+**Alternatives considered**：維持原決策（擴充 `CopilotSession`）並改為「`releasePipeline()` 只停輪詢、不刪 session，另立 TTL 回收」——改動面更小，但 `CopilotSession` 的存在語意會從「有人在看」變成「有人在看或曾經在 TTL 內看過」，增加後續讀這個欄位的人誤解的風險；且兩案都要解「多久沒人看該回收」這個新問題，並非該替代方案獨有的優勢，故不採用。
 
 ## 6. 錯誤記錄與 PII（憲法 1.5）在分析管線中的落地
 

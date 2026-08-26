@@ -58,11 +58,18 @@ export type Session = PendingOrgSession | ActiveSession
 // ── CopilotSession（§4.2）─────────────────────────────────────────────
 
 /**
- * 每個「已 JOIN 的對話」一個，由 session-manager 以 refcount 管理生命週期。
+ * 每個「已 JOIN 的對話」一個，由 session-manager 以 refcount 管理生命週期——
+ * `watchers.length === 0` 時 `releasePipeline()` 會整組刪除。
  *
- * M0 只定義輪詢與去重所需的最小欄位。
- * AI 產物（摘要、情緒序列、建議卡）於 M2 加入 —— 屆時新增欄位即可，
- * 不需改動 StateStore 介面。
+ * M0 只定義輪詢與去重所需的最小欄位，往後也**只應該**放輪詢／去重相關欄位。
+ *
+ * ⚠️ 2026-08-26 訂正：原註解預告「AI 產物（摘要、情緒序列、建議卡）於 M2 加入，
+ * 屆時新增欄位即可」——這個計畫在 `specs/001-sentiment-panel` 的 `/speckit-analyze`
+ * 被推翻：AI 產物若掛在這裡，客服切走對話（watchers 歸零，完全正常的操作）就會把
+ * 分析成果連帶刪除，違反 FR-010「切走再切回，結果 MUST 被保留」。
+ * AI 產物改落地於獨立的 `CopilotAnalysisState`（見 `specs/001-sentiment-panel/data-model.md`），
+ * 透過 `StateStore.getAnalysisState`／`setAnalysisState`（sliding TTL，不受 watcher 數影響），
+ * 不會、也不應該再擴充這個介面。
  */
 export interface CopilotSession {
   conversationId: string

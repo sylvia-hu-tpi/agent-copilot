@@ -14,7 +14,7 @@
 
 **Primary Dependencies**: Nuxt 4 / Vue 3 / Pinia（既有）；Zod（AI 輸出驗證，憲法 4.2）；`@imbrace/sdk`（僅 server，本功能不直接呼叫，透過既有 `server/services/imbrace.ts` 防腐層）；`@nuxtjs/i18n`（新文案集中管理，憲法 8.5）。不新增圖表庫——情緒 sparkline 手刻 SVG（`ARCHITECTURE.md` §14.5，資料量小，深色模式與動畫更好控）
 
-**Storage**: 沿用既有 `StateStore` 抽象（`server/state/types.ts`）之記憶體實作；摘要與情緒序列為對話進行中的暫存狀態，掛在 `CopilotSession` 上，不寫入 Data Board（結案摘要屬 M3，非本功能範圍）
+**Storage**: 沿用既有 `StateStore` 抽象（`server/state/types.ts`）的記憶體實作模式，但摘要與情緒序列**不掛在 `CopilotSession` 上**——2026-08-26 訂正：原設計掛在 `CopilotSession`，但該物件的生命週期由 watcher refcount 管理（`watchers.length === 0` 即整組刪除，見 `server/services/session-manager.ts` `releasePipeline()`），與 FR-010「客服切走再切回，分析結果須保留」直接衝突。改為在 `StateStore` 新增 `getAnalysisState`／`setAnalysisState` 方法，操作一個以 `conversationId` 為鍵、與 `CopilotSession` 完全獨立的資料集（`CopilotAnalysisState`，見 data-model.md），生命週期採 sliding TTL（2 小時，每次讀寫皆續期），不受 watcher 數量影響，比照既有 `presence` 的 `Expiring<T>` 雙軌淘汰模式（`server/state/memory-store.ts`）。不寫入 Data Board（結案摘要屬 M3，非本功能範圍）
 
 **Testing**: Vitest（單元測試：重試/退避策略、附件輪的中性標記邏輯、Zod schema 驗證；對假 gateway 的整合測試沿用 `test/mock-gateway.ts` 模式）；`npm run smoke:realtime` 需相應擴充以涵蓋 `summary.updated` / `sentiment.updated` 事件的收斂
 
@@ -35,11 +35,11 @@
 | 條 | 適用性 | 檢核結果 |
 |---|---|---|
 | **一、安全邊界** | 本功能不直接處理憑證；AI 呼叫走既有防腐層模式 | ✅ 通過。摘要／情緒內容仍屬客戶對話個資，日誌與監控 MUST NOT 輸出全文（1.5）——分析管線的錯誤記錄需遵守，已納入 research.md 決策 |
-| **二、外部依賴的抽象邊界** | 新增 `AIProvider` 介面 | ✅ 通過。介面定義於 `shared/types/copilot.ts`，M2 僅接 `MockAIProvider`，未來換 `ImbraceAgentProvider`／`VikiAIProvider` 只需換裝配點（2.1、2.2）。`StateStore` 擴充欄位不改變其 async 方法簽名本質（2.3 已滿足，沿用既有 `setCopilotSession`） |
+| **二、外部依賴的抽象邊界** | 新增 `AIProvider` 介面 | ✅ 通過。介面定義於 `shared/types/copilot.ts`，M2 僅接 `MockAIProvider`，未來換 `ImbraceAgentProvider`／`VikiAIProvider` 只需換裝配點（2.1、2.2）。`StateStore` 新增 `getAnalysisState`／`setAnalysisState` 方法（比照既有 `addPresence` 的 TTL 傳參模式），從 day 1 即為 async（2.3 已滿足），不改動既有方法簽名（2026-08-26 訂正：原設計誤寫為擴充 `CopilotSession`／沿用 `setCopilotSession`，已改為獨立於 `CopilotSession` 的新方法，見 Storage 一節與 data-model.md） |
 | **三、Copilot 不得拖垮主線** | 本功能的核心約束 | ✅ 通過，且是本規格 P1 使用者故事的直接體現。FR-006／FR-007／FR-014 對應 3.1、3.2；未新增任何刻意阻斷情境，3.3 封閉集合不變 |
 | **四、AI 輸出必須可驗證** | 摘要與情緒序列皆為 AI 產物 | ✅ 通過。4.1 structured output＋4.2 Zod 驗證於 `shared/types/copilot.ts` 的 schema 落地；4.5 事實不得推測——摘要的 `keyFacts`／`attempted`／`openIssues` 不得由模型杜撰工單編號等，缺資料時循既有 `requiresData` 精神處理（本功能摘要卡本身無需此欄位，情緒與摘要皆為觀察性輸出而非承諾性輸出，風險較低，仍以 Zod 擋掉格式外資料） |
 | **五、AI 產物寫入正式紀錄** | 不適用 | 本功能不寫入 Data Board（結案摘要屬 M3） |
-| **六、資源使用** | 6.2／6.3／6.5 | ✅ 通過。6.2：本規格範圍即僅前景對話（見 Scale/Scope）；6.3：增量分析回傳 patch（FR-004）；6.5：附件文字化結果沿用既有快取機制，情緒管線不重複送原始檔案 |
+| **六、資源使用** | 6.2／6.3 | ✅ 通過。6.2：本規格範圍即僅前景對話（見 Scale/Scope）；6.3：增量分析回傳 patch（FR-004）。6.5（快取）不適用——附件文字化管線已排除本次範圍，延後至 M3（見 spec.md FR-013、Assumptions，2026-08-26 訂正） |
 | **七、協同與資料一致性** | 不直接涉及 JOIN／送出訊息邏輯 | 不適用（本功能不改動 `composer-block.ts`、撞單檢查等既有機制，僅消費其存在的事實以確保「不阻斷」） |
 | **八、介面與無障礙** | 8.1／8.2／8.3／8.5 | ✅ 通過。8.1：情緒示警三者並呈（FR-003）；8.2：重試按鈕須可鍵盤操作；8.3：本功能不涉及訊息流虛擬滾動，不影響既有實作；8.5：新文案入 i18n |
 | **九、渲染與部署** | 不涉及 `nuxt.config.ts` 或部署形態變更 | 不適用 |
@@ -74,7 +74,12 @@ shared/types/
 
 server/
 ├── state/
-│   └── types.ts                        # MODIFIED — CopilotSession 擴充摘要／情緒欄位與逐區塊狀態
+│   ├── types.ts                        # MODIFIED — 新增 CopilotAnalysisState 型別與
+│   │                                    #            StateStore.getAnalysisState／setAnalysisState
+│   │                                    #            （不擴充 CopilotSession，見 2026-08-26 訂正）
+│   └── memory-store.ts                 # MODIFIED — 比照既有 `presence` 的 Expiring<T> 雙軌淘汰模式
+│                                        #            （讀取時惰性淘汰＋定期掃除）新增 analysisStates
+│                                        #            Map，sliding TTL 2 小時
 ├── services/
 │   ├── ai/
 │   │   ├── mock-ai-provider.ts         # NEW — AIProvider 的 mock 實作（M2 UI 先行）

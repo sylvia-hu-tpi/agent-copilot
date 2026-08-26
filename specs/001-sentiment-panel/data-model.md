@@ -104,6 +104,8 @@ export type SentimentTimelineEntry = SentimentPoint | SentimentMarker
 
 **驗證規則**：`score` 經 Zod 限制在 0–100 閉區間；`label` 僅接受列舉內字串；純附件輪由伺服端依 `Message.attachments` 非空且 `Message.text` 為空字串直接產生 `SentimentMarker`，**不送進模型**（無文字可分析，送了也只是浪費一次呼叫）——因此 `SentimentMarker` 不經 AI 輸出驗證流程，是管線判斷後直接建構的。
 
+> ⚠️ **此判別式僅在本功能範圍內成立，M3 實作附件文字化後必須回頭檢查**：本功能範圍不含附件內容文字化（FR-013 已延後至 M3，見 spec.md Assumptions），因此 `Message.text` 對純附件輪維持平台原始值（實務上為空字串）。但 `docs/ARCHITECTURE.md` §11.4 現行設計是「文字化結果寫回 `Message.text`」（`shared/types/conversation.ts` 的欄位註解也是同樣語意：「統一的可分析文字：原文，或附件的 vision／文件分析描述」）——若 M3 依此設計實作，純附件輪的 `Message.text` 將不再是空字串，本判別式會失效並把「已文字化的附件輪」誤判為含文字發言（因而錯誤產生 `SentimentPoint` 而非 `SentimentMarker`，違反 FR-002／FR-012）。M3 落地文字化管線時，MUST 改用不受文字化影響的判別依據（例如 mapper 層另外輸出一個「客戶是否原始有輸入文字」的顯式旗標，貫穿到 `copilot-analysis.ts` 的過濾邏輯），MUST NOT 沿用「`Message.text === ''`」這個判別式。
+
 ## 示警判定（衍生邏輯，非獨立實體）
 
 不落地為資料型別，而是前端／後端共用的純函式（`shared/utils/` 或 `shared/types/copilot.ts` 內的 helper）：
@@ -116,19 +118,21 @@ export function isSentimentAlert(label: SentimentPoint['label']): boolean {
 
 對應 FR-003、spec.md Assumptions 的「以標籤絕對等級判定，不採單輪下降幅度」決策。
 
-## CopilotSession 擴充（`server/state/types.ts`）
+## CopilotAnalysisState（獨立於 CopilotSession，`server/state/types.ts`）
 
-在既有 `CopilotSession` 介面新增欄位（不改動介面既有欄位，亦不改動 `StateStore` 方法簽名，見 research.md #5）：
+> **2026-08-26 訂正**：原設計把 `summaryBlock`／`sentimentBlock` 直接掛在既有 `CopilotSession` 介面上。
+> 但 `CopilotSession` 的生命週期由 watcher refcount 管理——`server/services/session-manager.ts`
+> 的 `releasePipeline()` 在 `watchers.length === 0` 時會呼叫 `store.deleteCopilotSession()`
+> **整組刪除**該對話的 `CopilotSession`。客服切離對話（沒有任何人在看）是完全正常的操作，
+> 一旦兩者共用同一個物件，切走就會把尚在進行或剛完成的 AI 分析成果一併刪除，
+> 客服切回時看到的會是從零開始的 cold start，直接違反 FR-010「切走再切回，結果 MUST 被保留」。
+>
+> 因此摘要／情緒資料改為**完全獨立於 `CopilotSession` 的新資料集**，不受 watcher 數量影響、
+> 也不因客服切走而被清除。`CopilotSession` 本身維持原樣（僅供輪詢與去重使用），不新增任何欄位。
 
 ```ts
-export interface CopilotSession {
+export interface CopilotAnalysisState {
   conversationId: string
-  watchers: string[]
-  lastMessageId: string | null
-  createdAt: number
-  updatedAt: number
-
-  // ↓ 本功能新增
   summaryBlock: SummaryBlock
   sentimentBlock: SentimentBlock
   /** debounce 計時器用的最後一次觸發時間戳（epoch ms），非對外欄位，供 copilot-analysis.ts 內部使用 */
@@ -136,7 +140,21 @@ export interface CopilotSession {
 }
 ```
 
-**初始值**（`CopilotSession` 建立時）：`summaryBlock.status = 'empty'`、`sentimentBlock.status = 'empty'`，兩者 `updatedAt` 為建立時間，`timeline = []`、`summary = null`。
+`StateStore`（`server/state/types.ts`）新增兩個方法，與既有 `getCopilotSession`／`setCopilotSession` 平行但完全不共用底層資料：
+
+```ts
+getAnalysisState(convId: string): Promise<CopilotAnalysisState | null>
+/** ttlMs：sliding TTL，每次呼叫皆以當下時間重新起算到期時間 */
+setAnalysisState(s: CopilotAnalysisState, ttlMs: number): Promise<void>
+```
+
+**生命週期**：sliding TTL，**建議值 2 小時**——每次讀取（客服切回檢視）或寫入（新一輪分析完成）都重新起算到期時間。選擇 2 小時而非「永不過期」或「跟 watcher 數綁定」的理由：
+
+- 對應客服在一個工作班次內於多個對話間切換、間隔數十分鐘至一兩小時再切回的常見情境（spec.md Assumptions 提及的「背景對話」情境，屬未來多對話切換功能，但本次 TTL 設計需先預留合理餘裕，避免切換頻率稍高就重演 FR-010 的 bug）。
+- 記憶體實作比照既有 `presence`（`server/state/memory-store.ts` 的 `Expiring<T>` 雙軌淘汰：讀取時惰性淘汰 + 定期掃除），不會無界累積；相較於「永不過期」，2 小時上限讓「服務長時間不重啟、處理大量對話」情境下的記憶體增長有明確上界。
+- 這是本次新增、之前規格未定義過的數字，非既有慣例的既定值（不可與 FR-014 的 40 秒重試預算、presence 的 45 秒心跳 TTL 混淆——三者用途完全不同）。若之後的多對話切換／背景分級功能對「多久沒人看該保留分析結果」有更精確的產品判斷，屆時應回頭修訂此值，並比照本次做法同步更新本節與 `plan.md` Storage 一節。
+
+**初始值**（`CopilotAnalysisState` 建立時，即冷啟動觸發時）：`summaryBlock.status = 'empty'`、`sentimentBlock.status = 'empty'`，兩者 `updatedAt` 為建立時間，`timeline = []`、`summary = null`。
 
 ## Key Entities 對照（回填 spec.md）
 
