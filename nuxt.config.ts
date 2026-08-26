@@ -7,7 +7,7 @@
  *     重複列在 modules 會產生「module already registered」警告 → 此處移除。
  *
  *  2. `runtimeConfig` 的秘密欄位預設值一律留空字串。若在此填入實際值，
- *     它們會被烘進 `.output`（憲法第 2 條 / §16.2 的精神不只是「不進 public」，
+ *     它們會被烘進 `.output`（憲法 1.1 / §16.2 的精神不只是「不進 public」，
  *     而是「不進建置產物」）。實際值一律由執行環境的 `NUXT_*` 環境變數注入。
  *
  *  3. `.env.local` 以 `IMBRACE_*` 命名（spike 腳本共用同一份），
@@ -69,7 +69,7 @@ export default defineNuxtConfig({
   },
 
   runtimeConfig: {
-    // ⚠️ 憲法第 2 條：以下僅存在於 server，絕不可移入 public
+    // ⚠️ 憲法 1.1：以下僅存在於 server，絕不可移入 public
     imbraceApiKey: '',
     imbraceOrganizationId: '',
     imbraceBaseUrl: '',

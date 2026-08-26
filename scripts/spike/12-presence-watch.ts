@@ -27,7 +27,7 @@ import { resolve } from 'node:path'
 
 const POLL_MS = 2000
 
-/** 一次快照裡我們關心的欄位。刻意不存訊息內容（憲法第 8 條） */
+/** 一次快照裡我們關心的欄位。刻意不存訊息內容（憲法 1.5） */
 interface Snapshot {
   at: string
   /** conversations.get() */

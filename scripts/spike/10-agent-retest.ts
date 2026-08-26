@@ -7,7 +7,7 @@
  *   「只有某條路徑可用」，整個架構結論會不同。
  *
  * 順便驗證 0-3d：agent 設定裡有 response_format 欄位，
- * 也就是說平台可能支援結構化輸出 —— 這是憲法第 4 條的前提。
+ * 也就是說平台可能支援結構化輸出 —— 這是憲法 4.2的前提。
  *
  * ⚠️ 唯讀：streamChat 只送一個 ping，不寫任何資料。
  */
@@ -124,7 +124,7 @@ export const probe10 = () => runProbe('10', 'AI Agent 逐一重測（依 provide
     evidence: `27 個 agent 的 response_format 值域：${JSON.stringify(rfDist)}`,
     impact: '欄位存在代表平台預留了結構化輸出的位置。'
       + '需向 iMBrace 確認可接受的值（json_object？json_schema？）與是否真的生效 —— '
-      + '這決定憲法第 4 條「AI 輸出必須經 Zod 驗證」能否用平台原生能力滿足，'
+      + '這決定憲法 4.2「AI 輸出必須經 Zod 驗證」能否用平台原生能力滿足，'
       + '而不是靠 prompt 拜託模型輸出 JSON 再自行重試。',
   })
 })

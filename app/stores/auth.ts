@@ -2,7 +2,7 @@
  * 登入狀態 —— docs/ARCHITECTURE.md §7。
  *
  * ⚠️ 這個 store 裡永遠不會有 token。瀏覽器只拿得到 httpOnly cookie 與身分資訊，
- *    所有憑證都留在 BFF session（憲法第 2 條）。
+ *    所有憑證都留在 BFF session（憲法 1.1）。
  */
 
 import { defineStore } from 'pinia'

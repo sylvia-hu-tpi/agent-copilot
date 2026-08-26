@@ -95,7 +95,7 @@ async function main() {
   const hasRole = orgs.some(o => o.role !== undefined || o.is_admin !== undefined)
   console.log(hasRole
     ? '\n   ✅ H-5：organizations[] 帶 role/is_admin —— 主管判定可沿用平台角色'
-    : '\n   ❌ H-5：未提供角色欄位 —— 需退回 config/supervisors.yaml 白名單')
+    : '\n   ❌ H-5：未提供角色欄位 —— 需退回 config/supervisors.yaml 白名單（尚未建立）')
 
   // 優先選目前 .env.local 已設定的組織，否則取第一個
   const preferred = env('IMBRACE_ORGANIZATION_ID')

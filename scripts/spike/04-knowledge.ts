@@ -2,7 +2,7 @@
  * 04 — 知識庫檢索（C-1 / C-2）🔴 P0
  *
  * 建議卡上「SOP 3.2 · 信心度 92%」必須有能回傳「條目 ID + 相關度分數」的檢索 API，
- * 否則憲法第 5 條（sopId 必須經白名單後驗）無法執行，模型會杜撰 SOP 編號。
+ * 否則憲法 4.3（sopId 必須經白名單後驗）無法執行，模型會杜撰 SOP 編號。
  *
  * 靜態分析已知（@imbrace/sdk@1.4.0）：
  *   ✅ boards.search(boardId, {q, filter, limit}) —— Meilisearch 相容，關鍵字檢索
@@ -34,7 +34,7 @@ export const probe04 = () => runProbe('04', 'C-1/C-2 知識庫檢索', async (p,
         ? `hits 含 id=${'_id' in sample || 'id' in sample ? '✅' : '❌'}、分數欄位=${scoreKey ?? '❌ 無'}`
         : '查無結果，無法判斷欄位結構',
       impact: scoreKey
-        ? '✅ 可用關鍵字檢索建立 sopId 白名單，憲法第 5 條可執行。'
+        ? '✅ 可用關鍵字檢索建立 sopId 白名單，憲法 4.3可執行。'
         : '🟡 有 ID 無分數 → SuggestionCard.confidence 不能用檢索分數，'
           + '§11.6 的 confidence = f(檢索分數, 模型自評, 上下文完整度) 公式缺一項。'
           + 'Meilisearch 需在查詢時帶 showRankingScore:true，SDK 未公開此參數，需用 raw 呼叫。',
@@ -81,7 +81,7 @@ export const probe04 = () => runProbe('04', 'C-1/C-2 知識庫檢索', async (p,
       + '(b) 自建向量檢索 —— ai.embed() 已公開，SOP 量小（數百條）可直接在記憶體/Redis 算 cosine，'
       + '完全可控且能自訂分數，建議採此路；'
       + '(c) 掛 Knowledge Hub 給 AI Agent 再問它 —— 回傳自由文字，沒有條目 ID 與分數，'
-      + '無法滿足憲法第 5 條，不建議。',
+      + '無法滿足憲法 4.3，不建議。',
   })
 
   // ── ③ ai.embed 是否真的可用（路徑 b 的前提）──────────

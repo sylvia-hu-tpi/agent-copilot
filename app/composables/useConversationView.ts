@@ -70,7 +70,7 @@ export function useConversationView(conversationId: Ref<string>) {
 
   const sending = ref(false)
   const sendError = ref<string | null>(null)
-  /** 非 null 時 UI 必須擋住送出並顯示對話框（憲法 3.3 唯一允許阻斷的情境） */
+  /** 非 null 時 UI 必須擋住送出並顯示對話框（憲法 3.3① —— 刻意阻斷的封閉集合之一） */
   const collision = ref<CollisionReport | null>(null)
 
   const busy = ref(false)
@@ -289,7 +289,7 @@ export function useConversationView(conversationId: Ref<string>) {
     catch (err) {
       const data = (err as { data?: SendErrorData })?.data
       if (data?.reason === 'collision' && data.collision) {
-        // ⚠️ 這是唯一允許阻斷使用者的情境（憲法 3.3）。草稿保留不動。
+        // ⚠️ 刻意阻斷使用者的三種情境之一（憲法 3.3①）。草稿保留不動。
         collision.value = data.collision
         if (data.control) control.value = data.control
       }

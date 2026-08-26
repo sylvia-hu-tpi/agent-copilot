@@ -1,5 +1,5 @@
 /**
- * PII 遮蔽（docs/ARCHITECTURE.md §16.4 / 憲法第 8 條：日誌不得輸出訊息全文）。
+ * PII 遮蔽（docs/ARCHITECTURE.md §16.4 / 憲法 1.5：日誌不得輸出訊息全文）。
  *
  * 此檔為正式產出 —— M1 起所有 logger 與錯誤回報都應經過這裡。
  * spike 用它把樣本存成可安全進版控、可當測試 fixture 的形式。

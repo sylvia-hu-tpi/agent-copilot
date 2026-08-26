@@ -1,7 +1,7 @@
 /**
  * MemoryEventBus —— docs/ARCHITECTURE.md §8.3
  *
- * 重點是憲法第 6 條：單一訂閱者爆掉不得影響其他訂閱者。
+ * 重點是憲法 3.2：單一訂閱者爆掉不得影響其他訂閱者。
  * SSE 連線斷掉時 handler 丟例外是常態，不是例外情況。
  */
 
@@ -57,7 +57,7 @@ describe('MemoryEventBus', () => {
     expect(() => off()).not.toThrow()
   })
 
-  it('handler 丟例外不得影響其他 handler —— 憲法第 6 條', async () => {
+  it('handler 丟例外不得影響其他 handler —— 憲法 3.2', async () => {
     const bus = new MemoryEventBus()
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
     const survivor = vi.fn()

@@ -1,7 +1,7 @@
 /**
  * iMBrace SDK client factory（docs/ARCHITECTURE.md §7.3）。
  *
- * ⚠️ 憲法第 1 條：`server/` 以外的任何地方不得 import 此檔或 @imbrace/sdk。
+ * ⚠️ 憲法 1.2：`server/` 以外的任何地方不得 import 此檔或 @imbrace/sdk。
  * ⚠️ 不要建立全域單例 client —— 每位客服的操作必須以自己的身分執行，
  *    否則 join() 與訊息送出的歸屬會全部錯亂，稽核軌跡失去意義。
  */

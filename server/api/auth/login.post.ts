@@ -33,7 +33,7 @@ export default defineEventHandler(async (event) => {
     expiresAt: Date.now() + SESSION_TTL_MS,
   })
 
-  // ⚠️ 刻意不回傳 loginToken —— 憲法第 2 條，token 永不離開 server
+  // ⚠️ 刻意不回傳 loginToken —— 憲法 1.1，token 永不離開 server
   return {
     operatorName: result.operatorName,
     organizations: result.organizations,

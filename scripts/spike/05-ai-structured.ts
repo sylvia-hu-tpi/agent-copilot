@@ -1,7 +1,7 @@
 /**
  * 05 — AI 能力（E-1 / E-2）🔴 P0
  *
- * 憲法第 4 條要求「AI 輸出必須經 Zod 驗證後才進入系統」，§11.7 更要求
+ * 憲法 4.2要求「AI 輸出必須經 Zod 驗證後才進入系統」，§11.7 更要求
  * 「全部使用 structured output / tool use，絕不解析自由文字」。
  *
  * 靜態分析已知（@imbrace/sdk@1.4.0）：
@@ -117,7 +117,7 @@ export const probe05 = () => runProbe('05', 'E-1/E-2 AI 能力', async (p, clien
     verdict: anyStructured ? 'yes' : baselineOk ? 'partial' : 'no',
     evidence: outcomes.join(' ｜ '),
     impact: anyStructured
-      ? '✅ 額外欄位可 passthrough，憲法第 4 條可照設計實作（SDK 型別需自行擴充）。'
+      ? '✅ 額外欄位可 passthrough，憲法 4.2可照設計實作（SDK 型別需自行擴充）。'
       : baselineOk
         ? '🟡 只能靠 prompt 要求 JSON + Zod 驗證 + 失敗重試。'
           + '需在 AI pipeline 加上「重試 2 次仍失敗則降級」的機制（§15.2 已有對應降級策略）。'

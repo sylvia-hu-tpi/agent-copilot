@@ -21,8 +21,8 @@ export class MemoryEventBus implements EventBus {
         h(payload)
       }
       catch (err) {
-        // ⚠️ 憲法第 6 條：單一訂閱者爆掉不得影響其他訂閱者與訊息流。
-        // 不輸出 payload —— 憲法第 8 條，日誌不得帶訊息全文。
+        // ⚠️ 憲法 3.2：單一訂閱者爆掉不得影響其他訂閱者與訊息流。
+        // 不輸出 payload —— 憲法 1.5，日誌不得帶訊息全文。
         console.error(`[event-bus] handler failed on topic ${topic}:`, (err as Error).message)
       }
     }

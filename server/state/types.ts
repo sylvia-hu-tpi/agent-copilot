@@ -1,7 +1,7 @@
 /**
  * StateStore / EventBus 介面 —— docs/ARCHITECTURE.md §8.3。
  *
- * ⚠️ 憲法第 3 條：這兩個介面的所有方法從 day 1 就必須是 async。
+ * ⚠️ 憲法 2.3：這兩個介面的所有方法從 day 1 就必須是 async。
  *
  * 若寫成同步的 `map.get()`，M4 換 Redis 時要修改數十個呼叫點。
  * 先寫成 `await store.get()`，換實作只需一天。

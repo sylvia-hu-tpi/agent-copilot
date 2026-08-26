@@ -3,7 +3,7 @@
  *
  * ⚠️ 這裡只放「可以送到瀏覽器」的東西。
  * access token / refresh token 屬於 server session，定義在 server/state/types.ts，
- * 永遠不會出現在本檔 —— 這個界線就是憲法第 2 條在型別層的體現。
+ * 永遠不會出現在本檔 —— 這個界線就是憲法 1.1在型別層的體現。
  */
 
 /**
