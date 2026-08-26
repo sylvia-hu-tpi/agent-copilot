@@ -16,8 +16,10 @@ import {
   loadConversationContext,
   requireTeamConversationId,
 } from '../../../services/conversation-context.js'
+import { runColdStart } from '../../../services/copilot-analysis.js'
 import { useCopilotRuntime } from '../../../services/copilot-runtime.js'
 import { reportViewing } from '../../../services/presence.js'
+import { fetchLatest } from '../../../sources/message-fetch.js'
 import { useEventBus, useStateStore } from '../../../state/index.js'
 import { conversationTopic } from '../../../state/types.js'
 import { conversationIdParam } from '../../../utils/conversation-param.js'
@@ -68,5 +70,31 @@ export default defineEventHandler(async (event) => {
   // 讓第一層輪詢立刻反映新的 mode，不必等下一個週期
   void useCopilotRuntime(session.orgId).listPoller.tick()
 
+  // 情緒面板冷啟動（specs/001-sentiment-panel FR-001、FR-002、T013）——
+  // 已分析過（非 empty）的對話不重跑，避免每次重新 JOIN 就浪費一次 AI 呼叫。
+  // 非同步觸發、不等待完成才回應：AI 呼叫耗時 5～12.2 秒，等它會讓 JOIN 本身變慢。
+  void triggerColdStartIfNeeded(client, ctx.id)
+
   return { conversationId: ctx.id, control, deduped: duplicate }
 })
+
+async function triggerColdStartIfNeeded(
+  client: ReturnType<typeof imbraceClientFor>,
+  conversationId: string,
+): Promise<void> {
+  const state = await useStateStore().getAnalysisState(conversationId)
+  const needsColdStart = !state
+    || state.summaryBlock.status === 'empty'
+    || state.sentimentBlock.status === 'empty'
+  if (!needsColdStart) return
+
+  try {
+    const history = await fetchLatest(client, conversationId)
+    await runColdStart(conversationId, history)
+  }
+  catch (err) {
+    // 冷啟動失敗不得影響 JOIN 本身已經成功這件事（憲法 3.2）；個別區塊的錯誤狀態
+    // 由 copilot-analysis.ts 內部處理，這裡只需要記錄取歷史本身失敗的情況
+    console.error(`[copilot-analysis] ${conversationId} 冷啟動取歷史失敗:`, err instanceof Error ? err.message : String(err))
+  }
+}

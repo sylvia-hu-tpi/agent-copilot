@@ -26,6 +26,7 @@ import type { Unsubscribe, WatchPriority } from '../sources/types.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
 import type { CopilotSession } from '../state/types.js'
+import { scheduleIncremental } from './copilot-analysis.js'
 import { useCopilotRuntime } from './copilot-runtime.js'
 import { inferFromMessages } from './presence.js'
 
@@ -200,6 +201,12 @@ async function onMessages(
     orgId,
     excludeOperatorId: viewerOperatorId,
   })
+
+  // 情緒面板增量觸發（specs/001-sentiment-panel FR-004、FR-005，T019）——
+  // ⚠️ 只有客戶發言才觸發重新分析；客服自己送出的訊息 MUST NOT 觸發（FR-005）。
+  //    debounce（1 秒聚合）由 scheduleIncremental() 內部處理，這裡只負責過濾。
+  const customerMessages = messages.filter(m => m.sender.type === 'customer')
+  if (customerMessages.length > 0) scheduleIncremental(conversationId, customerMessages)
 
   await publish(conversationTopic(conversationId), {
     type: 'messages.appended',

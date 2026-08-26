@@ -18,6 +18,7 @@
 import { controlFromMode } from '../../shared/types/conversation.js'
 import type { CopilotEvent } from '../../shared/types/events.js'
 import { STREAM_HEARTBEAT_MS } from '../../shared/types/events.js'
+import { lastCoveredMessageId, newCustomerMessagesSince, runIncremental } from '../services/copilot-analysis.js'
 import { useCopilotRuntime } from '../services/copilot-runtime.js'
 import { registerCredential } from '../services/credentials.js'
 import { snapshotOf } from '../services/presence.js'
@@ -128,9 +129,40 @@ export default defineEventHandler(async (event) => {
       presence: await snapshotOf(store, conversationId, { mode }),
     })
 
+    // 情緒面板重連快照 + 補跑（specs/001-sentiment-panel FR-010，T010c）——
+    // ⚠️ 純 SSE 推播只在狀態變動時發事件；若離開期間沒有新客戶發言就不會有任何事件，
+    //    重新連線的前端會永遠拿不到已保留的結果，因此必須像 control.updated 一樣主動送一次快照。
+    void sendAnalysisSnapshotAndResume(conversationId)
+
     return () => {
       offTopic()
       offWatch()
+    }
+  }
+
+  /**
+   * FR-010：客服切回對話時立即看到已保留的摘要／情緒結果，並補跑一次以納入
+   * 離開期間累積的客戶發言。⚠️ 快照失敗（含補跑判斷本身）不得影響這條 SSE 連線的
+   * 其餘功能（憲法 3.2）——僅記錄，不拋出。
+   */
+  async function sendAnalysisSnapshotAndResume(conversationId: string): Promise<void> {
+    try {
+      const analysisState = await store.getAnalysisState(conversationId)
+      if (!analysisState) return
+
+      await send({ type: 'summary.updated', conversationId, summary: analysisState.summaryBlock })
+      await send({ type: 'sentiment.updated', conversationId, sentiment: analysisState.sentimentBlock })
+
+      const since = await runtime.messageSource.fetchSince(conversationId, lastCoveredMessageId(analysisState))
+      // ⚠️ fetchSince() 的「找不到錨點時回傳整批」約定要求呼叫端自行去重，
+      // 見 newCustomerMessagesSince() 的說明
+      const newCustomerMessages = newCustomerMessagesSince(analysisState, since)
+      if (newCustomerMessages.length > 0) {
+        void runIncremental(conversationId, newCustomerMessages)
+      }
+    }
+    catch (err) {
+      console.error(`[stream] ${conversationId} 情緒面板重連快照失敗:`, err instanceof Error ? err.message : String(err))
     }
   }
 
