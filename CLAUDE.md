@@ -23,6 +23,18 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 否則換一台機器、換一個協作者 clone 這個 repo 時，正典文件裡的連結會全部指向不存在的檔案——
 這個問題已經在三份正典文件裡發生過一次，2026-08-26 才清乾淨。
 
+## 溝通語言
+
+- 與使用者的**對話輸出一律用繁體中文**：回報成果、說明、詢問問題、摘要都用繁體中文。
+- 技術識別項照原文，不翻譯：程式碼、指令、檔名/路徑（`server/api/**`、`shared/types/copilot.ts`）、
+  型別與欄位名（`mode`、`status`、`conversationId`、`teamConversationId`）、
+  受控字彙值（`manual`／`hybrid`／`automation`、`analyzing`／`retrying`／`ready`／`error`）、
+  Conventional Commits 前綴（`feat`、`fix`、`chore`、`docs`）、
+  API／憑證名稱（`IMBRACE_API_KEY`、`accessToken`、`SESSION_SECRET`）、
+  既有英文術語（JOIN、LEAVE、webhook、SSE、sparkline、debounce、provider、refcount）。
+- 規格文件（`spec.md`、`plan.md`、`tasks.md` 等 Spec Kit 產出）與 UI 文案（i18n）本身也以繁體中文撰寫，
+  技術名詞比照上一點保留原文。
+
 ## ⚠️ 正典文件修改後，必須 grep 舊說法（不限於實測結論）
 
 **這是本專案最常犯、代價最高的錯誤，且已經犯過不只一次。**
