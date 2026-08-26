@@ -1016,16 +1016,32 @@ export interface Attachment {
  * 情緒單點：每「一輪含文字的客戶發言」產生一點。
  * ⚠️ 客戶該輪若只有附件而無文字，MUST NOT 產生此結構——「上傳檔案」是中性動作，
  * 給定分數會在走勢上拉出與實情不符的轉折（例如客戶正在生氣時出現假性好轉）。
- * 該輪改以不帶分數的中性標記呈現於時間軸，不參與示警判定（規格 FR-012）。
+ * 該輪改以下方 `SentimentMarker` 呈現於時間軸，不參與折線與示警判定（規格 FR-012）。
  * 附件仍須文字化並納入摘要卡的事實來源（規格 FR-013，2026-08-26：實作延後至 M3，見 §18）。
+ *
+ * ⚠️ **2026-08-26 訂正**（specs/001-sentiment-panel 落地時新增）：情緒時間軸的型別
+ * 不是單純的 `SentimentPoint[]`，而是 `SentimentTimelineEntry[] = SentimentPoint | SentimentMarker`
+ * 的判別聯集——`kind` 為判別欄位。原因見 specs/001-sentiment-panel/research.md #3：
+ * 純附件輪「存在於時間軸」但「不是分數點」，勉強塞進 `score: null` 會讓消費端
+ * （折線邏輯、示警判定、§14.6 的全量統計）到處要多一層 null 檢查。
  */
 export interface SentimentPoint {
+  kind: 'point'
   messageId: string
   at: string                    // ISO8601
   score: number                 // 0–100，越低越負面
   label: 'calm' | 'neutral' | 'concerned' | 'frustrated' | 'angry'
   drivers: string[]             // 造成此分數的關鍵詞／事件，供人快速理解
 }
+
+/** 純附件（無文字）客戶發言的中性標記——不參與折線與示警判定，但 MUST NOT 從時間軸消失（FR-012） */
+export interface SentimentMarker {
+  kind: 'attachment_only'
+  messageId: string
+  at: string
+}
+
+export type SentimentTimelineEntry = SentimentPoint | SentimentMarker
 
 /** 對話摘要（冷啟動與增量共用同一結構） */
 export interface ConversationSummary {
@@ -1318,7 +1334,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ### 14.6 效能
 
-訊息流使用虛擬滾動（`useVirtualList`）；建議卡數量上限 3–5 張，超過需捲動；情緒 sparkline 僅**繪製**最近 N 點（建議 50）。
+訊息流使用虛擬滾動（`useVirtualList`）；建議卡數量上限 3–5 張，超過需捲動；情緒 sparkline 僅**繪製**最近 50 點（specs/001-sentiment-panel FR-015 已定案，非僅建議值）。
 
 > ⚠️ 「只畫 50 點」不等於「只留 50 點」。評分點本身必須全數保留——`ClosureSummary.sentimentTrough` 要的是**全程**最低點，若只留最近 50 點，它會安靜地算成「近期最低點」，而且要到 M3 寫進 Data Board 之後才會被發現。保留成本極低（每點只有分數、標籤與幾個關鍵詞），真正昂貴的是產生它的 AI 呼叫，那筆錢已經花了。詳見 `specs/001-sentiment-panel/spec.md` FR-015。
 

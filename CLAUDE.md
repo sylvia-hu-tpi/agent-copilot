@@ -103,6 +103,8 @@ npm run smoke:realtime  # 兩位客服、兩條 SSE：M1 的「4 秒內看到」
   避免把對方進行中的修改掃進自己的 commit。
 - commit 訊息用 Conventional Commits，內文說明**為什麼**，不只是改了什麼 ——
   這個專案的多數 commit 是在記錄「某個假設被實測推翻」，那個推翻的理由才是價值所在。
+- 跑 `/speckit-implement` 或 `/speckit-analyze` 時，**邊實作邊逐一勾選 `tasks.md` 或 checklist 中的完成項目**
+  （例如完成 T010 就打勾 `[x]`），每個 Phase 結束時用 `/commit-split` 分類並建立 commit。
 - 里程碑完成打 tag（`m0-done`、`m1-ready`）。**tag 一旦建立就不移動。**
 
   ⚠️ **「tag 落後 HEAD」不是需要修正的錯誤，那是它的正常狀態，也正是它的用途** ——
