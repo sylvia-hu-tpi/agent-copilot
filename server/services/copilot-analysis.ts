@@ -9,7 +9,8 @@
  *   ④ 經 Zod schema 驗證輸出（憲法 4.2，server/services/ai/schemas.ts）。
  *   ⑤ 依全量 timeline 重新計算 sentimentBlock.stats（FR-015，不受最近 50 點顯示上限影響）。
  *   ⑥ 寫回 CopilotAnalysisState（與 CopilotSession 是不同物件，見 server/state/types.ts）。
- *   ⑦ publish 最終結果事件；錯誤記錄僅留 conversationId 與失敗分類（憲法 1.5，research.md #6）。
+ *   ⑦ publish 最終結果事件；錯誤記錄僅留 conversationId、失敗分類、錯誤類別與 HTTP 狀態碼
+ *      （憲法 1.5，research.md #6）——不含訊息全文或 drivers，這些都不是個資。
  */
 
 import type { Message } from '../../shared/types/conversation.js'
@@ -24,13 +25,50 @@ import { conversationTopic } from '../state/types.js'
 import type { CopilotAnalysisState } from '../state/types.js'
 import { useAIProvider } from './ai/index.js'
 import type { FailureKind } from './ai/retry-policy.js'
-import { RetryExhaustedError, withRetry } from './ai/retry-policy.js'
+import {
+  AICallTimeoutError,
+  AIOutputValidationError,
+  AIProviderHttpError,
+  RetryExhaustedError,
+  withRetry,
+} from './ai/retry-policy.js'
 import { parseConversationSummary, parseSentimentPoints } from './ai/schemas.js'
 
 export type AnalysisBlock = 'summary' | 'sentiment'
 
 /** sliding TTL：每次讀取或寫入皆續期。見 data-model.md「CopilotAnalysisState」生命週期一節 */
 const ANALYSIS_STATE_TTL_MS = 2 * 60 * 60 * 1000
+
+/**
+ * ⚠️ **2026-08-27 實測發現**：情緒分析是「一次呼叫評完全部客戶發言」，延遲隨訊息則數
+ * 線性增加——真實對話 16 則客戶發言，單次呼叫實測 12.7～29.9 秒，遠超 FR-014 的 15 秒
+ * 單次逾時門檻（該門檻是依「回一句話」的通用 AI 呼叫延遲訂的，中位數 5 秒、最慢 12.2 秒，
+ * 見 docs/PLATFORM_CAPABILITY.md，不是為「輸出量隨輸入線性增加」的任務設計）。
+ * 對話可長達 398 則（docs/ARCHITECTURE.md §9.3 實測上限），沒有固定逾時秒數能安全涵蓋
+ * 所有長度，因此改為**切成固定則數的小批，依序各自呼叫、各自獨立套用 FR-014 的
+ * 15 秒逾時／1s→4s 退避／40 秒預算**——不改動 FR-014 本身的任何數字，只是把「一次分析」
+ * 的計算單位從「這個區塊要處理的全部訊息」改成「這一小批訊息」，讓每次呼叫的工作量
+ * 回到 FR-014 原本設計時假設的量級。
+ *
+ * 代價：對很長的對話，退回一次手動重試（`retryBlock()`）會重新處理**全部**批次，
+ * 不會只補上失敗的那幾批——若某一批持續失敗，之前已成功的批次也會跟著重算一次。
+ * 這是刻意的簡化：分批間的部分進度目前不落地保存，避免另外設計「這個區塊分析到
+ * 第幾批」的狀態，換取實作與 FR-014 既有狀態機（analyzing/retrying/error 三態）
+ * 完全相容，不需要新增第四種「部分完成」狀態。
+ *
+ * ⚠️ **批次大小抓 6，不是保證值，是機率賭注**：實測發現延遲不是單純隨則數線性增加，
+ * 平台本身有明顯波動——4 則批次 3 次都在 8.5～9.7 秒，6 則批次量到 10.0～**18.6 秒**
+ * （超過 15 秒門檻），8 則批次曾連續三次嘗試全部逾時。批次切得越小，單次逾時機率越低，
+ * 但長對話需要的批次數越多、總耗時越長；沒有一個數字能保證「絕對不逾時」，這是安全
+ * 邊際與總時間的取捨，6 是使用者接受「偶爾需要手動重試」後選定的中間值。
+ */
+const SENTIMENT_CHUNK_SIZE = 6
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
 
 function isTextCustomerMessage(m: Message): boolean {
   return m.sender.type === 'customer' && m.text !== ''
@@ -106,9 +144,23 @@ async function publishBlock(conversationId: string, block: AnalysisBlock, state:
   }
 }
 
-/** ⚠️ 憲法 1.5：僅記 conversationId 與失敗分類，不得輸出訊息全文或 drivers（research.md #6） */
-function logFailure(conversationId: string, block: AnalysisBlock, kind: FailureKind): void {
-  console.error(`[copilot-analysis] ${conversationId} ${block} 分析失敗（${kind}）`)
+/**
+ * ⚠️ 憲法 1.5：僅記 conversationId、失敗分類、錯誤類別與 HTTP 狀態碼——這些都不是
+ * 訊息內容，不違反「日誌不得輸出訊息全文」。多記這一點細節是為了能分辨「逾時」
+ * 「平台回錯誤狀態碼」「輸出格式不符」這三種完全不同的成因，只有 kind 分不出來
+ * （三者常常同樣被歸類為 transient 或 permanent）。
+ */
+function logFailure(conversationId: string, block: AnalysisBlock, kind: FailureKind, err: unknown): void {
+  const cause = err instanceof RetryExhaustedError ? err.cause : err
+  const detail = cause instanceof AIProviderHttpError
+    ? `AIProviderHttpError(status=${cause.statusCode})`
+    : cause instanceof AICallTimeoutError
+      ? 'AICallTimeoutError'
+      : cause instanceof AIOutputValidationError
+        ? 'AIOutputValidationError'
+        : cause instanceof Error ? cause.constructor.name : typeof cause
+  const attempts = err instanceof RetryExhaustedError ? `，已重試 ${err.retryAttempt} 次` : ''
+  console.error(`[copilot-analysis] ${conversationId} ${block} 分析失敗（${kind}／${detail}${attempts}）`)
 }
 
 // ── 步驟①：進入 analyzing，保留舊內容（呈現規則，data-model.md）──────────
@@ -161,7 +213,7 @@ async function publishRetrying(
 async function finishBlockError(conversationId: string, block: AnalysisBlock, err: unknown): Promise<void> {
   const kind: FailureKind = err instanceof RetryExhaustedError ? err.kind : 'permanent'
   const firstFailureAt = err instanceof RetryExhaustedError ? err.firstFailureAt : nowIso()
-  logFailure(conversationId, block, kind)
+  logFailure(conversationId, block, kind, err)
 
   const next = await updateAnalysisState(conversationId, (state) => {
     const at = nowIso()
@@ -306,11 +358,17 @@ async function analyzeSentimentBatch(conversationId: string, messages: Message[]
   await beginAnalyzing(conversationId, 'sentiment')
 
   try {
-    const outcome = await withRetry(
-      async () => parseSentimentPoints(await useAIProvider().analyzeSentiment({ messages: textMessages })),
-      { onRetry: info => publishRetrying(conversationId, 'sentiment', info) },
-    )
-    await finishSentimentSuccess(conversationId, outcome.value, markerMessages)
+    const allPoints: SentimentPoint[] = []
+    // 依序處理每一小批（見 SENTIMENT_CHUNK_SIZE 的說明）——刻意不平行送出，
+    // 避免對話很長時一次對同一個 agent 開幾十條並發請求。
+    for (const part of chunk(textMessages, SENTIMENT_CHUNK_SIZE)) {
+      const outcome = await withRetry(
+        async () => parseSentimentPoints(await useAIProvider().analyzeSentiment({ messages: part })),
+        { onRetry: info => publishRetrying(conversationId, 'sentiment', info) },
+      )
+      allPoints.push(...outcome.value)
+    }
+    await finishSentimentSuccess(conversationId, allPoints, markerMessages)
   }
   catch (err) {
     await finishBlockError(conversationId, 'sentiment', err)
