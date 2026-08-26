@@ -13,8 +13,8 @@
 逐一實測 27 個 agent 後的正確結果：**11 個可實際完成推論**，其中 4 個掛了知識庫且能檢索；
 JSON 結構化輸出 4/4 次可解析；引用來源可從 SSE 事件解析取得。
 
-最新且正確的能力盤點請見 **[MEETING_2026-08-25.md](MEETING_2026-08-25.md)**。
-本文以下內容保留供追溯，閱讀時請以更正為準。
+最新且正確的能力盤點已併入本文以下各節的更正（見 §1、§3②、§3③）。
+本文保留原始（已推翻）內容供追溯，閱讀時請以各節的更正標註為準。
 
 ---
 
@@ -26,13 +26,22 @@ JSON 結構化輸出 4/4 次可解析；引用來源可從 SSE 事件解析取�
 `ai.complete` / `ai.embed` / `messageSuggestion` 確實 404，
 但 **AI Agent 路徑（`aiAgent.streamChat`）有 11/27 可用**，且能做知識庫檢索與 JSON 輸出。
 
-仍然成立的缺口只剩三項：**無相關度分數**、**檢索品質不可調校**、**附件內容取不到**。
+仍然成立的缺口有：**無相關度分數**、**檢索品質不可調校**、**舊資料型 `file`（非圖片/PDF）附件內容取不到**。
+
+> ⚠️ **2026-08-26 再更正（第二次）**：「附件內容取不到」原本以為對所有附件型別都成立，
+> 但當時 `image`／`pdf` 型別 0 個實測樣本，是外推。用真實對話（圖片 1 則、PDF 2 則）重測後，
+> `image`**與** `pdf`（PDF 是獨立型別，不等於 `file`）的 `content` 都帶有直接可用的 URL，
+> 只是平台未做描述／OCR，且客戶上傳時連檔名（`caption`）都沒有。
+> **只有真正的 `file` 型（歷史資料裡的 4 則樣本，非圖片/PDF）拿不到內容**，
+> 且客戶端上傳介面本身只接受圖片與 PDF，這 4 則 `file` 樣本的來源反而成了新的待查項。
+> `image`／`pdf` 已納回 MVP。詳見 `ARCHITECTURE.md` §19.1 #11、§11.4。
 
 ```
 ✅ 對話 / 訊息 / 聯絡人 / Data Board / 知識庫檔案來源 / 頻道 ── 15 項全可用
 ✅ AI 推論（透過 AI Agent）─────────────────────────── 11/27 agent 可用
+✅ image／pdf 型附件（有 url，僅缺描述與檔名）────────── 2026-08-26 新增
 ❌ ai.complete / ai.embed / messageSuggestion ──────── 404（此結論不變）
-❌ 相關度分數、檢索品質調校、附件內容 ─────────────── 仍不可得
+❌ 相關度分數、檢索品質調校、舊資料型 file 附件內容 ──── 仍不可得
 ```
 
 **憑證權限已排除。** 用 API Key 與客服本人的 access token 各測一遍，
@@ -79,8 +88,8 @@ JSON 結構化輸出 4/4 次可解析；引用來源可從 SSE 事件解析取�
 
 ### ② AI Agent 路由存在，**16/27 跑不動**（運維性）
 
-> ⚠️ **更正**：本節原寫「每個 agent 都跑不動」。逐一實測後為 **11 個可用、16 個失敗**。
-> 可用清單見 [MEETING_2026-08-25.md](MEETING_2026-08-25.md) §0。
+> ⚠️ **更正**：本節原寫「每個 agent 都跑不動」。逐一實測後為 **11 個可用、16 個失敗**，
+> 失敗形態的三種分類見下表；可用 agent 的完整清單存於 `scripts/spike/out/`。
 
 `aiAgent.streamChat` → `POST /ai-agent/v2/chat` **機制正常**：
 HTTP 200、`text/event-stream`、標準 Vercel-AI-SDK 事件格式（`start` / `text-delta` / `finish`）。
@@ -156,30 +165,30 @@ HTTP 200、`text/event-stream`、標準 Vercel-AI-SDK 事件格式（`start` / `
 
 ## 5. 方案評估
 
-### 方案 A — 純 iMBrace
+> ⚠️ **2026-08-26 更新**：本節原始評估寫於 §1/§3 更正之前，把「無 structured output、無引用來源」列為方案 A 的缺口——這兩項在後續逐一實測 27 個 agent 後已被推翻（見 §3③）。以下為更正後的版本。
 
-**前提**：iMBrace 修好 provider 設定（③ 之外的問題）。
+### 方案 A — 純 iMBrace（採用為第一階段）
 
-即使修好，仍有兩個缺口：
-
-| 缺口 | 影響 |
+| 項目 | 現況 |
 |---|---|
-| 無 structured output | 摘要／情緒必須解析自由文字，違反憲法第 4 條，需自建重試與降級 |
-| **無帶分數的檢索** | **建議卡的 SOP 引用與信心度做不到**，憲法第 5 條（sopId 白名單後驗）無法執行 |
+| AI 推論 | ✅ 透過 AI Agent（11/27 可用） |
+| 結構化輸出 | ✅ prompt 層可達成（4/4 次可 `JSON.parse`）——非 `ai.complete()` 的 `response_format`，是 agent + prompt 達成 |
+| 引用來源 | 🟡 可從 SSE `tool-output-available` 解析出檔名與 chunk 原文，但是自由文字，需自行 parse `[Source: …]` |
+| 相關度分數 | ❌ 無 —— 目前唯一真正做不到的一項 |
+| 檢索品質調校 | ❌ chunk 大小、top-k、中文斷詞、同義詞皆不在我方手上 |
 
-且所有 prompt 必須以「平台 AI Agent」的形式管理，離開程式碼版控，
-與 §11「prompt 集中管理、與程式邏輯分離」的設計衝突。
+prompt 仍掛在平台 AI Agent 後台，離開程式碼版控，與 §11「prompt 集中管理」的理想設計有落差，但不影響功能可行性。
 
-**結論：可做出降級版的摘要與情緒，但做不出 demo 的建議卡。**
+**結論：摘要、情緒、建議卡的文字內容都做得出來；做不出來的只有「分數」與「檢索品質可調校」這兩項。**
 
-### 方案 B — iMBrace 管對話層、viki 管 AI 層 ← 建議
+### 方案 B — iMBrace 管對話層、viki 管 AI 層（介面預留，非現階段採用）
 
 | 層 | 系統 | 負責 |
 |---|---|---|
 | 對話 | iMBrace | conversations、messages、presence、JOIN/LEAVE、Data Board 寫入 |
 | AI | viki | 知識庫（chunk 顆粒度、同義詞）、LLM 推論、**引用歸因**、guardrail |
 
-viki 補的正好是 iMBrace 缺的每一項：
+viki 補的正好是方案 A 缺的兩項：
 
 | viki 模組 | 對應缺口 |
 |---|---|
@@ -192,8 +201,9 @@ viki 補的正好是 iMBrace 缺的每一項：
 - viki-frontend 也是 Nuxt，技術棧一致
 - 支援客戶環境地端 Gemma3，**對話內容不出境**（直接解除風險 #9）
 - chunk 顆粒度可調 —— SOP 文件的檢索品質可控
+- **實作成本低**：viki 前端先建好知識庫與 AI 助理後，AgentCopilot 只需打其 public API 即可取得 LLM 回覆，不需額外部署
 
-### 方案 C — 不引入 viki，在 AgentCopilot 的 Nitro 內自建 AI 層
+### 方案 C — 不引入 viki，在 AgentCopilot 的 Nitro 內自建 AI 層（不採用）
 
 直接接地端 Gemma3 + 自建 chunk/向量檢索/歸因。
 
@@ -202,35 +212,30 @@ viki 補的正好是 iMBrace 缺的每一項：
 
 ---
 
-## 6. 建議
+## 6. 建議（2026-08-26 更新：已依此推進開發）
 
-**採方案 B，但分兩階段落地：**
+**採方案 A 為第一階段實作，方案 B（viki）是介面預留的備援，不是預定的第二階段。**
+
+方案 A 目前只缺「檢索分數」與「檢索品質調校手段」，其餘皆已驗證可行——沒有理由現在就預先承諾換系統。是否切換取決於 iMBrace 對 RAG 檢索品質（`IMBRACE_QUESTIONS.md` §0-3f）的回覆結果，而非時程排定。
 
 ```
-階段一（不等任何人，立刻可做）
-  M0 / M1 照原訂計畫走 —— 對話層完全不受影響，15 項能力都可用
-  ├─ 登入、對話列表、訊息流、presence
-  ├─ SSE 管線、共享訂閱輪詢
-  └─ 撞單防護（sender 前綴判別已驗證，覆蓋率 100%）
+現在
+  對話層與 AI 層皆先接 iMBrace
+  └─ KnowledgeProvider / AIProvider 兩個介面收斂所有 LLM 與檢索呼叫
 
-階段二（AI 層）
-  以 KnowledgeProvider / AI Provider 介面隔離，先接 viki
-  └─ 若 iMBrace 日後補上 completions + 帶分數的檢索，替換實作即可
+依 iMBrace 對檢索品質／分數的回覆，二擇一（介面不變，只換實作）
+  可用    → 沿用 iMBrace；score 有值時 UI 顯示信心度，無值時留空（不估算）
+  不可用  → 換上 VikiKnowledgeProvider / VikiAIProvider；score 開始有值
 ```
+
+信心度這個 UI 欄位本身不隨方案拿掉——它綁定「有沒有真實分數來源」而非「用哪個方案」，
+這樣兩個方案才能真正無縫切換而不必再動介面一次。
 
 **這正是 §8「所有尚未確定規格的外部依賴都必須藏在 provider 介面之後」的價值兌現點。**
-AI 來源從「iMBrace 內建」換成「viki」，上層一行不動。
 
-### 需要調整的架構章節
-
-| 章節 | 現況 | 應改為 |
-|---|---|---|
-| §2 決策摘要 · AI 來源 | 「全部自訂 prompt 打 `ai.complete()`」 | `ai.complete` 不存在 → 改為 viki（或地端 Gemma3） |
-| §2 決策摘要 · 知識庫 | 「自建向量檢索（`ai.embed`）」 | `ai.embed` 不存在 → 改為 viki knowledgeStore |
-| §8.2 KnowledgeProvider | `LocalVectorProvider` 優先 | 改為 `VikiKnowledgeProvider` |
-| §9.3 輪詢成本 | 假設支援增量拉取 | **不支援 `since`**，需重算頻率表 |
-| §11 AI 管線 | 假設 structured output | 依 viki 的實際輸出契約重寫 |
-| §12 知識庫 | Boards RAG / 自建向量 | viki knowledgeStore + answer-attribution |
+> 本節原本列了一份「需要調整的架構章節」對照表，內容已同步進 `docs/ARCHITECTURE.md`
+> （§2 決策摘要、§8 Provider 介面、§9.3 輪詢成本、§11 AI 管線、§12 知識庫），
+> 此處不再重複列出——避免兩份文件各自漂移，細節請一律以 ARCHITECTURE.md 正文為準。
 
 ---
 
@@ -244,7 +249,8 @@ AI 來源從「iMBrace 內建」換成「viki」，上層一行不動。
 | 🟠 | `messages` 是否支援增量拉取？（`since` 被忽略） | 輪詢成本與 API 壓力 |
 | 🟠 | `role` 的值域為何？`role=admin` 但 `is_admin=false`，哪個對應「客服主管」？ | 主管強制介入的權限判定 |
 | 🟠 | `from` 的 `pub_` 前綴是否即為 AI workflow？ | 撞單防護的正確性 |
-| 🟠 | 語音／圖片是否已文字化？（現有資料只有 text 與 file，無 image/audio 樣本） | M2 工作量級距（±5–10 人日） |
+| 🟠 | 圖片／PDF 是否已由平台做描述／OCR？（2026-08-26 已用真實樣本確認：目前沒有，僅回傳 url，客戶上傳時連 caption/檔名都沒有）；`content.url` 是否有時效、下載需不需要授權標頭？ | 決定 vision／文件分析的實作細節與快取時機 |
+| 🟡 | `GET .../contact/{contact_id}/files` 這個非 SDK 公開的端點是否為正式支援介面？（2026-08-26 發現於「聯絡人資料」彈窗，實測可用；範圍已依此情境判斷為聯絡人層級，非單一對話——路徑本身也無 conversation id） | 決定「客戶歷史附件」功能能否依賴此端點；不影響對話附件清單（已確定不用這支端點） |
 
 ---
 

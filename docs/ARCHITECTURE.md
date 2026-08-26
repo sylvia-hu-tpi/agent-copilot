@@ -584,7 +584,9 @@ export interface KnowledgeHit {
   code: string
   title: string
   snippet: string
-  score: number                    // 檢索分數（非模型自評）
+  /** 檢索分數（非模型自評）。iMBrace 路徑無分數來源，一律為 null；
+   *  換上 viki 的 answer-attribution 後才會有值。UI 依 null 與否決定顯示與否，不得估算填充 */
+  score: number | null
   /** 條目最後更新日期，介面需顯示；過舊條目應標示提醒 */
   updatedAt: string
   sourceRef: { type: 'knowledge' | 'docIQ' | 'board' | 'static'; ref: string }
@@ -597,18 +599,42 @@ export interface KnowledgeProvider {
 
 **實作優先序**
 
-> 🔴 **2026-08-25：實作順位待定**，取決於 iMBrace 對 `IMBRACE_QUESTIONS.md` §0-3 的回覆。
+> **2026-08-26 定案**：第一階段採 `AgentKnowledgeProvider`（iMBrace）。是否換成 `VikiKnowledgeProvider`
+> 取決於 iMBrace 對 RAG 檢索品質的回覆（`IMBRACE_QUESTIONS.md` §0-3f），不是時程排定的第二階段，
+> 見 `PLATFORM_CAPABILITY.md` §6。
 
 | 順位 | 實作 | 狀態 |
 |---|---|---|
-| ? | `AgentKnowledgeProvider` | 🔴 **最可能的方向** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。前提是 agent 可用（§0-1），且能取得引用來源（§0-3a） |
-| ? | `BoardsSearchProvider` | 🟡 備案 —— `boards.search()` 為 Meilisearch 相容關鍵字檢索，**有條目 ID**。待確認能否取回分數 |
-| 3 | `StaticSopProvider` | ✅ 可實作 —— 讀 `config/sop.yaml`，開發期與離線 fallback |
+| 1 | `AgentKnowledgeProvider` | ✅ **M2 採用** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。可取得引用來源（檔名＋chunk 原文），但 `score` 恆為 `null` |
+| 備援 | `VikiKnowledgeProvider` | 🟡 **介面已預留，未實作** —— 若 #19 RAG 品質調不動，換上此實作即可取得真實 `score`，`KnowledgeProvider` 介面不用改 |
+| 備案 | `BoardsSearchProvider` | 🟡 未採用 —— `boards.search()` 為 Meilisearch 相容關鍵字檢索，**有條目 ID**，屬關鍵字非語意 |
+| 開發期 | `StaticSopProvider` | ✅ 可實作 —— 讀 `config/sop.yaml`，開發期與離線 fallback |
 | — | ~~`BoardsRagProvider`~~ | ❌ 撤銷 —— `processEmbedding()` 之後沒有檢索 API |
 | — | ~~`LocalVectorProvider`~~ | ❌ 撤銷 —— 依賴的 `ai.embed()` 回 404 |
 
 > **無論最終選哪一條，`KnowledgeProvider` 介面本身不變。**
 > 這正是抽象層的目的：外部能力邊界未定時，開發不必停下來等。
+
+### 8.2b AI 推論（摘要／情緒／建議卡）
+
+與知識庫檢索同理，摘要、情緒分析、建議卡生成也收斂到單一介面，讓 iMBrace AI Agent 與 viki 的切換只需換一個實作：
+
+```ts
+export interface AIProvider {
+  summarize(input: { history: Message[]; previousSummary?: ConversationSummary }): Promise<ConversationSummary>
+  analyzeSentiment(input: { messages: Message[] }): Promise<SentimentPoint[]>
+  suggest(input: { history: Message[]; knowledgeHits: KnowledgeHit[] }): Promise<SuggestionCard[]>
+}
+```
+
+| 順位 | 實作 | 狀態 |
+|---|---|---|
+| 1 | `ImbraceAgentProvider` | ✅ **M2 採用** —— 呼叫 `aiAgent.streamChat`，結構化輸出靠 prompt（4/4 次可 `JSON.parse`），Zod 驗證 + 重試 + 降級不可省（見 §11.7） |
+| 開發期 | `MockAIProvider` | ✅ M2 UI 先行完成用，回傳固定樣本資料 |
+| 備援 | `VikiAIProvider` | 🟡 **介面已預留，未實作** —— 打 viki 前端已建好知識庫與 AI 助理後的 public API，`SuggestionCard.confidence` 會開始有真實值 |
+
+> `AIProvider` 與 `KnowledgeProvider` 兩者合起來，就是「所有 AI 相關的外部依賴」的唯一收斂點——
+> 這是刻意的收斂，呼應「不管未來走 iMBrace 還是 viki，上層都不用重寫」的目標。
 
 ### 8.3 狀態與事件匯流排
 
@@ -1041,6 +1067,17 @@ if (byOtherAgent.length > 0) {
 >
 > **假警報比沒有警報更糟** —— 客服學會忽略提示後，真正的撞單也會被一併略過。
 
+> ⚠️ **`byAi` 目前會誤把 workflow 的內部中繼訊息當成真正回給客戶的回覆。**
+>
+> 同一個 `pub_` workflow 會在同一對話裡送出兩種訊息，API 上完全無法區分：
+> 一種是真的送達客戶的回覆文字，另一種是 `{"route":"T1"}` 這類節點間的內部路由訊息，
+> 客戶很可能根本收不到，但目前的 `Message` 物件上沒有任何旗標能分辨。
+>
+> **暫行做法**：`sender.type === 'ai'` 且 `text` 整段可解析為 JSON 物件／陣列時，視為內部訊息，
+> 排除在 `byAi` 之外。這是啟發式判斷，不是規格——若 iMBrace 的正式回覆格式不是純 JSON
+> （例如混入少量說明文字），這個判斷會漏放，重新製造假警報。已列為對 iMBrace 的 P1 追問
+> （`IMBRACE_QUESTIONS.md` H-3c）。**串接 `byAi` 邏輯前務必先確認這個啟發式是否還成立。**
+
 **此機制不需要任何平台端支援，M1 即可實作，且是整套協同設計中唯一真正能防止客戶收到重複回覆的一層。**
 
 ### 10.5 第四個競爭者：AI 本身
@@ -1340,16 +1377,52 @@ export interface Attachment {
 | **情緒分析** | 只在 `sender.type === 'customer'` 的訊息上產生情緒點 |
 | **增量分析觸發** | 客服自己送出的訊息不觸發重新分析（見 §11.1） |
 
-**多模態處理原則**
+**多模態處理原則 —— 2026-08-26 更新：圖片＋PDF 納回 MVP，語音／其他檔案型別仍排除**
 
-介面顯示對話中包含圖片附件與語音訊息，且兩者都已被理解（AI 回應「已收到照片，指示燈顯示訊號異常」；語音旁直接顯示轉錄文字）。
+> ⚠️ **本節原判「全部移出 MVP」，已被 `02-multimodal.ts`／`14-contact-files.ts` 的真實樣本推翻，見 §19.1 #11。**
+> 原判是外推——當時 398 則歷史訊息中 `image` 型別 0 則，沒有實測樣本可驗。
+> 用真實對話（圖片 1 則、PDF 2 則）重測後：兩者的 `content` 都帶**直接可用的 url**，
+> 只是平台未做描述或 OCR（`H-2a` 已確認）。且**客戶端上傳介面本身只接受圖片與 PDF**
+> （使用者截圖確認的檔案篩選器），Word/Excel 這類格式在網頁客戶端這個管道根本傳不進來。
 
-1. **一律先文字化再進 AI 管線。** `Message.text` 是唯一的分析輸入，附件的 `transcript` 在取得訊息時就填入。
-2. **文字化結果必須快取。** 一張圖只做一次 vision 分析、一段語音只做一次 STT，結果隨 message 永久保存。**絕不可在每次全量分析時重複送原始媒體給模型** —— 這是成本失控最快的路徑。
-3. **來源優先序**：平台端已提供 → 直接用；平台端未提供 → 我方補做並標記 `transcriptSource: 'ours'`。
-4. **已知限制**：語音僅取轉錄文字，音調中的情緒訊號會遺失。第一版接受此限制，必要時可在 `drivers` 中標註「此輪為語音訊息」提醒客服自行聆聽。
+**範圍（依實測樣本分，不是理論上的型別清單）**：
 
-> ⚠️ **平台端是否已提供 STT 與圖片描述，直接決定 M2 的工作量級距。** 見 `IMBRACE_QUESTIONS.md` H-2。
+| 型別 | 現況 | MVP 範圍 |
+|---|---|---|
+| `image` | ✅ **有 url**；平台未提供描述/OCR；`caption` 目前樣本皆為空 | **納入**——自建 vision 分析 |
+| `pdf` | ✅ **有 url**；平台未提供描述/OCR；`caption` **僅客服上傳時**有值（= 原始檔名），客戶上傳為空 | **納入**——自建 vision／文件分析（走同一條 `AIProvider` 管線） |
+| `file`（舊資料，非圖片/PDF） | ❌ `content` 只有 `{name, media_id}`，無 url。**來源不明**——目前客戶端上傳介面無法產生此型別，舊有 4 則樣本可能來自其他管道或較舊版本，待查 | 排除——僅顯示檔名，標示「無法預覽」 |
+| 語音 | iMBrace 平台不支援語音訊息 | 排除——無適用對象 |
+
+> **新發現的候選端點**（2026-08-26，使用者由瀏覽器 Network 面板找到，非 SDK 公開介面）：
+> `GET https://cloud.imbrace.co/api/channel-service/v1/contact/{contact_id}/files`
+> 回傳附件訊息（含 `url`/`caption`/`extension`），已用 `14-contact-files.ts` 驗證可用（200）。
+> ⚠️ **非 SDK 公開端點，未經 iMBrace 確認為正式支援介面**，穩定性與 rate limit 未知。
+>
+> ⚠️ **範圍是聯絡人層級，不是單一對話**：路徑只有 `contact_id`，沒有 conversation id。
+> **使用者是在官方介面的「聯絡人資料（User Profile）」彈窗中發現此端點的**——
+> 該情境本質上就是聯絡人層級視圖，強烈支持這是「這個聯絡人所有對話」的附件範圍。
+> 技術上仍未用有多個對話紀錄的聯絡人驗證過（見 `14-contact-files.ts` 的 `H-2f-scope` finding，
+> verdict 為 `partial`），但**實作上應假設是聯絡人層級**：
+> **不得用來當作「這個對話的附件清單」**——同一客戶若有多次對話紀錄，
+> 這支端點會把不相關對話的附件也列出來，直接當對話附件清單用會造成錯誤歸屬，
+> 這是正確性問題不是穩定性問題。若要用，應明確定位為「客戶歷史附件」（例如放進客戶資料相關的
+> 呈現，而非對話面板），且待 `IMBRACE_QUESTIONS.md` H-2f 確認後再定案。
+>
+> **這個對話的附件清單根本不需要這支端點**：另外用 `14-contact-files.ts` 的 `H-2f-alt` 測過，
+> `cloud.imbrace.co` 上的 `conversation_messages?conversation_id=` 回傳跟既有 `raw-conversation-id`
+> 策略（§9.3，precision 100%）一致的資料——同一 host 下的同一個 channel-service 後端，
+> 不是新端點。**取得「這個對話的附件」就是既有的訊息取數路徑，過濾 `type ∈ {image, pdf}` 即可**，
+> `contact/files` 從一開始就是解決不同問題（聯絡人歷史）的端點，兩者不衝突也不能互相替代。
+
+**圖片／PDF 的處理原則**：
+
+1. **一律先文字化再進 AI 管線。** `Message.text` 是唯一的分析輸入，附件的 `transcript`（vision／文件分析產生的描述）在取得訊息時就填入。
+2. **文字化結果必須快取。** 一張圖／一份 PDF 只做一次分析，結果隨 message 永久保存。**絕不可在每次全量分析時重複送原始檔案給模型** —— 這是成本失控最快的路徑。
+3. **`caption`／檔名不可靠，不能當成唯一的描述來源。** 實測：客服上傳的 PDF，`caption` 是原始檔名；**客戶上傳的（無論圖片或 PDF）目前樣本 `caption` 皆為空**。而客戶上傳才是真實場景的主要情況，代表 UI 與分析管線都不能假設有檔名可用，**vision／文件分析是必要的，不是錦上添花**。
+4. **來源固定為我方產生**：平台不提供描述（`H-2a` 已確認），`transcriptSource` 恆為 `'ours'`，不需要「平台優先」的分支邏輯。
+5. **送哪個模型**：走 §8.2b 的 `AIProvider`，需挑選支援 vision 的模型/agent（iMBrace 側需確認可用的 vision agent；`IMBRACE_QUESTIONS.md` H-2 仍待回覆的是 URL 時效與是否需要授權標頭，即 H-2d）。
+6. **已知限制**：`content.url` 的時效與存取權限僅有 3 個樣本觀察（皆未加簽章），**上線前需以更多樣本或直接測試確認**，否則快取的時機點可能抓錯。
 
 ### 11.5 資料契約（前後端共用）
 
@@ -1383,7 +1456,8 @@ export interface SuggestionCard {
   sopId: string | null          // 必須來自檢索結果，不得杜撰；無引用時為 null
   sopTitle: string | null
   text: string                  // 可直接帶入的回覆全文（繁中、客服語氣）
-  confidence: number            // 0–100
+  /** 0–100；無真實分數來源時為 null，UI 留空不顯示，不得估算填充。見 §11.6② */
+  confidence: number | null
   rationale: string             // 為何建議這句（供客服判斷，不隨文字帶入）
   tone: 'apologetic' | 'informative' | 'retention' | 'closing' | 'escalating'
   requiresData: string[]        // 需客服補上的實際資料，如「工單編號」
@@ -1439,17 +1513,17 @@ export interface ClosureSummary {
 
 > 僅靠 prompt 交代是不夠的，必須有程式層的後驗。
 
-**② `confidence` 不得由模型憑空給定。**
+**② `confidence` 不得由模型憑空給定，沒有真實依據時必須是 `null`，不得估算填充。**
 
-純模型自評的信心度沒有校準，是假數字。應為：
+純模型自評的信心度沒有校準，是假數字。有檢索分數時應為：
 
 ```
 confidence = f(檢索分數, 模型自評, 上下文完整度)
 ```
 
-並於後端做一次校準。
+並於後端做一次校準。**若 `KnowledgeHit.score` 為 `null`（目前的 iMBrace 路徑就是如此），`confidence` 必須整體為 `null`，不得用模型自評頂替。** UI 依此欄位是否為 `null` 決定顯示或留空——見 §8.2b、§19.1 #6。這個設計讓 AI 來源從 iMBrace 換成 viki（`answer-attribution` 提供真實分數）時，`confidence` 自然開始出現數值，不需要另外改介面或改 UI 邏輯。
 
-> **信心度一旦失準，客服很快就會學會忽略它，整個功能即告廢棄。** 這比多花一天做校準嚴重得多。
+> **信心度一旦失準，客服很快就會學會忽略它，整個功能即告廢棄。** 這比留空更嚴重——寧可留空，也不要顯示一個沒有依據的數字。
 
 **③ 增量分析回傳 patch，不回傳全量。**
 
@@ -1492,17 +1566,21 @@ confidence = f(檢索分數, 模型自評, 上下文完整度)
 > **最後一步不存在**。全套 `.d.ts` 搜尋 `knowledge|semantic|retriev` 只找到建立與列檔，
 > 沒有任何查詢端點（見 `docs/SDK_FINDINGS.md` §4）。
 
-**候選路徑（🔴 待 iMBrace 回覆 `IMBRACE_QUESTIONS.md` §0-3 後定案）**：
+**候選路徑（2026-08-26 定案：`AgentKnowledgeProvider` 為 M2 實作，其餘為備援）**：
 
-| 路徑 | 可行性 | 說明 |
+| 路徑 | 狀態 | 說明 |
 |---|---|---|
-| **掛 Knowledge Hub 給 AI Agent 再問它** | 🔴 **目前最可能** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub，且組織內已有掛載知識庫的 agent（如 `TBC_T2_RAG問答_Agent`）。**關鍵未知**：agent 回應能否附帶引用來源與分數（§0-3a/c） |
-| `boards.search(boardId, {q, filter, limit})` | 🟡 備案 | Meilisearch 相容關鍵字檢索，**有條目 ID**，足以滿足憲法第 5 條的白名單後驗。屬關鍵字非語意，同義詞會漏；分數待確認 |
+| **掛 Knowledge Hub 給 AI Agent 再問它** | ✅ **M2 採用** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub，且組織內已有掛載知識庫的 agent（如 `TBC_T2_RAG問答_Agent`）。可取得引用來源，但**取不到分數**（§0-3c 仍待 iMBrace 回覆） |
+| **`VikiKnowledgeProvider`** | 🟡 **介面已預留，未實作** | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。若 #19 RAG 品質調不動，換上此實作即可，`KnowledgeProvider` 介面不用改 |
+| `boards.search(boardId, {q, filter, limit})` | 🟡 備案，未採用 | Meilisearch 相容關鍵字檢索，**有條目 ID**，足以滿足憲法第 5 條的白名單後驗。屬關鍵字非語意，同義詞會漏；分數待確認 |
 | `StaticSopProvider` | ✅ 開發期 | 讀 `config/sop.yaml`，離線 fallback |
 | ~~自建向量檢索~~ | ❌ 已排除 | 依賴的 `ai.embed()` 回 404 |
 
-> **若最終無法取得分數**，介面上的「信心度 92%」可以拿掉 —— 這是可接受的降級，
-> 但**引用來源（SOP 編號）不可省**，否則憲法第 5 條（`sopId` 白名單後驗）失去依據，
+> **無論分數取不取得到，介面上的「信心度」欄位都不拿掉**——`KnowledgeHit.score` 與
+> `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值。
+> 見 §8.2、§11.6②。
+>
+> **但引用來源（SOP 編號）不可省**，否則憲法第 5 條（`sopId` 白名單後驗）失去依據，
 > 模型將可能杜撰不存在的 SOP。此為產品品質的底線。
 
 無論最終選哪一條，替換 provider 即可，上層不動 —— 這正是抽象層的價值。
@@ -1658,7 +1736,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 - 標題列顯示總則數（如「共 18 則訊息」），**可折疊**
 - 每則標示發送者（客戶／AI／客服），依 `Message.sender.type` 判斷
-- 附件呈現：圖片顯示檔名與縮圖、語音顯示時長與轉錄文字（見 §11.4）
+- 附件呈現：**`image`／`pdf` 顯示縮圖或檔案圖示＋vision／文件分析產生的描述**（2026-08-26 納回 MVP，`caption` 不可靠故仍需自建描述——見 §11.4）；**舊資料型 `file`（非圖片/PDF）僅顯示檔名＋「無法預覽」**；語音無適用對象（見 §11.4、§19.1 #11）
 - 此區塊與中欄訊息流資料來源相同，僅呈現密度不同 —— **不需額外 API**
 
 > ⚠️ **不可用 JOIN 時間點做「AI 階段 / 真人階段」的分段。**
@@ -1967,7 +2045,9 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 - 摘要卡、情緒 sparkline、建議卡、一鍵帶入
 - 前景／背景分級、debounce、快取
 - **AI 可先用 mock provider**，UI 先行完成
-- 知識庫先用 `StaticSopProvider`
+- 知識庫先用 `StaticSopProvider`，之後接 `AgentKnowledgeProvider`（iMBrace，見 §8.2）
+- **含**：圖片與 PDF 附件的 vision／文件分析（2026-08-26 納回範圍，見 §11.4、§19.1 #11——皆有直接可用的 URL，只是平台未做描述；客戶端上傳介面本身就只接受這兩種格式）
+- **不含**：客戶資料卡（§19.1 #21 已決議 MVP 拿掉）、`file` 型附件內容與語音（§19.1 #11——無 url 或平台不支援）
 
 **驗收**
 - [ ] JOIN 後 **3 秒內**出現摘要與首批建議
@@ -1976,6 +2056,9 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 - [ ] 切換至背景對話時會補跑完整分析
 - [ ] AI 失敗時，訊息流與 Composer **仍完全可用**
 - [ ] 建議卡的 `sopId` 若不在檢索結果白名單中，該卡被丟棄
+- [ ] `confidence` 無真實分數來源時顯示為留空，**不得**顯示模型自評的替代數字（§11.6②）
+- [ ] 圖片／PDF 附件能顯示縮圖與 vision／文件分析產生的描述文字，且同一份檔案不重複送給模型（結果需快取，見 §11.4）
+- [ ] 圖片／PDF 的描述**不得**依賴 `caption` 欄位——客戶上傳時該欄位目前實測皆為空（見 §19.1 #11）
 
 **外部依賴**：無
 
@@ -1983,16 +2066,20 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 
 ### M3 — 知識庫與結案
 
+> ⚠️ **2026-08-26 更正**：本節原寫 `LocalVectorProvider`（`ai.embed()` 自建索引），
+> 該路徑已撤銷——`ai.embed()` 回 404，見 §8.2、§12.2。M3 的知識庫路徑改為：
+> 沿用 M2 的 `AgentKnowledgeProvider`（若 #19 RAG 品質可被 iMBrace 調校至可用），
+> 或換上 `VikiKnowledgeProvider`（若否）。兩者皆不需要自建索引 script。
+
 **內容**
-- `LocalVectorProvider`（`ai.embed()` 自建索引 + cosine 檢索）── 見 §12.2
-- SOP 離線建索引 script（`scripts/build-sop-index.ts`）
+- 依 #19 RAG 品質的回覆結果，定案知識庫來源（沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`，見 §8.2、§12.2）
 - 知識庫快查（**inline 面板**，見 §12.3；Command Palette 為後續增強）
 - 交接摘要 / 結案摘要 + **人審面板**
 - `board-repository` 冪等寫入
 - Data Board schema setup script
 
 **驗收**
-- [ ] 自然語言快查能回傳含 SOP 編號與分數的結果
+- [ ] 自然語言快查能回傳含 SOP 編號的結果；分數欄位依實際 provider 有值則顯示、`null` 則留空（不強制要求分數，見 §8.2、§11.6②）
 - [ ] 建議卡能正確引用真實 SOP 條目
 - [ ] 摘要**可編輯後**才寫入 Board
 - [ ] **重複觸發摘要為覆蓋而非新增**
@@ -2048,14 +2135,14 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 3 | **Presence 無可靠來源** | 🟢 **大幅緩解（2026-08-25 實測）** | 同事在官方介面 JOIN 但未發言時完全看不到 | ⚠️ 先前「`users[]` 12/12 全為空」**量錯位置**（量在 `search()` 的輕量 payload，該處 `users` 為 `null`）；`get()` 實際回 14 人，但兩個不同對話回同一批人且含 `Bot` 與 `observer` → 是**團隊名冊**，仍不可用。✅ **真正的解是 `mode` 欄位**：JOIN 時 `null→manual`、LEAVE 時 `manual→automation`，**雙向正確且在清單 payload 中**，一次清單輪詢即可得知所有對話有沒有真人在處理。原本最痛的盲區已補上。⚠️ 但它只能回答「有沒有人」不能回答「是誰」，且 `mode` 本質是 AI 處理模式（§10.6 視為正交維度），仍不可取代 §10.4 送出前檢查。詳見 §10.2 |
 | 4 | **Webhook 簽章機制未知** | ⚪ | 無法驗簽 = 任何人可偽造 JOIN 事件 | 上線前必須取得規格，否則 endpoint 不得對外開放 |
 | 5 | **SDK 無訊息層級推播** | 🔵 已確認 | 依賴輪詢，有延遲與 API 壓力 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS |
-| 6 | **無相關度分數可用** | 🔵 **已確認** | **demo 的「信心度 92%」做不到** | ~~自建 embedding 檢索分數~~ **`ai.embed()` 404，此路不通**；agent 的 RAG 工具回傳純文字亦無 score。**決策：介面拿掉信心度數字，只保留 SOP 來源**（見 MEETING_2026-08-25 §4-1） |
+| 6 | **無相關度分數可用（iMBrace 路徑）** | 🔵 **已確認，因應方式已定** | 信心度數字暫時沒有真實依據 | ~~自建 embedding 檢索分數~~ **`ai.embed()` 404，此路不通**；agent 的 RAG 工具回傳純文字亦無 score。**2026-08-26 決策**：`confidence` 欄位改為 nullable，不是整個拿掉——iMBrace 路徑無分數來源時 UI 留空，不估算填充；若日後換上 viki 的 `answer-attribution`（見 `PLATFORM_CAPABILITY.md` §6），同一欄位回填真實分數，UI 元件不必重做。詳見 §8.2、§11.6 |
 | 7 | 多副本狀態共享 | ⚪ | 上 K8s 後 SSE 推播直接失效 | 介面 day-1 async；M4 換 Redis |
 | 8 | Nuxt UI Pro 授權 | ⚪ | 商用可能需付費 | 開發前確認授權狀況，必要時以 Tailwind 自建替代元件 |
 | 9 | 對話內容送外部 LLM | 🟡 範圍可能擴大 | 資安／合規 | 若 #17 確認無 structured output、或無 vision 模型，則需外送外部服務，**出境範圍從文字擴大到語音與影像**。`05-ai-structured.ts` 會一併檢查 `is_vision_available` |
 | 10 | Data Board 欄位型別限制 | ⚪ | schema 可能需調整 | M3 前先實測，setup script 可重跑 |
-| 11 | **附件內容完全取不到** | 🔴 **已確認（風險升級）** | 不只是「平台沒幫我們 OCR」，是**連原始檔案都拿不到**，自建 STT／vision 也無米可炊 | 實測 `file` 訊息的 `content` 是 `{name, media_id}`，**沒有 url**；SDK 全域搜尋 `media` 無任何端點，試打 4 條猜測路徑全 404。**已列為對 iMBrace 的 P0 追問**。M1 暫行方案：僅顯示檔名，標示「無法預覽」。398 則實測訊息中 `file` 僅 4 則、`image`／`audio` 各 0 則 → 建議**多模態移出 MVP** |
+| 11 | **附件內容依型別而定：`image`／`pdf` 取得到，舊資料的 `file` 取不到** | 🟢 **2026-08-26 用真實圖片＋PDF 對話跑 `02-multimodal.ts`／`14-contact-files.ts` 後兩度更新** | `image`／`pdf` 型附件皆有直接可用的 URL，只是平台未做描述／OCR；客戶端上傳介面本身只接受這兩種格式 | **`image`／`pdf`（2026-08-26 新增樣本，推翻原判）**：原判「附件都拿不到」是**外推**——當時 398 則訊息中 `image`／`pdf` 皆 0 則，沒有實測樣本。用真實對話重測後（圖片 1 則、PDF 2 則），`content` 皆帶 `url`（`https://s3.ap-east-1.amazonaws.com/...`），且未加簽章／無時效參數（僅 3 樣本，`H-2d` 待更多驗證）。平台未產生描述或 OCR（`H-2a` 確認）。**`caption` 有明顯規律**：客服上傳的 PDF，`caption` = 原始檔名；**客戶上傳的（圖片與 PDF 皆然）目前樣本 `caption` 均為空**——客戶上傳才是真實場景主力，代表不能依賴 `caption` 顯示描述。**使用者截圖確認**：客戶端上傳介面的檔案篩選器只接受圖片與 PDF，Word/Excel 等格式在此管道根本傳不進來。**2026-08-26 決策：圖片與 PDF 一併納回 MVP**，走自建 vision／文件分析（見 §11.4），比原本假設的「無米可炊」成本低很多。**`file`（舊資料，非圖片/PDF，結論不變）**：`content` 是 `{name, media_id}`，沒有 url；SDK 全域搜尋 `media` 無任何端點，試打 4 條猜測路徑全 404。398 則歷史訊息中僅 4 則。**這 4 則的來源目前不明**——客戶端上傳介面無法產生此型別，可能來自其他管道或較舊版本。**維持排除在 MVP 外**，僅顯示檔名標示「無法預覽」。**語音**：iMBrace 平台據了解不支援語音訊息，維持不評估。**新發現**：`GET https://cloud.imbrace.co/api/channel-service/v1/contact/{contact_id}/files`（非 SDK 公開端點，使用者由瀏覽器 Network 面板找到）可列出附件，已用 `14-contact-files.ts` 驗證可用。**⚠️ 範圍是聯絡人層級**：使用者是在官方介面的「聯絡人資料」彈窗中發現此端點的，該情境本質上就是聯絡人視圖，強烈支持這是「聯絡人所有對話」而非單一對話的範圍（技術上仍待多對話樣本驗證）。**不得當成「此對話的附件清單」使用**，否則同一客戶多次對話時會混入不相關對話的附件（見 §11.4）。已列為對 iMBrace 的 P1 追問（`file` 型附件來源、`image`/`pdf` URL 時效、`contact/files` 端點合法性與範圍，`IMBRACE_QUESTIONS.md` H-2/H-2f） |
 | 12 | **JOIN 後 AI 是否仍自動回覆** | 🟢 **已釐清（2026-08-25）** | 撞單是預設情況還是選用情況 —— 決定 §10.5 的適用範圍 | **兩個舊結論都只對一半。** 平台有三種模式（§10.6）：JOIN 時**預設 Manual（AI 關閉）**，故撞單**不是預設情況**；但客服可切到 **Hybrid（AI 開 + 客服可送）**，此時撞單真實存在。因此 §10.5「AI 是第四個競爭者」**不刪除，改為只在 Hybrid 模式下適用**，UI 需依 mode 決定是否顯示 AI 撞單警示。~~衍生新風險：SDK 無設定 mode 的端點，我方可能只能讀不能寫~~ **已解除，見 #23** |
-| 13 | ~~訊息發送者身分無法區分~~ | ✅ **已解除** | ~~撞單防護產生大量誤判~~ | **實測 `from` 帶型別前綴**：`con_` 客戶／`u_` 真人客服／`pub_` AI，398 則覆蓋率 100%。已改用前綴判別（`mappers.senderTypeOf`），不再依賴 `users[]` 反推 —— 後者在 `users[]` 為空時會把同事全數誤判為 AI。**僅剩 `pub_` 語意待 iMBrace 確認（H-3b）**，未知前綴一律歸 `unknown`，不預設為 `ai` |
+| 13 | ~~訊息發送者身分無法區分~~ | ✅ **已解除** | ~~撞單防護產生大量誤判~~ | **實測 `from` 帶型別前綴**：`con_` 客戶／`u_` 真人客服／`pub_` AI，398 則覆蓋率 100%。已改用前綴判別（`mappers.senderTypeOf`），不再依賴 `users[]` 反推 —— 後者在 `users[]` 為空時會把同事全數誤判為 AI。**僅剩 `pub_` 語意待 iMBrace 確認（H-3b）**，未知前綴一律歸 `unknown`，不預設為 `ai`。**`pub_` 內部的訊息還分兩種**，見 #24 |
 | 14 | 知識庫條目時效性 | ⚪ | 客服可能依據已失效的 SOP 回覆客戶 | `KnowledgeHit.updatedAt` 顯示於介面，過舊者標示提醒 |
 | 15 | **主管強制介入擋不住官方介面** | ⚪ | 主管可能誤以為已完全接管 | 介面誠實標示邊界；`removeTeamMember()` API 確實存在，但實際效力待確認（H-4） |
 | 16 | ~~角色權限來源未定~~ | ✅ **多半已解除** | ~~自建權限系統的離職同步缺口~~ | **`OrganizationMembership` 帶 `role?: string` 與 `is_admin?: boolean`**，`auth.authenticate()` 即回傳。實際有值則直接沿用平台角色，不必自建。`00-auth.ts` 確認填充率 |
@@ -2063,17 +2150,28 @@ iMBrace 提供 K8s 安裝文件，若能**同集群部署**可省一段網路跳
 | 18 | **`messageSuggestion` 端點不存在** | 🔵 **已確認** | 建議卡完全自建 | 不只是「無信心度與引用」——**端點回 404**（兩種憑證皆然），連 fallback 都當不成。建議卡改由 agent 路徑產生，引用來源從 `RAGknowledge` 工具輸出解析 |
 | 19 | 🆕 **RAG 檢索品質不可調校** | 🔴 **已確認（新增，最高優先）** | **客服可能照著錯誤的 SOP 回覆客戶 —— 比沒有建議更糟** | 實測向掛了 9 份 SOP 的 agent 問「電梯困人」，**未命中同名的 `金融大樓電梯困人SOP.pdf`**，反而回傳「管理辦法」的火災逃生段落。chunk 大小、top-k、中文斷詞、同義詞**全部不在我方手上**。已列為對 iMBrace 的 P0 追問；若調不動，則觸發方案 B（改接 viki） |
 | 20 | 🆕 **AI 回應延遲 5～12 秒** | 🔵 **已確認（新增）** | 右欄若等全部算完才渲染，客服會以為當掉 | 實測中位數 **5.0s**、最慢 **12.2s**、首字 **2.2s**。**M2 必須做漸進顯示**：骨架先出，摘要／情緒／建議卡各自獨立載入，建議卡串流逐字顯示，並提供「重新產生」入口（因 #19 品質不穩） |
-| 21 | 🆕 **客戶資料幾乎是空的** | 🟡 **已確認（新增）** | demo 右欄的「客戶資訊卡」無內容可顯示 | 實測 19 筆 Contact：`display_name` 100% 但值是 `TWN#UK2594` 這類代號；`email`／`phone_number`／`company_name`／`birthday`／`location` **填充率皆為 0%**；`avatar_url` 僅 21%。**待決策**：改從 CRM board 關聯取得（`contact` 帶 `board_id`／`board_item_id`），或此區塊 MVP 先拿掉 |
+| 21 | **客戶資料幾乎是空的** | 🟡 **已確認，2026-08-26 決策：MVP 拿掉** | demo 右欄的「客戶資訊卡」無內容可顯示 | 實測 19 筆 Contact：`display_name` 100% 但值是 `TWN#UK2594` 這類代號；`email`／`phone_number`／`company_name`／`birthday`／`location` **填充率皆為 0%**；`avatar_url` 僅 21%。**MVP 階段直接拿掉此區塊**，不接 CRM board 關聯。若日後客戶資料填充率改善或決定接 CRM board，再重新評估 |
 | 22 | ~~**`messages.list()` 無 `conversation_id` 也無 `since`**~~ | ✅ **已解除（不再阻塞 M1）** | ~~§9 整套輪詢策略的地基~~ | 原判「三種策略皆不可行」是**量測錯誤**：`precisionOf()` 以字串相等比對，而對話清單給裸 UUID、訊息帶 `conv_` 前綴，於是「取回 70 則全部正確的訊息」被算成 precision 0%。修正後 `raw-conversation-id` **precision 100%**，且不帶 `conversation_id` 會 400（代表過濾強制且真實）。`since` 類參數確實不支援（八種全被忽略），但訊息**由新到舊排序**，`limit=N` 直接就是最新 N 則 → §9.3 的緩解措施成本遠低於原本設想的最壞情況。詳見 §9.3 的識別碼說明 |
 | 23 | ~~**無法由 API 設定對話 mode**~~ | ✅ **已解除（同日內翻案）** | ~~「切換為全真人模式」與主管接管可能做不出來~~ | 原判「SDK 無 mode 寫入端點」**是錯的**。由官方介面網路請求實測：`POST /v1/team_conversations/_join` body `{team_conversation_id, mode}` —— **切換模式與 JOIN 是同一支端點**，而 SDK `conversations.join()` 打的正是它，只是型別未宣告 `mode`。⚠️ 但識別碼必須用 `tcu_` 開頭的 team_conversation id，且該 id **只有 `get()` 會回傳、清單 payload 沒有** → 從列表 JOIN 前需先取詳情。實作見 §10.6 |
+| 24 | **workflow 的內部中繼訊息與真正回給客戶的回覆無法區分** | 🔴 **已確認，仍是啟發式暫解** | 撞單防護的 `byAi`（§10.4）可能把 AI 從未送達客戶的內部訊息（如 `{"route":"T1"}`）當成真實回覆，觸發假警報；假警報比沒有警報更糟 | 同一 `pub_` workflow 在同一對話裡送出的兩種訊息，除 `id` 與時間戳外**所有欄位完全相同**，沒有旗標可判斷。**暫行做法**：`text` 整段可解析為 JSON 視為內部訊息並排除。這是啟發式，不是規格——已列為對 iMBrace 的 P1 追問（`IMBRACE_QUESTIONS.md` H-3c），若正式回覆格式混入自由文字會失效 |
 
-### 19.2 目前最需要收斂的三件事
+### 19.2 目前最需要收斂的事
+
+> ⚠️ **2026-08-26 全面改寫**：本節原列的三項（#11 語音／圖片、JOIN 多一次請求、#13 發送者身分）
+> 皆已個別決議或緩解，不再是「最需要收斂」的項目，已從本節移除（結論保留在 §19.1 對應風險列）。
+> 以下反映目前實際仍待收斂的事項，避免本節與風險表脫鉤。
 
 | 優先 | 事項 | 為何是它 |
 |---|---|---|
-| 🔴 1 | **#11 語音／圖片文字化** | 唯一還能讓總工時再增 5–10 人日的變數。**必須用含語音與圖片的對話跑 `02-multimodal.ts`** |
-| 🟡 2 | **從列表 JOIN 需要多一次請求** | ~~#19 取數~~、~~#3 Presence~~、~~#12 AI 停不停~~、~~#23 mode 寫入~~ 皆已解除。剩下的是實作層取捨：`tcu_` id 不在清單 payload 中，「從對話列表直接按 JOIN」必須先 `get()` 一次。要在列表載入時預取（N 次請求）還是按下 JOIN 當下才取（多一次來回延遲）—— M1 開工時決定即可，不阻塞 |
-| 🔴 3 | **#13 發送者身分** | 決定撞單防護（產品核心價值）能否成立 |
+| 🔴 1 | **#19 RAG 檢索品質不可調校** | 唯一可能讓「建議卡」整個上不了線的變數——目前檢索結果連同名 SOP 檔都命中不了。已列 P0 追問 iMBrace（`IMBRACE_QUESTIONS.md` §0-3f）；調不動則觸發換上 viki（見 `PLATFORM_CAPABILITY.md` §6） |
+| 🟠 2 | **#24 workflow 內部中繼訊息判斷** | 撞單防護（§10.4 `byAi`）目前用「純 JSON 視為內部訊息」的啟發式，不是規格，格式一變就可能重新製造假警報 |
+| 🟡 3 | **#11 附件 URL 的時效與授權，以及 `contact/files` 端點的合法性** | 已跑過 `02-multimodal.ts`／`14-contact-files.ts`，確認 `image`／`pdf` 皆有 url、圖片與 PDF 都納回 MVP，且發現一個候選端點。但**目前只有 3 個樣本**：**URL 是否有時效仍未驗證**（`IMBRACE_QUESTIONS.md` H-2d）；`contact/files` 端點除了未經 iMBrace 確認是否為正式介面，**範圍已知是聯絡人層級**（使用者於「聯絡人資料」彈窗發現，非單一對話，H-2f）。實作前務必先確認 URL 時效，且**不得把 `contact/files` 當成單一對話的附件清單使用**，若要用需明確定位為「客戶歷史附件」 |
+
+**已解決、不再需要追蹤的舊項目**：
+- ~~#11 附件 spike~~ —— 已用真實圖片對話跑完 `02-multimodal.ts`，`image` 型附件確認有 url、`file` 型仍無 url，圖片納回 MVP（殘餘的 URL 時效問題見上方列 3）
+- ~~#13 發送者身分~~ —— `from` 前綴判別 398 則覆蓋率 100%，M1 撞單防護已 8/8 驗收通過（殘餘的 `pub_` 內部訊息問題已獨立為 #24 追蹤）
+- ~~從列表 JOIN 需要多一次請求~~ —— 純屬實作層取捨，M1 開工時已定案（先 `get()` 取 `tcu_` id）
+- ~~#21 客戶資料卡~~ —— 已決議 MVP 階段直接拿掉，不再需要等 iMBrace 回覆
 
 **待向 iMBrace 確認的完整清單見 `docs/IMBRACE_QUESTIONS.md`**（可直接轉貼給對方）。
 **SDK 靜態分析的完整結果見 `docs/SDK_FINDINGS.md`**。

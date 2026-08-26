@@ -75,11 +75,21 @@ list(params?: { type?, q?, limit?, skip? })
 
 **但發現兩條可行替代路徑**：
 
-| 路徑 | 可行性 | 說明 |
+> ⚠️ **2026-08-26 更正：下表兩列已被 live 實測推翻，本節是型別層推論的產物。**
+>
+> - **`ai.embed()` 自建向量檢索**——型別上看起來公開，**live 實測回 404**，此路不通。
+> - **掛 Knowledge Hub 給 AI Agent 再問它**——原判「回傳自由文字、無條目 ID 與分數」而標記 ❌，
+>   但 live 實測發現 agent 的 SSE `tool-output-available` 事件會吐出檔名與 chunk 原文，
+>   **可以**解析出引用來源（只是分數確實拿不到）。這條路**不是**違反憲法第 5 條，
+>   而是 M2 實際採用的 `AgentKnowledgeProvider`。
+>
+> **正確結論見** `ARCHITECTURE.md` §8.2、§12.2，與 `PLATFORM_CAPABILITY.md` §5。保留原表供記錄型別層推論與 live 實測之間的落差。
+
+| 路徑 | 型別層可行性（已推翻，見上） | 說明 |
 |---|---|---|
-| `boards.search(boardId, {q, filter, limit})` | ✅ | Meilisearch 相容，**有條目 ID**，可滿足憲法第 5 條的白名單後驗。但是關鍵字非語意，同義詞會漏。分數需確認能否開啟 `showRankingScore` |
-| **`ai.embed({model, input[]})` 自建向量檢索** | ✅ **建議** | embed API 已公開。SOP 數量級小（數百條），離線建索引 + 記憶體/Redis cosine 即可，**分數完全自控**，§11.6 的 confidence 校準公式可完整實作 |
-| 掛 Knowledge Hub 給 AI Agent 再問它 | ❌ | 回傳自由文字，無條目 ID 與分數，違反憲法第 5 條 |
+| `boards.search(boardId, {q, filter, limit})` | ✅ 未受影響 | Meilisearch 相容，**有條目 ID**，可滿足憲法第 5 條的白名單後驗。但是關鍵字非語意，同義詞會漏。分數需確認能否開啟 `showRankingScore` |
+| ~~`ai.embed({model, input[]})` 自建向量檢索~~ | ❌ **live 404，已撤銷** | 型別上 embed API 看似公開，實測不存在 |
+| ~~掛 Knowledge Hub 給 AI Agent 再問它~~ | ✅ **live 可行，已改列 M2 採用** | 見上方更正 |
 
 ---
 
@@ -176,7 +186,11 @@ G-1 解決。spike 與開發期可全程走 `sandbox`，不碰生產資料。
 |---|---|---|---|
 | M1 對話主線 | 12–18 人日 | **12–18**（維持） | ⚠️ 先前下修的理由（`users[]` 已提供 operator 清單）**已被實測推翻**，見本檔第 5 節。改以 `mode` 欄位 + 本地快路徑替代，工作量回到原估 |
 | M2 Copilot 核心 | 12–16 人日 | **16–22** ↑ | 建議卡需完整自建（發現 2）＋ structured output 可能需重試機制（發現 1） |
-| M3 知識庫與結案 | 10–14 人日 | **12–16** ↑ | RAG 檢索需自建（發現 4），但 `ai.embed` 可用，非最壞情況 |
+| M3 知識庫與結案 | 10–14 人日 | **12–16** ↑ | RAG 檢索需自建（發現 4）。⚠️ **2026-08-26 更正**：本列原因「但 `ai.embed` 可用，非最壞情況」已被 live 實測推翻——`ai.embed()` 回 404，自建向量檢索不成立。目前規劃改為沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`（皆不需自建索引），此欄人日**未重新估算**，見 `ARCHITECTURE.md` M3 章節 |
 
-**H-2 仍是最大的未爆彈** —— 若平台未做文字化，M2 再 +5~10 人日。
-這也是為什麼 `SPIKE_CONVERSATION_ID` 一定要挑含語音與圖片的對話。
+> ⚠️ **2026-08-26 更正：H-2 的「未爆彈」已拆除大半。** 原判「若平台未做文字化，M2 再 +5~10 人日」
+> 假設的是「連原始檔案都拿不到」的最壞情況。用真實圖片對話跑 `02-multimodal.ts` 後確認：
+> `image` 型附件**有**直接可用的 url，只是缺描述——只需送 URL 給 vision 模型，不必自建 STT／檔案存取層。
+> 語音因平台不支援而不適用，`file` 型仍拿不到但已排除在 MVP 外。**M2 因此不需要 +5~10 人日**，
+> 但 M2 的 16–22 人日估算本身沒有針對「圖片 vision 分析」重新拆算，實作時留意。
+> 詳見 `ARCHITECTURE.md` §19.1 #11、§11.4。
