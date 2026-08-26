@@ -1217,6 +1217,8 @@ boards.linkItems()                                      # 關聯至 Contact
 
 兩者 schema 不同，不可混用。
 
+> 「手動按鈕」不限於獨立的結案按鈕——也可以是 LEAVE 流程中「同時結束對話」的選項（例如客服按下 LEAVE 時，UI 詢問是否一併結案）。無論哪種 UI 呈現，只要目的是把該對話標記為已結束，就走同一條 `updateStatus() → resolved` 路徑與同一份 `ClosureSummary` schema；若設計成緊跟著 LEAVE 自動觸發（不經額外詢問），仍必須依①標記 `reviewed_by = null` 供事後稽核。
+
 **③ 冪等。** 同一對話重複產生摘要必須覆蓋而非新增。以 `conversation_id` 為唯一鍵，寫入前先 `search()`，再決定 `createItem` 或 `updateItem`。
 
 ---
