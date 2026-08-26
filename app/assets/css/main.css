@@ -51,6 +51,15 @@
   --warn-bg: #fdf1e3;
   --warn-bd: #eec69b;
 
+  /*
+   * specs/001-sentiment-panel FR-003：「挫折」與「生氣」兩級 MUST 有可互相區分的呈現，
+   * 不得共用完全相同的顏色與文字 —— 「挫折」沿用上方 --warn，「生氣」用此組更深的紅，
+   * 對比度皆通過 WCAG AA（≥4.5:1，對白色背景／--surface 手動驗算）。
+   */
+  --danger: #c0311d;
+  --danger-bg: #fbeae7;
+  --danger-bd: #f0bcb3;
+
   --skel: #e7e9ee;
   --skel-hi: #f2f3f7;
 
@@ -96,6 +105,10 @@
   --warn: #e2a469;
   --warn-bg: #2a2015;
   --warn-bd: #553f22;
+
+  --danger: #f0937f;
+  --danger-bg: #2e1712;
+  --danger-bd: #5c2c22;
 
   --skel: #232833;
   --skel-hi: #2c323d;

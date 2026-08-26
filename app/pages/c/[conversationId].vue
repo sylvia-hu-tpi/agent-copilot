@@ -22,6 +22,7 @@ const stream = useStreamStore()
 const conversationId = computed(() => String(route.params.conversationId ?? ''))
 
 const view = useConversationView(conversationId)
+const copilot = useCopilotSession(conversationId)
 const draft = useDraft(conversationId)
 const composer = ref<{ focus: () => void } | null>(null)
 
@@ -33,11 +34,19 @@ const sidebarCollapsed = ref(false)
 const WIDTH_KEY = 'ac.sidebarWidth'
 const COLLAPSED_KEY = 'ac.sidebarCollapsed'
 
+// ── 右欄 Copilot 面板（可拖曳調寬，範圍依 docs/DESIGN_TOKENS.md §7.1：320–520px）───
+
+const copilotWidth = ref(380)
+const COPILOT_WIDTH_KEY = 'ac.copilotWidth'
+
 onMounted(() => {
   try {
     const w = Number(localStorage.getItem(WIDTH_KEY))
     if (Number.isFinite(w) && w >= 200 && w <= 480) sidebarWidth.value = w
     sidebarCollapsed.value = localStorage.getItem(COLLAPSED_KEY) === '1'
+
+    const cw = Number(localStorage.getItem(COPILOT_WIDTH_KEY))
+    if (Number.isFinite(cw) && cw >= 320 && cw <= 520) copilotWidth.value = cw
   }
   catch {
     // 隱私模式下讀不到就用預設值，不影響功能
@@ -45,10 +54,11 @@ onMounted(() => {
   void conversations.load()
 })
 
-watch([sidebarWidth, sidebarCollapsed], ([w, c]) => {
+watch([sidebarWidth, sidebarCollapsed, copilotWidth], ([w, c, cw]) => {
   try {
     localStorage.setItem(WIDTH_KEY, String(w))
     localStorage.setItem(COLLAPSED_KEY, c ? '1' : '0')
+    localStorage.setItem(COPILOT_WIDTH_KEY, String(cw))
   }
   catch { /* 存不下來不影響本次操作 */ }
 })
@@ -71,6 +81,24 @@ function startDrag(e: PointerEvent): void {
   window.addEventListener('pointerup', up)
 }
 
+/** 右欄拖曳把手在面板的左邊緣，往左拖（滑鼠 X 變小）要讓面板變寬，方向與左側欄相反 */
+const copilotDragging = ref(false)
+function startCopilotDrag(e: PointerEvent): void {
+  copilotDragging.value = true
+  const startX = e.clientX
+  const startWidth = copilotWidth.value
+  const move = (ev: PointerEvent) => {
+    copilotWidth.value = Math.min(520, Math.max(320, startWidth - (ev.clientX - startX)))
+  }
+  const up = () => {
+    copilotDragging.value = false
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', up)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', up)
+}
+
 // ── 側欄與 SSE 的連動 ───────────────────────────────────────────────
 
 watch(conversationId, id => conversations.setActive(id || null), { immediate: true })
@@ -83,6 +111,19 @@ onMounted(() => {
 onBeforeUnmount(() => offStream?.())
 
 watch(() => conversations.query, () => void conversations.load())
+
+/**
+ * 側欄清單的 `mode` 只在整批重載（`conversations.load()`）時更新，JOIN／LEAVE／
+ * 切換模式当下不會連動——側欄的小綠人圖示（`someoneElseCanSend(c.mode)`）因此要等
+ * 下一次整批重載才會反映，客服會覺得「JOIN 了但列表沒反應」。
+ *
+ * `view.control.value.mode` 已經是即時的（本人操作或其他客服／SSE 推播都會更新），
+ * 直接同步進側欄快取的對應項目，不必整批重打 API。
+ */
+watch(() => view.control.value?.mode, (mode) => {
+  const item = conversations.items.find(c => c.id === conversationId.value)
+  if (item) item.mode = mode ?? null
+})
 
 function select(id: string): void {
   if (id === conversationId.value) return
@@ -253,9 +294,27 @@ const title = computed(() =>
       />
     </section>
 
+    <!-- ── 右欄與中欄之間的拖曳把手（可拖曳調寬，320–520px）── -->
+    <div
+      v-if="conversationId"
+      class="w-1 shrink-0 cursor-col-resize transition-colors"
+      :style="{ background: copilotDragging ? 'var(--navy-2)' : 'transparent' }"
+      role="separator"
+      aria-orientation="vertical"
+      @pointerdown.prevent="startCopilotDrag"
+    />
+
     <!--
-      M2：右欄 Copilot 面板（§14.1.1 的五個區塊）。
-      刻意留白而不是不存在 —— 讓版面比例現在就定下來，M2 加入時不必重排。
+      右欄 Copilot 面板 —— specs/001-sentiment-panel（M2）。
+      §14.1.1 規劃的其餘區塊（建議卡、知識庫快查等）仍是後續功能，先留白。
     -->
+    <div
+      v-if="conversationId"
+      class="shrink-0 space-y-3 overflow-y-auto border-l p-3"
+      :style="{ width: `${copilotWidth}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
+    >
+      <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
+      <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
+    </div>
   </div>
 </template>
