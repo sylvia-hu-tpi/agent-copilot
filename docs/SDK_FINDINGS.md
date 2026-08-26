@@ -48,8 +48,8 @@
 | 項目 | 原估 | 目前 | 備註 |
 |---|---|---|---|
 | M1 對話主線 | 12–18 人日 | ✅ 已完成 | 當初維持原估——`users[]` 捷徑不成立，改走 `mode` 欄位 + 本地快路徑 |
-| M2 Copilot 核心 | 12–16 人日 | 16–22 ↑ | 建議卡需完整自建；structured output 靠 prompt，需自建重試機制。**圖片／PDF vision 分析已知有直接可用的 URL，成本比最壞情況低，但此欄未針對它重新拆算** |
-| M3 知識庫與結案 | 10–14 人日 | 12–16 ↑ | RAG 檢索走 `AgentKnowledgeProvider` 或 `VikiKnowledgeProvider`，皆不需自建索引（原規劃的自建向量檢索已撤銷） |
+| M2 Copilot 核心 | 12–16 人日 | 16–22 ↑ | 建議卡需完整自建；structured output 靠 prompt，需自建重試機制。⚠️ 2026-08-26 訂正：原本此欄的圖片／PDF vision 分析人日已移出本里程碑（延後至 M3，見下列），本區間尚未針對移出後重新拆算，實際可能偏低於 16–22 |
+| M3 知識庫與結案 | 10–14 人日 | 12–16 ↑ | RAG 檢索走 `AgentKnowledgeProvider` 或 `VikiKnowledgeProvider`，皆不需自建索引（原規劃的自建向量檢索已撤銷）。⚠️ 2026-08-26 由 M2 移入：圖片／PDF vision／文件分析自建管線，`docs/IMBRACE_QUESTIONS.md` H-2a／H-2b 已確認平台無內建 OCR，預估額外 **+5～10 人日**，本區間尚未重新加總 |
 
 ---
 

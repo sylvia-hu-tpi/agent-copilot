@@ -1017,7 +1017,7 @@ export interface Attachment {
  * ⚠️ 客戶該輪若只有附件而無文字，MUST NOT 產生此結構——「上傳檔案」是中性動作，
  * 給定分數會在走勢上拉出與實情不符的轉折（例如客戶正在生氣時出現假性好轉）。
  * 該輪改以不帶分數的中性標記呈現於時間軸，不參與示警判定（規格 FR-012）。
- * 附件仍須文字化並納入摘要卡的事實來源（規格 FR-013）。
+ * 附件仍須文字化並納入摘要卡的事實來源（規格 FR-013，2026-08-26：實作延後至 M3，見 §18）。
  */
 export interface SentimentPoint {
   messageId: string
@@ -1449,7 +1449,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M2 — Copilot 核心
 
-**內容**：摘要卡、情緒 sparkline、建議卡、一鍵帶入；前景／背景分級、debounce、快取；AI 可先用 mock provider，UI 先行完成；知識庫先用 `StaticSopProvider`，之後接 `AgentKnowledgeProvider`（§8.2）；**含**圖片與 PDF 附件的 vision／文件分析（§11.4、§19.1 #11）；**不含**客戶資料卡（§19.1 #21）、舊資料型 `file` 附件內容與語音。
+**內容**：摘要卡、情緒 sparkline、建議卡、一鍵帶入；前景／背景分級、debounce、快取；AI 可先用 mock provider，UI 先行完成；知識庫先用 `StaticSopProvider`，之後接 `AgentKnowledgeProvider`（§8.2）；**不含**客戶資料卡（§19.1 #21）、舊資料型 `file` 附件內容與語音、**圖片與 PDF 附件的 vision／文件分析**（2026-08-26 訂正：原列於本里程碑，經 `specs/001-sentiment-panel` 的 `/speckit-analyze` 發現 tasks.md 完全未落實此項且預估 5～10 人日，決策延後至 M3，見下方）。
 
 **驗收**：
 - [ ] JOIN 後 3 秒內面板區塊出現並明確標示分析中（此條不要求該時點已有實質內容）
@@ -1460,8 +1460,6 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] AI 失敗時，訊息流與 Composer 仍完全可用
 - [ ] 建議卡的 `sopId` 若不在檢索結果白名單中，該卡被丟棄
 - [ ] `confidence` 無真實分數來源時顯示為留空，不得顯示模型自評的替代數字（§11.6②）
-- [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）
-- [ ] 圖片／PDF 的描述不得依賴 `caption` 欄位
 
 **外部依賴**：無
 
@@ -1469,7 +1467,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M3 — 知識庫與結案
 
-**內容**：依 #19 RAG 品質的回覆結果，定案知識庫來源（沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`，見 §8.2、§12.2）；知識庫快查（inline 面板，見 §12.3）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前 M2 一律讓 429 直接轉錯誤狀態，見 §17 韌性表）。
+**內容**：依 #19 RAG 品質的回覆結果，定案知識庫來源（沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`，見 §8.2、§12.2）；知識庫快查（inline 面板，見 §12.3）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11；2026-08-26 由 M2 移入——iMBrace 平台已確認無內建 OCR，`docs/IMBRACE_QUESTIONS.md` H-2a／H-2b，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已同步訂正為排除範圍，見該檔 Assumptions）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前 M2 一律讓 429 直接轉錯誤狀態，見 §17 韌性表）。
 
 **驗收**：
 - [ ] 自然語言快查能回傳含 SOP 編號的結果；分數欄位依實際 provider 有值則顯示、`null` 則留空
@@ -1477,6 +1475,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] 摘要可編輯後才寫入 Board
 - [ ] 重複觸發摘要為覆蓋而非新增
 - [ ] LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用
+- [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）
+- [ ] 圖片／PDF 的描述不得依賴 `caption` 欄位
 - [ ] **429 由全域退避佇列統一處理**，摘要／情緒分析與輪詢等呼叫端不再各自重試；`classifyFailure()` 的 `'rate-limited'` 分類改接佇列，並回頭修訂 `specs/001-sentiment-panel/spec.md` FR-014 的 429 分支與 Assumptions
 
 **外部依賴**：Data Board schema 需先建立；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格
@@ -1523,7 +1523,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 6 | 無相關度分數可用（iMBrace 路徑） | 🔵 已確認，因應方式已定 | `confidence` 改為 nullable，非整個拿掉——無分數時留空，換上 viki 後自然回填，UI 不必重做（§8.2、§11.6） |
 | 7 | 多副本狀態共享 | ⚪ | 介面 day-1 async；M4 換 Redis |
 | 8 | ~~Nuxt UI Pro 授權~~ | ✅ 已解除 | v4 起 Pro 已併入主套件，125+ 元件全免費 MIT，商用無需額外授權 |
-| 9 | 對話內容送外部 LLM | 🔵 已確認會擴大到影像 | M2 已定案自建 vision／文件分析（§11.4），因此出境範圍**確定**從文字擴大到圖片與 PDF，不再是「可能」。合規政策待 iMBrace 回覆（E-3），送出前須先確認公司資安政策 |
+| 9 | 對話內容送外部 LLM | 🔵 已確認會擴大到影像 | 自建 vision／文件分析（§11.4）已定案，出境範圍**確定**從文字擴大到圖片與 PDF，不再是「可能」；實作時程 2026-08-26 由 M2 移至 M3（見 §18 M3）。合規政策待 iMBrace 回覆（E-3），送出前須先確認公司資安政策 |
 | 10 | Data Board 欄位型別限制 | ⚪ | M3 前先實測，setup script 可重跑 |
 | 11 | 附件內容依型別而定 | 🟢 已用真實對話驗證 | `image`／`pdf` 皆有直接可用 url，只是缺描述與（客戶上傳時的）檔名，已納回 MVP；舊資料型 `file` 仍拿不到內容且來源不明，維持排除；`contact/files` 端點範圍為聯絡人層級，不得當對話附件清單用。細節與驗證過程見附錄 B |
 | 12 | JOIN 後 AI 是否仍自動回覆 | 🟢 已釐清 | JOIN 時預設 Manual（AI 關閉），非預設情況；Hybrid 模式下撞單真實存在，§10.5 只在此模式適用 |
@@ -1647,6 +1647,6 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 
 **M2「3 秒」的語意（§18 M2）**：原驗收寫「JOIN 後 3 秒內出現摘要與首批建議」，讀起來像是要求 3 秒內產出實質內容——但 §6.2 的實測是 AI 單次呼叫中位數 5.0 秒、最慢 12.2 秒，那個門檻九成達不到。經 `specs/001-sentiment-panel` 的 clarify 收斂為兩條：3 秒衡量「面板已出現並標示分析中」（客服知道系統開始為他工作），實質內容另訂 10 秒 / 90 百分位，且允許逐欄漸進填入。連帶：切回已 JOIN 的對話時必須先顯示上次保留的結果而非重新 loading（§11.2 原寫「1–2 秒 loading 完全可接受」已修正）。
 
-**純附件輪不產生情緒點（§11.4、§11.5）**：原本只寫「情緒分析只在 `sender.type === 'customer'` 的訊息上產生情緒點」，未區分該輪有無文字。客戶只傳圖片／PDF 而不打字時若照樣給分，等於從「上傳檔案」這個中性動作推論情緒，且會在走勢上製造假訊號——客戶正在生氣時傳一張截圖，走勢會拉出一段看似好轉的折線，客服掃一眼會得到相反結論。已改為純附件輪不產生評分點，只在時間軸留中性標記；附件伴隨文字時照文字正常評分。⚠️ 這**不**代表附件不必文字化——文字化結果仍是摘要卡的事實來源，M2 驗收的「圖片／PDF 能顯示描述」不受影響。
+**純附件輪不產生情緒點（§11.4、§11.5）**：原本只寫「情緒分析只在 `sender.type === 'customer'` 的訊息上產生情緒點」，未區分該輪有無文字。客戶只傳圖片／PDF 而不打字時若照樣給分，等於從「上傳檔案」這個中性動作推論情緒，且會在走勢上製造假訊號——客戶正在生氣時傳一張截圖，走勢會拉出一段看似好轉的折線，客服掃一眼會得到相反結論。已改為純附件輪不產生評分點，只在時間軸留中性標記；附件伴隨文字時照文字正常評分。⚠️ 這**不**代表附件不必文字化——文字化結果仍是摘要卡的事實來源，只是該管線本身的實作時程已延後至 M3（2026-08-26 訂正，見 §18 M2／M3），M2 交付範圍內附件輪的摘要卡事實來源不含附件描述。
 
 **`sendTextMessage()` 回應形狀（H-6a）**：原始評估寫「送出成功後必須立刻把版本錨點推到新訊息，否則會被當成新訊息重複處理」，理由過度陳述。追查後發現：撞單檢查的版本錨點實際取自 `GET /v1/conversation_messages` 的真實訊息 id，與送出端回應無關；唯一可能用到送出回應 id 的 `advanceAnchor()`／`copilotSessionOf()`／`seed()` 三個機制，匯出後從未被任何呼叫端使用。因此 H-6a 目前的實際影響是零，不是「可能靜默出錯」，優先序下修為最低——除非 M2 有人開始真的依賴 `CopilotSession.lastMessageId`，才需要重新評估。
