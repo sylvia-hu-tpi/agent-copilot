@@ -13,6 +13,9 @@
     "minutesAgo": "{n} 分鐘前",
     "hoursAgo": "{n} 小時前"
   },
+  "organization": {
+    "switch": "切換組織"
+  },
   "sidebar": {
     "title": "對話",
     "empty": "沒有符合的對話。",
