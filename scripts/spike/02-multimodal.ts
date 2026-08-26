@@ -57,7 +57,11 @@ export const probe02 = () => runProbe('02', 'H-2 語音／圖片文字化', asyn
   const hidden = [...new Set(nonText.flatMap(m => findHiddenKeys(m)))]
 
   // ② 語音訊息落在哪個 type
-  const audioLike = nonText.filter(m => detectAttachmentKind(m.type, m.content?.url) === 'audio')
+  // ⚠️ 不能用 detectAttachmentKind 判語音 —— `Attachment.kind` 已無 'audio'
+  //    （平台不支援語音訊息，H-2a／H-2e）。此處直接嗅副檔名，才問得出
+  //    「真的完全沒有語音樣本嗎」這個問題，而不是被我方型別先過濾掉。
+  const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|opus|wav|amr|caf)$/i
+  const audioLike = nonText.filter(m => AUDIO_EXT.test(m.content?.url ?? ''))
   const imageLike = nonText.filter(m => detectAttachmentKind(m.type, m.content?.url) === 'image')
 
   // ③ 附件是否附帶可用文字

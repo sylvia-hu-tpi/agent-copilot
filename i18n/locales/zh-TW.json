@@ -72,8 +72,7 @@
   },
   "attachment": {
     "image": "圖片",
-    "audio": "語音",
-    "video": "影片",
+    "pdf": "PDF",
     "file": "檔案",
     "noPreview": "（此版本尚無法預覽附件，僅顯示檔名）"
   },
