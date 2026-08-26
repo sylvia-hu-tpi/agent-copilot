@@ -10,7 +10,7 @@
 | `server/sources/mappers.ts` | 驗證 SDK → 領域型別轉得過去 | **M1 防腐層**，SessionManager 直接用 |
 | `server/sources/message-fetch.ts` | 找出可行的取數策略 | **M1 PollingMessageSource 的取數核心** |
 | `server/services/imbrace.ts` | 建 client | **M0 client factory**（§7.3） |
-| `server/utils/redact.ts` | 讓樣本可安全落地 | **憲法第 8 條**的 logger 基礎 |
+| `server/utils/redact.ts` | 讓樣本可安全落地 | **憲法 1.5**的 logger 基礎 |
 | `scripts/spike/out/*.json` | 證據 | **M2 mock 資料**與單元測試 fixture |
 | `scripts/spike/*.ts` | 探測 | 演化成 M4 的部署後健康檢查 |
 

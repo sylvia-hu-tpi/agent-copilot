@@ -314,9 +314,10 @@ AgentCopilot/
 │       ├── copilot.ts               # AI 輸出契約（前後端共用）
 │       ├── conversation.ts
 │       └── events.ts                # SSE 事件型別
-├── config/
-│   ├── sop.yaml                     # StaticSopProvider 資料
-│   └── categories.yaml              # 結案分類受控詞彙
+├── config/                          # ⚠️ 三個檔案皆尚未建立，隨對應功能一起產生
+│   ├── sop.yaml                     # StaticSopProvider 資料（M2）
+│   ├── categories.yaml              # 結案分類受控詞彙（M3）
+│   └── supervisors.yaml             # 主管 email 白名單（隨主管接管功能）
 └── docs/
     ├── ARCHITECTURE.md              # 本文件
     ├── IMBRACE_QUESTIONS.md         # 待向 iMBrace 確認的清單
@@ -560,7 +561,7 @@ export interface KnowledgeProvider {
 | 1 | `AgentKnowledgeProvider` | ✅ **M2 採用** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。可取得引用來源（檔名＋chunk 原文），但 `score` 恆為 `null` |
 | 備援 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作——若 #19 RAG 品質調不動，換上此實作即可取得真實 `score`，介面不用改 |
 | 備案 | `BoardsSearchProvider` | 🟡 未採用——`boards.search()` 為 Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
-| 開發期 | `StaticSopProvider` | ✅ 讀 `config/sop.yaml`，開發期與離線 fallback |
+| 開發期 | `StaticSopProvider` | ✅ 讀 `config/sop.yaml`（尚未建立，M2），開發期與離線 fallback |
 | — | ~~`BoardsRagProvider`~~／~~`LocalVectorProvider`~~ | ❌ 已撤銷——`processEmbedding()` 之後無檢索 API；`ai.embed()` 回 404 |
 
 > 無論最終選哪一條，`KnowledgeProvider` 介面本身不變——這正是抽象層的目的：外部能力邊界未定時，開發不必停下來等。
@@ -922,12 +923,12 @@ POST /channel-service/v1/team_conversations/_join
 | 順位 | 做法 | 說明 |
 |---|---|---|
 | 1 | 沿用 iMBrace 角色 | 需確認 access token 能否取得角色／團隊（見 H-5） |
-| 2 | 極簡白名單 | `config/supervisors.yaml` 列主管 email，第一版足夠，明確是暫時方案 |
+| 2 | 極簡白名單 | `config/supervisors.yaml`（尚未建立，隨主管接管功能）列主管 email，第一版足夠，明確是暫時方案 |
 | 3 | 自建角色管理頁 | 最後手段，待確實出現多角色、多權限組合需求時再評估 |
 
-### 10.7 唯一刻意阻斷使用者的情境
+### 10.7 刻意阻斷使用者的情境
 
-主動阻斷操作只有兩種：**撞單偵測**（重複回覆客戶的傷害遠大於多按一次按鈕）與**主管鎖定**（見 §10.6）。除此之外，任何故障都不得阻斷工作流程（見憲法第三條）。
+協同相關的主動阻斷只有兩種：**撞單偵測**（重複回覆客戶的傷害遠大於多按一次按鈕）與**主管鎖定**（見 §10.6）。加上 token 過期需重新登入（§15.2），全系統共三種，構成憲法 3.3 的封閉集合。除此之外，任何故障都不得阻斷工作流程（憲法第三條）。
 
 ---
 
@@ -1067,7 +1068,7 @@ export interface ClosureSummary {
   closedAt: string              // 對應 Board 的 closed_at
   summary: string
   intent: string
-  category: string              // 受控詞彙，見 config/categories.yaml
+  category: string              // 受控詞彙，見 config/categories.yaml（尚未建立，M3）
 
   // ── 以下三項對應介面上的三個標籤（意圖／處理結果／情緒結果）──
   resolution: 'resolved' | 'workaround' | 'escalated' | 'unresolved' | 'customer_abandoned'
@@ -1103,7 +1104,7 @@ export interface ClosureSummary {
 
 - 全部使用 **structured output / tool use**，**絕不解析自由文字**
 - 所有輸出以 **Zod schema 驗證**後才進入系統
-- `category` 使用**受控詞彙**（`config/categories.yaml`），不得由模型自由生成
+- `category` 使用**受控詞彙**（`config/categories.yaml`，尚未建立，M3），不得由模型自由生成
 - 輸出語言為繁體中文，語氣須符合客服規範
 - 溫度設低（建議 0.2–0.3）
 
@@ -1124,10 +1125,10 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 | 掛 Knowledge Hub 給 AI Agent 再問它 | ✅ **M2 採用** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub。可取得引用來源，但取不到分數（§0-3c 仍待 iMBrace 回覆） |
 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。若 #19 RAG 品質調不動，換上此實作即可 |
 | `boards.search(boardId, {q, filter, limit})` | 🟡 備案，未採用 | Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
-| `StaticSopProvider` | ✅ 開發期 | 讀 `config/sop.yaml`，離線 fallback |
+| `StaticSopProvider` | ✅ 開發期 | 讀 `config/sop.yaml`（尚未建立，M2），離線 fallback |
 | ~~自建向量檢索~~ | ❌ 已排除 | 依賴的 `ai.embed()` 回 404 |
 
-無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源（SOP 編號）不可省**，否則憲法第 5 條（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
+無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源（SOP 編號）不可省**，否則憲法 4.3（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
 
 ### 12.3 知識庫快查 UX
 
@@ -1328,7 +1329,9 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ### 15.3 說明
 
-最後一列是全系統唯一刻意阻斷的情況——重複回覆客戶的傷害遠大於多按一次按鈕的成本。其餘所有故障一律靜默降級：在對應區塊呈現清楚但不干擾的狀態，不使用全頁錯誤畫面、不彈出 modal 打斷工作。
+**刻意阻斷是一個封閉集合，只有三種**（憲法 3.3）：① 撞單偵測（上表最後一列）——重複回覆客戶的傷害遠大於多按一次按鈕；② 主管強制介入鎖定（§10.6，送出 API 必須實際拒絕）；③ token 過期需重新登入（上表 401 那列，無從降級）。
+
+其餘所有**故障**一律靜默降級：在對應區塊呈現清楚但不干擾的狀態，不使用全頁錯誤畫面、不彈出 modal 打斷工作。新增第四種刻意阻斷需修憲。
 
 ---
 
@@ -1529,32 +1532,21 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ## 20. 工程慣例
 
-### 20.1 命名
+### 20.1 命名與程式碼約束
 
-| 對象 | 慣例 | 範例 |
-|---|---|---|
-| 檔案 | kebab-case | `session-manager.ts` |
-| Vue 元件 | PascalCase | `SuggestionCard.vue` |
-| Composable | `use` 前綴 | `useCopilotSession.ts` |
-| 型別／介面 | PascalCase，不加 `I` 前綴 | `CopilotSession` |
-| API 路由 | RESTful + Nitro method 後綴 | `[id]/join.post.ts` |
-| SSE 事件 | `名詞.動詞過去式` | `summary.updated` |
-| EventBus topic | `類型:id` | `conversation:abc123` |
+**兩者的正典都在 [`CONSTITUTION.md`](./CONSTITUTION.md)，本文件不重複列出。**
 
-### 20.2 程式碼約束（列為憲法）
+- 命名慣例（檔案、元件、composable、API 路由、SSE 事件、EventBus topic、分支、commit）→ 憲法附錄 A
+- 程式碼約束 → 憲法一至九條
 
-1. **`server/` 以外的任何地方不得 import `@imbrace/sdk`**
-2. **`runtimeConfig.public` 不得存放任何秘密**
-3. **`StateStore` / `EventBus` 的所有方法必須是 async**
-4. **AI 輸出必須經 Zod 驗證後才進入系統**
-5. **`sopId` 必須經白名單後驗**
-6. **Copilot 相關故障不得阻斷訊息流與 Composer**
-7. **外部依賴必須藏在 provider 介面之後**
-8. **日誌不得輸出訊息全文**
+> ⚠️ 本節在 v1 時期曾另有一份「八條憲法」清單，編號與 `CONSTITUTION.md` 的十條完全不同，
+> 造成程式碼註解裡「憲法第 5 條」與「憲法 4.3」指向同一規則卻對不起來。
+> 該清單已於憲法 v2.0.0 廢止 —— **不要再在本文件複製一份約束清單**，
+> 那正是「多一個地方描述同一件事，就多一個會過期的地方」的實例。
 
 ### 20.3 Git
 
-- Conventional Commits
+- Conventional Commits，內文說明**為什麼**
 - 功能分支 `feat/<milestone>-<slug>`
 
 ### 20.4 GitHub Spec Kit 導入
@@ -1584,7 +1576,7 @@ M2 起的功能單元   → 走 /specify → /clarify → /plan → /tasks → /
 
 - 架構決策變更時，同步更新 §2 決策摘要與對應章節
 - iMBrace 規格確認後，更新 §19 與 `IMBRACE_QUESTIONS.md`，並將對應 provider 從「待實作」改為「已實作」
-- 本文件同時是 Spec Kit 的憲法來源，變更會影響後續所有 feature 的 plan 生成
+- Spec Kit 的憲法來源是 `CONSTITUTION.md`（見其附錄 B.4），不是本文件；但本文件的決策變更常會連帶觸發修憲
 
 ### 推翻既有結論時的必要步驟
 

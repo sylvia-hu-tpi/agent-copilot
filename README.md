@@ -9,7 +9,7 @@ iMBrace 平台 Conversations 模組的即時客服輔助擴充。
 | 文件 | 用途 | 讀者 |
 |---|---|---|
 | [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) | **主開發指引**。完整架構、技術選型、資料流、目錄結構、AI 契約、階段切分與驗收標準，含所有平台實測結論 | 所有開發者，開工前必讀 |
-| [docs/CONSTITUTION.md](./docs/CONSTITUTION.md) | **不可違反的架構約束**（八條憲法）。寫 code 前必讀 | 所有開發者與 AI agent |
+| [docs/CONSTITUTION.md](./docs/CONSTITUTION.md) | **不可違反的架構約束**（九條憲法）。寫 code 前必讀，也是 Spec Kit 憲法的來源 | 所有開發者與 AI agent |
 | [docs/IMBRACE_QUESTIONS.md](./docs/IMBRACE_QUESTIONS.md) | 待向 iMBrace 團隊確認的規格清單，可直接轉貼。⚠️ 唯一會離開這個 repo 的文件 | 對接窗口 |
 | [docs/PLATFORM_CAPABILITY.md](./docs/PLATFORM_CAPABILITY.md) | 平台能力實測記錄 | 開發者 |
 | [docs/SDK_FINDINGS.md](./docs/SDK_FINDINGS.md) | SDK 實測記錄（型別與實際 API 的落差） | 開發者 |
