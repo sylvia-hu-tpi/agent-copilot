@@ -230,6 +230,64 @@ async function main(): Promise<void> {
     check('重連後的連線恢復即時推播，延遲仍在預算內',
       afterReconnect.at - resumedAt <= DELIVERY_BUDGET_MS,
       `實際 ${afterReconnect.at - resumedAt}ms`)
+
+    console.log('\n── ③ 情緒面板：分析中不阻擋訊息、多連線收斂、重連快照（specs/001-sentiment-panel）──')
+
+    // ① 分析仍在進行中（或尚未完成）時，送出訊息 MUST NOT 被阻擋或延遲（SC-002、FR-007）。
+    //    JOIN 當下已非同步觸發過一次冷啟動，這裡再送一則客戶訊息會觸發 debounce 後的增量分析——
+    //    重點不是等它跑完，而是驗證「送出訊息」這條路徑完全不等待面板分析。
+    const sendDuringAnalysisAt = Date.now()
+    gateway.pushMessage('con_1', '客戶：還有一個問題想問')
+    await send(a, 'A 的回覆：好的，請說', (await messagesOf(a)).lastMessageId)
+    const sendDuringAnalysisElapsed = Date.now() - sendDuringAnalysisAt
+    check(
+      '面板分析（冷啟動／增量）進行中，訊息送出仍立即成功、不被阻擋（SC-002）',
+      sendDuringAnalysisElapsed <= DELIVERY_BUDGET_MS,
+      `實際 ${sendDuringAnalysisElapsed}ms`,
+    )
+
+    // ② 兩條連線（A 原連線、B 重連後的連線）都在看同一個對話，觸發一次分析完成後
+    //    兩邊都應各自收到 summary.updated／sentiment.updated（事件收斂，plan.md Testing 承諾）。
+    const cursorA2 = streamA.cursor()
+    const cursorB2 = reconnectedB.cursor()
+    const triggeredAt = Date.now()
+    gateway.pushMessage('con_1', '客戶：訂單編號是 GW9981')
+
+    const isCopilotUpdate = (e: CopilotEvent) => e.type === 'summary.updated' || e.type === 'sentiment.updated'
+    // debounce 1 秒聚合 + MockAIProvider 近乎即時回應，給足餘裕
+    const copilotTimeoutMs = 8_000
+
+    const summaryA = await streamA.waitFor(isCopilotUpdate, { since: cursorA2, label: 'A 收到面板更新', timeoutMs: copilotTimeoutMs })
+    const summaryB = await reconnectedB.waitFor(isCopilotUpdate, { since: cursorB2, label: 'B 收到面板更新', timeoutMs: copilotTimeoutMs })
+    check(
+      '兩條連線都在合理時間內各自收到 summary.updated／sentiment.updated（事件收斂）',
+      summaryA.at - triggeredAt <= copilotTimeoutMs && summaryB.at - triggeredAt <= copilotTimeoutMs,
+      `A ${summaryA.at - triggeredAt}ms／B ${summaryB.at - triggeredAt}ms`,
+    )
+
+    // ③ FR-010：客服切回對話（重新連線＋watch）時，MUST 立即收到已保留的分析結果，
+    //    不必等待任何新客戶發言（不同於①②，這裡刻意不再 push 新訊息）——
+    //    這是 T010c 的重連快照，伺服端以 `void sendAnalysisSnapshotAndResume()`
+    //    非同步送出（不擋 attach() 本身），所以用 waitFor 而非同步檢查 received，
+    //    但仍斷言它在很短時間內就到，而非要等到下一次真正的分析事件。
+    reconnectedB.close()
+    await new Promise(r => setTimeout(r, 300))
+
+    const reconnectAt = Date.now()
+    const resumedStream = await watch(b, 'browser-b', false)
+    const snapshotSummary = await resumedStream.waitFor(
+      e => e.type === 'summary.updated',
+      { label: 'B 重連後立即收到 summary.updated 快照', timeoutMs: 2_000 },
+    )
+    const snapshotSentiment = await resumedStream.waitFor(
+      e => e.type === 'sentiment.updated',
+      { label: 'B 重連後立即收到 sentiment.updated 快照', timeoutMs: 2_000 },
+    )
+    check(
+      '重新連線並 watch 後，MUST 立即收到已保留的 summary.updated／sentiment.updated（FR-010，不必等新事件）',
+      snapshotSummary.at - reconnectAt <= 2_000 && snapshotSentiment.at - reconnectAt <= 2_000,
+      `summary ${snapshotSummary.at - reconnectAt}ms／sentiment ${snapshotSentiment.at - reconnectAt}ms`,
+    )
   }
   finally {
     await harness?.close()
