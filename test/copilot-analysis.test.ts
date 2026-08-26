@@ -407,3 +407,60 @@ describe('迴歸：newCustomerMessagesSince() 對已涵蓋的訊息去重（T010
     expect(result).toEqual([])
   })
 })
+
+describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-27，真實環境回報）', () => {
+  // 真實對話 16 則客戶發言，單次呼叫（不分批）實測延遲 12.7～29.9 秒，
+  // 遠超 FR-014 的 15 秒單次逾時——改成每批固定則數依序呼叫，見 copilot-analysis.ts
+  // SENTIMENT_CHUNK_SIZE 常數上方的說明。
+
+  it('客戶發言超過一批的則數時，AIProvider.analyzeSentiment() 被呼叫多次，每次都不超過批次大小', async () => {
+    const callSizes: number[] = []
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(input: { messages: Message[] }) {
+        callSizes.push(input.messages.length)
+        return super.analyzeSentiment(input)
+      }
+    })())
+
+    const id = convId('chunked')
+    // 9 則客戶發言：預期分成 6 + 3 兩批（SENTIMENT_CHUNK_SIZE = 6）
+    const history = Array.from({ length: 9 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 20 - i))
+    await runColdStart(id, history)
+
+    expect(callSizes).toEqual([6, 3])
+    expect(callSizes.every(n => n <= 6)).toBe(true)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.sentimentBlock.status).toBe('ready')
+    // 兩批的結果要正確合併成同一份完整 timeline，不因為分批而漏掉或重複
+    expect(state?.sentimentBlock.timeline).toHaveLength(9)
+    expect(new Set(state?.sentimentBlock.timeline.map(e => e.messageId)).size).toBe(9)
+  })
+
+  it('其中一批持續失敗時，整個情緒區塊轉為 error（不落地部分批次的結果）', async () => {
+    let call = 0
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(input: { messages: Message[] }) {
+        call++
+        // 第一批（6 則）成功，第二批（第 7～9 則）持續失敗
+        if (call > 1) throw new AIProviderHttpError('boom', 500)
+        return super.analyzeSentiment(input)
+      }
+    })())
+
+    const id = convId('chunked-partial-fail')
+    const history = Array.from({ length: 9 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 20 - i))
+
+    vi.useFakeTimers()
+    const promise = runColdStart(id, history)
+    await vi.runAllTimersAsync()
+    await promise
+    vi.useRealTimers()
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.sentimentBlock.status).toBe('error')
+    // 第一批已成功的 8 個點不落地——寧可整批視為失敗、之後手動重試整批重來，
+    // 也不留一份只算了一半的殘缺 timeline（見 copilot-analysis.ts 的設計取捨說明）
+    expect(state?.sentimentBlock.timeline).toHaveLength(0)
+  })
+})
