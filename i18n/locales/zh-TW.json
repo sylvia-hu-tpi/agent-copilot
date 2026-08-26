@@ -92,6 +92,49 @@
     "locked": "{name} 已強制介入此對話。",
     "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。"
   },
+  "copilot": {
+    "summary": {
+      "title": "摘要卡",
+      "empty": "尚無可分析內容",
+      "analyzing": "分析中…",
+      "updating": "更新中…",
+      "retrying": "重試中 ({attempt}/2)",
+      "error": "暫時無法分析",
+      "intent": "客戶意圖",
+      "keyFacts": "已知事實",
+      "attempted": "已嘗試處理",
+      "openIssues": "尚未解決",
+      "advice": "建議行動",
+      "riskFlags": {
+        "churn": "流失風險",
+        "escalation": "需要升級",
+        "compliance": "合規疑慮",
+        "vip": "VIP 客戶",
+        "repeat_contact": "重複聯絡"
+      }
+    },
+    "sentiment": {
+      "title": "情緒走勢",
+      "empty": "尚無可分析內容",
+      "analyzing": "分析中…",
+      "updating": "更新中…",
+      "retrying": "重試中 ({attempt}/2)",
+      "error": "暫時無法分析",
+      "attachmentMarker": "客戶傳送附件",
+      "label": {
+        "calm": "平靜",
+        "neutral": "普通",
+        "concerned": "擔憂",
+        "frustrated": "挫折",
+        "angry": "生氣"
+      },
+      "alert": {
+        "frustrated": "客戶情緒：挫折",
+        "angry": "客戶情緒：生氣"
+      }
+    },
+    "retry": "重新分析"
+  },
   "collision": {
     "title": "有人搶先回覆了",
     "byAgent": "{name} 已經回覆過客戶，你的內容可能重複。",

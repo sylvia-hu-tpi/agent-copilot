@@ -29,7 +29,7 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 **Purpose**：確認基準狀態，本功能不需新增任何 npm 依賴（plan.md：情緒 sparkline 手刻 SVG，不引圖表庫；其餘皆沿用既有 Nuxt/Vue/Pinia/Zod/Vitest 技術棧）。
 
-- [ ] T001 於分支 `001-sentiment-panel` 執行 `npm run typecheck && npm test`，確認基準全綠後再開始（無程式碼變更）
+- [x] T001 於分支 `001-sentiment-panel` 執行 `npm run typecheck && npm test`，確認基準全綠後再開始（無程式碼變更）
 
 ---
 
@@ -39,17 +39,17 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 **⚠️ CRITICAL**：本階段完成前不得開始任何使用者故事的任務
 
-- [ ] T002 於 `shared/types/copilot.ts`（新檔）定義 `AnalysisBlockStatus`、`ConversationSummary`、`SentimentPoint`、`SentimentMarker`、`SentimentTimelineEntry`、`SummaryBlock`、`SentimentBlock`、`isSentimentAlert()`、`isSentimentAlerting()`（2026-08-26 新增，FR-003 示警解除遲滯規則，見 data-model.md）、`AIProvider` 介面（`summarize`、`analyzeSentiment`），依 [data-model.md](./data-model.md) 逐一落地
-- [ ] T003 於 `shared/types/events.ts` 的 `CopilotEvent` 聯集新增 `summary.updated` 與 `sentiment.updated` 兩個成員，依 [contracts/copilot-sse-events.md](./contracts/copilot-sse-events.md)（依賴 T002）
-- [ ] T004 於 `server/state/types.ts` 新增 `CopilotAnalysisState` 介面（`conversationId`、`summaryBlock: SummaryBlock`、`sentimentBlock: SentimentBlock`、`lastAnalysisTriggerAt?: number`）與 `StateStore.getAnalysisState()`／`setAnalysisState(s, ttlMs)` 方法宣告；**不修改既有 `CopilotSession` 介面**——兩者生命週期各自獨立，見 data-model.md「2026-08-26 訂正」（依賴 T002）
-- [ ] T004b 於 `server/state/memory-store.ts` 實作 `getAnalysisState`／`setAnalysisState`：比照既有 `presence` 的 `Expiring<T>` 雙軌淘汰模式（讀取時惰性淘汰＋定期掃除），sliding TTL 2 小時，每次讀寫皆續期（依賴 T004）
-- [ ] ~~T005~~ **已併入 T010**（2026-08-26 訂正）：原「於 `upsertSession()` 初始化 `summaryBlock`／`sentimentBlock`」不再適用——那是 `CopilotSession`（輪詢／去重用途）的建立點，與分析狀態的建立時機（首次有可分析內容時）不同，混在一起會讓兩者生命週期重新耦合。初始化邏輯改寫入 T010 的 `runColdStart()` 首段（見下方 T010 新增的步驟 ⓪）
-- [ ] T006 [P] 於 `server/services/ai/retry-policy.ts`（新檔）實作 `classifyFailure(error): 'transient' | 'rate-limited' | 'permanent'` 與 `withRetry(fn, opts)`：僅 `'transient'` 進入重試迴圈（退避 1s → 4s、至多 2 次、單次呼叫逾時 15 秒、自首次失敗起算總預算 40 秒）；`'rate-limited'`（429）與 `'permanent'` 皆 0 次重試直接轉 `error`。`withRetry()` 的進度回呼／回傳值 MUST 附帶首次失敗的時間戳，供呼叫端（T010）寫入 `SummaryBlock.firstFailureAt`／`SentimentBlock.firstFailureAt`（2026-08-26 新增，CHK036，供前端／測試驗證 40 秒預算是否過期）。數值以 spec.md FR-014 為唯一權威來源，依 [research.md](./research.md) #2
-- [ ] T007 [P] 於 `server/services/ai/mock-ai-provider.ts`（新檔）實作 `MockAIProvider`（`summarize`、`analyzeSentiment` 回傳固定樣本資料，並支援測試用的失敗開關），依 `ARCHITECTURE.md` §8.2b（依賴 T002）
-- [ ] T008 [P] 於 `server/services/ai/schemas.ts`（新檔）以 Zod 定義 `ConversationSummary`／`SentimentPoint` 的驗證 schema（憲法 4.2），依 [data-model.md](./data-model.md)「驗證規則」（依賴 T002）
-- [ ] T009 於 `server/services/ai/index.ts`（新檔）實作 `useAIProvider()` 裝配點，回傳 `MockAIProvider` 實例（比照 `KnowledgeProvider` 裝配模式，憲法 2.1／2.2）（依賴 T006、T007）
-- [ ] T010 於 `server/services/copilot-analysis.ts`（新檔）實作核心分析協調：`runColdStart(conversationId, history)` 與 `runIncremental(conversationId, previousSummary, newCustomerMessages)`，內部共用邏輯依序為：⓪ 若該對話尚無 `CopilotAnalysisState`（`getAnalysisState()` 回 `null`），先初始化 `summaryBlock`／`sentimentBlock` 為 `{ status: 'empty', ... }` 並寫入（原 T005，已併入本任務，見上）① **（2026-08-26 新增，由 `/speckit-analyze` 發現缺口）** 在呼叫 `AIProvider` 之前，先將本次要重算的區塊（摘要／情緒各自獨立判斷）`status` 設為 `'analyzing'`（若原本是 `'ready'`，依 data-model.md「呈現規則」保留舊內容不清空）、寫回 `CopilotAnalysisState`，並立即 `publish` 對應的 `summary.updated`／`sentiment.updated` 事件——此步驟 MUST 先於下方②的 AI 呼叫執行且不等待其完成，否則 SC-001「90% 情況 3 秒內看到分析中」與 FR-011「MUST NOT 等到全部內容就緒才顯示區塊」在 AI 呼叫耗時 5～12.2 秒（`ARCHITECTURE.md` §17）的情況下無法成立，也會與 [contracts/copilot-sse-events.md](./contracts/copilot-sse-events.md) 明訂的「`analyzing` 事件立即送出（先於分析完成）」矛盾 ② 過濾純附件（無文字）客戶發言為 `SentimentMarker`（FR-002、FR-012，不送模型；判別依據為 `Message.text === ''`——⚠️ 此判別式僅在本功能範圍內成立，見 data-model.md SentimentMarker 驗證規則的 M3 附註，M3 實作附件文字化時 MUST 重新檢查）③ 經 `withRetry()` 呼叫 `AIProvider` ④ 經 T008 的 Zod schema 驗證輸出（憲法 4.2）⑤ 依全量 `timeline`（不受最近 50 點顯示上限影響）重新計算 `sentimentBlock.stats.lowestScore`／`lowestAt`（FR-015，避免統計值只涵蓋近期畫面範圍而安靜算錯）⑥ 寫回 `CopilotAnalysisState`（`setAnalysisState()`，依賴 T004、T004b；**不是** `CopilotSession`，兩者是不同物件，見 data-model.md「2026-08-26 訂正」）；轉為 `retrying`／`error` 時寫入 `withRetry()`（T006）回報的 `firstFailureAt`，轉為 `ready` 時清空該欄位（2026-08-26 新增，CHK036）⑦ 透過 `useEventBus().publish(conversationTopic(id), ...)` 送出最終結果的 `summary.updated`／`sentiment.updated`（依賴 T003）；錯誤記錄僅留 `conversationId` 與失敗分類，不得輸出訊息全文或 `drivers`（憲法 1.5，research.md #6）（依賴 T004、T004b、T006、T007、T008、T009）
-- [ ] T010c **（2026-08-26 新增，由 `/speckit-analyze` 發現 FR-010 缺口）** 於 `server/api/stream.get.ts` 的 `attach()` 補上摘要／情緒的重連快照：比照既有『watch 一個對話時立刻送一次 `control.updated`／`presence.updated` 目前狀態，不必等下一次變動』的模式（見該函式現有註解），若 `getAnalysisState(conversationId)` 非 `null`，立即 `send()` 目前的 `summary.updated`／`sentiment.updated`——這是 FR-010「客服切回對話時，系統 MUST 立即顯示已保留的結果」唯一的送達路徑：資料雖已獨立存在 `CopilotAnalysisState`（T004、T004b）不受客服切走影響，但目前設計是純 SSE 推播、只在狀態變動時發事件，若離開期間沒有新客戶發言就不會有任何事件，重新連線的前端會永遠拿不到已保留的結果。送出快照後，比對 `summaryBlock.summary.basedOnMessageId`／`sentimentBlock.timeline` 已涵蓋的訊息與該對話目前最新的客戶訊息，若離開期間累積了新的客戶發言，非同步觸發一次 `runIncremental()` 補跑（沿用 T010 既有路徑，不另開分支），補跑期間該區塊依 T010 步驟①轉為 `analyzing` 並保留舊內容（FR-010「補跑期間 MUST 明確標示內容正在更新」）；此次補跑視同一次全新的 `runIncremental()` 呼叫，擁有自己獨立的一份 FR-014 重試預算（最多 2 次、40 秒），不延續、不合併離開前尚未用完的重試次數（2026-08-26 定案 CHK034，維持實作簡單，不需跨『離開期間』持久化重試計數）（依賴 T003、T004b、T010）
+- [x] T002 於 `shared/types/copilot.ts`（新檔）定義 `AnalysisBlockStatus`、`ConversationSummary`、`SentimentPoint`、`SentimentMarker`、`SentimentTimelineEntry`、`SummaryBlock`、`SentimentBlock`、`isSentimentAlert()`、`isSentimentAlerting()`（2026-08-26 新增，FR-003 示警解除遲滯規則，見 data-model.md）、`AIProvider` 介面（`summarize`、`analyzeSentiment`），依 [data-model.md](./data-model.md) 逐一落地
+- [x] T003 於 `shared/types/events.ts` 的 `CopilotEvent` 聯集新增 `summary.updated` 與 `sentiment.updated` 兩個成員，依 [contracts/copilot-sse-events.md](./contracts/copilot-sse-events.md)（依賴 T002）
+- [x] T004 於 `server/state/types.ts` 新增 `CopilotAnalysisState` 介面（`conversationId`、`summaryBlock: SummaryBlock`、`sentimentBlock: SentimentBlock`、`lastAnalysisTriggerAt?: number`）與 `StateStore.getAnalysisState()`／`setAnalysisState(s, ttlMs)` 方法宣告；**不修改既有 `CopilotSession` 介面**——兩者生命週期各自獨立，見 data-model.md「2026-08-26 訂正」（依賴 T002）
+- [x] T004b 於 `server/state/memory-store.ts` 實作 `getAnalysisState`／`setAnalysisState`：比照既有 `presence` 的 `Expiring<T>` 雙軌淘汰模式（讀取時惰性淘汰＋定期掃除），sliding TTL 2 小時，每次讀寫皆續期（依賴 T004）
+- [x] ~~T005~~ **已併入 T010**（2026-08-26 訂正）：原「於 `upsertSession()` 初始化 `summaryBlock`／`sentimentBlock`」不再適用——那是 `CopilotSession`（輪詢／去重用途）的建立點，與分析狀態的建立時機（首次有可分析內容時）不同，混在一起會讓兩者生命週期重新耦合。初始化邏輯改寫入 T010 的 `runColdStart()` 首段（見下方 T010 新增的步驟 ⓪）
+- [x] T006 [P] 於 `server/services/ai/retry-policy.ts`（新檔）實作 `classifyFailure(error): 'transient' | 'rate-limited' | 'permanent'` 與 `withRetry(fn, opts)`：僅 `'transient'` 進入重試迴圈（退避 1s → 4s、至多 2 次、單次呼叫逾時 15 秒、自首次失敗起算總預算 40 秒）；`'rate-limited'`（429）與 `'permanent'` 皆 0 次重試直接轉 `error`。`withRetry()` 的進度回呼／回傳值 MUST 附帶首次失敗的時間戳，供呼叫端（T010）寫入 `SummaryBlock.firstFailureAt`／`SentimentBlock.firstFailureAt`（2026-08-26 新增，CHK036，供前端／測試驗證 40 秒預算是否過期）。數值以 spec.md FR-014 為唯一權威來源，依 [research.md](./research.md) #2
+- [x] T007 [P] 於 `server/services/ai/mock-ai-provider.ts`（新檔）實作 `MockAIProvider`（`summarize`、`analyzeSentiment` 回傳固定樣本資料，並支援測試用的失敗開關），依 `ARCHITECTURE.md` §8.2b（依賴 T002）
+- [x] T008 [P] 於 `server/services/ai/schemas.ts`（新檔）以 Zod 定義 `ConversationSummary`／`SentimentPoint` 的驗證 schema（憲法 4.2），依 [data-model.md](./data-model.md)「驗證規則」（依賴 T002）
+- [x] T009 於 `server/services/ai/index.ts`（新檔）實作 `useAIProvider()` 裝配點，回傳 `MockAIProvider` 實例（比照 `KnowledgeProvider` 裝配模式，憲法 2.1／2.2）（依賴 T006、T007）
+- [x] T010 於 `server/services/copilot-analysis.ts`（新檔）實作核心分析協調：`runColdStart(conversationId, history)` 與 `runIncremental(conversationId, previousSummary, newCustomerMessages)`，內部共用邏輯依序為：⓪ 若該對話尚無 `CopilotAnalysisState`（`getAnalysisState()` 回 `null`），先初始化 `summaryBlock`／`sentimentBlock` 為 `{ status: 'empty', ... }` 並寫入（原 T005，已併入本任務，見上）① **（2026-08-26 新增，由 `/speckit-analyze` 發現缺口）** 在呼叫 `AIProvider` 之前，先將本次要重算的區塊（摘要／情緒各自獨立判斷）`status` 設為 `'analyzing'`（若原本是 `'ready'`，依 data-model.md「呈現規則」保留舊內容不清空）、寫回 `CopilotAnalysisState`，並立即 `publish` 對應的 `summary.updated`／`sentiment.updated` 事件——此步驟 MUST 先於下方②的 AI 呼叫執行且不等待其完成，否則 SC-001「90% 情況 3 秒內看到分析中」與 FR-011「MUST NOT 等到全部內容就緒才顯示區塊」在 AI 呼叫耗時 5～12.2 秒（`ARCHITECTURE.md` §17）的情況下無法成立，也會與 [contracts/copilot-sse-events.md](./contracts/copilot-sse-events.md) 明訂的「`analyzing` 事件立即送出（先於分析完成）」矛盾 ② 過濾純附件（無文字）客戶發言為 `SentimentMarker`（FR-002、FR-012，不送模型；判別依據為 `Message.text === ''`——⚠️ 此判別式僅在本功能範圍內成立，見 data-model.md SentimentMarker 驗證規則的 M3 附註，M3 實作附件文字化時 MUST 重新檢查）③ 經 `withRetry()` 呼叫 `AIProvider` ④ 經 T008 的 Zod schema 驗證輸出（憲法 4.2）⑤ 依全量 `timeline`（不受最近 50 點顯示上限影響）重新計算 `sentimentBlock.stats.lowestScore`／`lowestAt`（FR-015，避免統計值只涵蓋近期畫面範圍而安靜算錯）⑥ 寫回 `CopilotAnalysisState`（`setAnalysisState()`，依賴 T004、T004b；**不是** `CopilotSession`，兩者是不同物件，見 data-model.md「2026-08-26 訂正」）；轉為 `retrying`／`error` 時寫入 `withRetry()`（T006）回報的 `firstFailureAt`，轉為 `ready` 時清空該欄位（2026-08-26 新增，CHK036）⑦ 透過 `useEventBus().publish(conversationTopic(id), ...)` 送出最終結果的 `summary.updated`／`sentiment.updated`（依賴 T003）；錯誤記錄僅留 `conversationId` 與失敗分類，不得輸出訊息全文或 `drivers`（憲法 1.5，research.md #6）（依賴 T004、T004b、T006、T007、T008、T009）
+- [x] T010c **（2026-08-26 新增，由 `/speckit-analyze` 發現 FR-010 缺口）** 於 `server/api/stream.get.ts` 的 `attach()` 補上摘要／情緒的重連快照：比照既有『watch 一個對話時立刻送一次 `control.updated`／`presence.updated` 目前狀態，不必等下一次變動』的模式（見該函式現有註解），若 `getAnalysisState(conversationId)` 非 `null`，立即 `send()` 目前的 `summary.updated`／`sentiment.updated`——這是 FR-010「客服切回對話時，系統 MUST 立即顯示已保留的結果」唯一的送達路徑：資料雖已獨立存在 `CopilotAnalysisState`（T004、T004b）不受客服切走影響，但目前設計是純 SSE 推播、只在狀態變動時發事件，若離開期間沒有新客戶發言就不會有任何事件，重新連線的前端會永遠拿不到已保留的結果。送出快照後，比對 `summaryBlock.summary.basedOnMessageId`／`sentimentBlock.timeline` 已涵蓋的訊息與該對話目前最新的客戶訊息，若離開期間累積了新的客戶發言，非同步觸發一次 `runIncremental()` 補跑（沿用 T010 既有路徑，不另開分支），補跑期間該區塊依 T010 步驟①轉為 `analyzing` 並保留舊內容（FR-010「補跑期間 MUST 明確標示內容正在更新」）；此次補跑視同一次全新的 `runIncremental()` 呼叫，擁有自己獨立的一份 FR-014 重試預算（最多 2 次、40 秒），不延續、不合併離開前尚未用完的重試次數（2026-08-26 定案 CHK034，維持實作簡單，不需跨『離開期間』持久化重試計數）（依賴 T003、T004b、T010）
 
 **Checkpoint**：型別、狀態擴充、AIProvider 裝配、分析管線骨架、重連快照就緒，可平行展開三個使用者故事
 
@@ -65,16 +65,16 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 > **先寫測試，確認失敗後才開始實作**
 
-- [ ] T011 [P] [US1] 於 `test/sentiment-attachment-turn.test.ts`（新檔）驗證：純附件（無文字）客戶發言 MUST NOT 產生 `SentimentPoint`、MUST 產生 `SentimentMarker` 並出現在 `timeline` 中不消失、`SentimentMarker` 不參與示警判定（FR-002、FR-012，對應 `copilot-analysis.ts` 的過濾邏輯）
-- [ ] T012 [P] [US1] 於 `test/copilot-analysis.test.ts`（新檔）驗證：`runColdStart()` 送給 `AIProvider.summarize()`／`analyzeSentiment()` 的輸入涵蓋完整對話歷史、無客戶發言時兩區塊狀態為 `'empty'`、AI 輸出格式不符 Zod schema 時該次分析轉為 `error` 狀態而非讓格式外資料進入系統（憲法 4.2，FR-001、FR-002、FR-009）；**（2026-08-26 新增）** 以 mock `AIProvider` 刻意延遲回應，斷言 `summary.updated`／`sentiment.updated` 的 `status: 'analyzing'` 事件在 `AIProvider.summarize()`／`analyzeSentiment()` 的 Promise resolve **之前**已發布（對應 T010 步驟①、FR-011、SC-001）
+- [x] T011 [P] [US1] 於 `test/sentiment-attachment-turn.test.ts`（新檔）驗證：純附件（無文字）客戶發言 MUST NOT 產生 `SentimentPoint`、MUST 產生 `SentimentMarker` 並出現在 `timeline` 中不消失、`SentimentMarker` 不參與示警判定（FR-002、FR-012，對應 `copilot-analysis.ts` 的過濾邏輯）
+- [x] T012 [P] [US1] 於 `test/copilot-analysis.test.ts`（新檔）驗證：`runColdStart()` 送給 `AIProvider.summarize()`／`analyzeSentiment()` 的輸入涵蓋完整對話歷史、無客戶發言時兩區塊狀態為 `'empty'`、AI 輸出格式不符 Zod schema 時該次分析轉為 `error` 狀態而非讓格式外資料進入系統（憲法 4.2，FR-001、FR-002、FR-009）；**（2026-08-26 新增）** 以 mock `AIProvider` 刻意延遲回應，斷言 `summary.updated`／`sentiment.updated` 的 `status: 'analyzing'` 事件在 `AIProvider.summarize()`／`analyzeSentiment()` 的 Promise resolve **之前**已發布（對應 T010 步驟①、FR-011、SC-001）
 
 ### Implementation for User Story 1
 
-- [ ] T013 [P] [US1] 於 `server/api/conversations/[id]/join.post.ts` 的 JOIN 成功後，若該對話尚無 `CopilotAnalysisState` 或其 `summaryBlock`／`sentimentBlock` 仍為 `'empty'`，以 `fetchLatest()`（`server/sources/message-fetch.ts`）取得歷史並非同步觸發 `runColdStart()`（T010），不等待其完成才回應（依賴 T010）
-- [ ] T014 [P] [US1] 於 `app/composables/useCopilotSession.ts`（新檔）實作 composable：訂閱 `useStreamStore()`（`app/stores/stream.ts`）解析出的 `CopilotEvent`，過濾 `summary.updated`／`sentiment.updated` 且 `conversationId` 相符者，暴露 reactive 的 `summary: Ref<SummaryBlock>`、`sentiment: Ref<SentimentBlock>`（依賴 T003）
-- [ ] T015 [P] [US1] 於 `app/components/copilot/SummaryCard.vue`（新檔）依 `SummaryBlock.status` 呈現 `empty`／`analyzing`／`ready` 三種狀態，`ready` 時顯示 `intent`／`keyFacts`／`attempted`／`openIssues`（FR-001、FR-009、FR-011 漸進呈現），並顯示 `riskFlags`（風險徽章列，`riskFlags` 為空陣列時不顯示徽章列本身，而非顯示空的徽章列容器）與 `advice`（一句話行動建議文字區塊）——2026-08-26 訂正：`ConversationSummary` 型別已含這兩個欄位（`data-model.md`），本次確認納入 UI 呈現範圍（FR-001）
-- [ ] T016 [P] [US1] 於 `app/components/copilot/SentimentGauge.vue`（新檔）依 `ARCHITECTURE.md` §14.5 手刻 SVG polyline 繪製 `timeline` 中最近 50 個 `SentimentPoint`（FR-015），`SentimentMarker` 於時間軸上以可辨識中性圖示呈現（FR-012），依 `SentimentBlock.status` 呈現 `empty`／`analyzing`／`ready` 三種狀態
-- [ ] T017 [US1] 於 `app/pages/c/[conversationId].vue` 掛載 `useCopilotSession` 並將 `SummaryCard`／`SentimentGauge` 置入右欄（依賴 T014、T015、T016）
+- [x] T013 [P] [US1] 於 `server/api/conversations/[id]/join.post.ts` 的 JOIN 成功後，若該對話尚無 `CopilotAnalysisState` 或其 `summaryBlock`／`sentimentBlock` 仍為 `'empty'`，以 `fetchLatest()`（`server/sources/message-fetch.ts`）取得歷史並非同步觸發 `runColdStart()`（T010），不等待其完成才回應（依賴 T010）
+- [x] T014 [P] [US1] 於 `app/composables/useCopilotSession.ts`（新檔）實作 composable：訂閱 `useStreamStore()`（`app/stores/stream.ts`）解析出的 `CopilotEvent`，過濾 `summary.updated`／`sentiment.updated` 且 `conversationId` 相符者，暴露 reactive 的 `summary: Ref<SummaryBlock>`、`sentiment: Ref<SentimentBlock>`（依賴 T003）
+- [x] T015 [P] [US1] 於 `app/components/copilot/SummaryCard.vue`（新檔）依 `SummaryBlock.status` 呈現 `empty`／`analyzing`／`ready` 三種狀態，`ready` 時顯示 `intent`／`keyFacts`／`attempted`／`openIssues`（FR-001、FR-009、FR-011 漸進呈現），並顯示 `riskFlags`（風險徽章列，`riskFlags` 為空陣列時不顯示徽章列本身，而非顯示空的徽章列容器）與 `advice`（一句話行動建議文字區塊）——2026-08-26 訂正：`ConversationSummary` 型別已含這兩個欄位（`data-model.md`），本次確認納入 UI 呈現範圍（FR-001）
+- [x] T016 [P] [US1] 於 `app/components/copilot/SentimentGauge.vue`（新檔）依 `ARCHITECTURE.md` §14.5 手刻 SVG polyline 繪製 `timeline` 中最近 50 個 `SentimentPoint`（FR-015），`SentimentMarker` 於時間軸上以可辨識中性圖示呈現（FR-012），依 `SentimentBlock.status` 呈現 `empty`／`analyzing`／`ready` 三種狀態
+- [x] T017 [US1] 於 `app/pages/c/[conversationId].vue` 掛載 `useCopilotSession` 並將 `SummaryCard`／`SentimentGauge` 置入右欄（依賴 T014、T015、T016）
 
 **Checkpoint**：User Story 1 可獨立測試——JOIN 對話後面板正確顯示歷史摘要與情緒走勢
 
@@ -88,12 +88,12 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T018 [US2] 擴充 `test/copilot-analysis.test.ts`：驗證 `runIncremental()` 的模型輸入僅含既有摘要與新增客戶訊息、MUST NOT 含完整歷史（FR-004）；新增 1 秒 debounce 聚合多筆客戶發言為單次分析；客服（`sender.type === 'agent'`）送出的訊息不觸發 `runIncremental()`（FR-005）；**（2026-08-26 新增）** `ready → analyzing` 的轉移比照 T012，斷言 `analyzing` 事件於呼叫 `AIProvider` 前已發布，且前端可據此於補跑期間疊加「更新中」提示而不清空舊內容（data-model.md「呈現規則」）；**（2026-08-26 新增）** 直接單元測試 `isSentimentAlerting(timeline)`（T002）的遲滯規則：`[...,'frustrated']` → `true`；`[...,'frustrated','neutral']` → `false`；`[...,'frustrated','concerned']` → 仍為 `true`（未回到 calm／neutral 前不解除，FR-003 2026-08-26 修訂）；`SentimentMarker` 混雜在 timeline 中不影響判定（依賴 T012 既有測試基底）
+- [x] T018 [US2] 擴充 `test/copilot-analysis.test.ts`：驗證 `runIncremental()` 的模型輸入僅含既有摘要與新增客戶訊息、MUST NOT 含完整歷史（FR-004）；新增 1 秒 debounce 聚合多筆客戶發言為單次分析；客服（`sender.type === 'agent'`）送出的訊息不觸發 `runIncremental()`（FR-005）；**（2026-08-26 新增）** `ready → analyzing` 的轉移比照 T012，斷言 `analyzing` 事件於呼叫 `AIProvider` 前已發布，且前端可據此於補跑期間疊加「更新中」提示而不清空舊內容（data-model.md「呈現規則」）；**（2026-08-26 新增）** 直接單元測試 `isSentimentAlerting(timeline)`（T002）的遲滯規則：`[...,'frustrated']` → `true`；`[...,'frustrated','neutral']` → `false`；`[...,'frustrated','concerned']` → 仍為 `true`（未回到 calm／neutral 前不解除，FR-003 2026-08-26 修訂）；`SentimentMarker` 混雜在 timeline 中不影響判定（依賴 T012 既有測試基底）
 
 ### Implementation for User Story 2
 
-- [ ] T019 [US2] 於 `server/services/session-manager.ts` 的 `onMessages()` 內，過濾 `messages` 中 `sender.type === 'customer'` 者，以 `conversationId` 為鍵 debounce 1 秒（`ARCHITECTURE.md` §11.1）後呼叫 `runIncremental()`（T010），無客戶發言時不觸發（依賴 T010、T018）
-- [ ] T020 [P] [US2] 於 `app/components/copilot/SentimentGauge.vue` 依 `isSentimentAlerting(timeline)`（T002，2026-08-26 修訂——**不是**只看最新一點的 `isSentimentAlert(label)`，那會被批次中一則語氣稍緩的訊息誤導清除示警）判斷本次是否示警，以顏色＋圖示＋文字標籤三者並呈方式主動示警（FR-003、憲法 8.1，依賴 T016）；示警文字標籤加 `aria-live="polite"`，顏色對比符合 WCAG AA 4.5:1；解除示警需最新一筆評分點回升至「擔憂」以下（`isSentimentAlerting()` 已內建此遲滯規則），歷史評分點的標記不受影響（FR-003 2026-08-26 修訂）。**動工前 MUST 先核對 Claude Design 畫布上 `CopilotPanel` 元件的現行版本**（不得只憑 `DESIGN_TOKENS.md` §7.2 的肉眼讀圖描述），確認具體圖示、文案措辭、示警呈現在單點或區塊層級；若畫布內容與 `DESIGN_TOKENS.md` 描述或本任務假設有落差，MUST 先與相關人員釐清再動工（見 spec.md FR-003 2026-08-26 修訂、Notes 一節）
+- [x] T019 [US2] 於 `server/services/session-manager.ts` 的 `onMessages()` 內，過濾 `messages` 中 `sender.type === 'customer'` 者，以 `conversationId` 為鍵 debounce 1 秒（`ARCHITECTURE.md` §11.1）後呼叫 `runIncremental()`（T010），無客戶發言時不觸發（依賴 T010、T018）
+- [x] T020 [P] [US2] 於 `app/components/copilot/SentimentGauge.vue` 依 `isSentimentAlerting(timeline)`（T002，2026-08-26 修訂——**不是**只看最新一點的 `isSentimentAlert(label)`，那會被批次中一則語氣稍緩的訊息誤導清除示警）判斷本次是否示警，以顏色＋圖示＋文字標籤三者並呈方式主動示警（FR-003、憲法 8.1，依賴 T016）；示警文字標籤加 `aria-live="polite"`，顏色對比符合 WCAG AA 4.5:1；解除示警需最新一筆評分點回升至「擔憂」以下（`isSentimentAlerting()` 已內建此遲滯規則），歷史評分點的標記不受影響（FR-003 2026-08-26 修訂）。**動工前 MUST 先核對 Claude Design 畫布上 `CopilotPanel` 元件的現行版本**（不得只憑 `DESIGN_TOKENS.md` §7.2 的肉眼讀圖描述），確認具體圖示、文案措辭、示警呈現在單點或區塊層級；若畫布內容與 `DESIGN_TOKENS.md` 描述或本任務假設有落差，MUST 先與相關人員釐清再動工（見 spec.md FR-003 2026-08-26 修訂、Notes 一節）
 
 **Checkpoint**：User Story 1 與 2 皆可獨立運作——新訊息即時更新面板，且未觸發不必要的全量重算
 
@@ -107,16 +107,16 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T021 [P] [US3] 於 `test/ai-retry-policy.test.ts`（新檔）以假時鐘（`vi.useFakeTimers()`）驗證 `classifyFailure()`：單次呼叫逾時／5xx → `'transient'`；429 → `'rate-limited'`；401／請求無效／Zod 驗證失敗／未列舉錯誤 → `'permanent'`。並驗證 `withRetry()`：`'transient'` 走 1s → 4s 兩次重試、`'rate-limited'` 與 `'permanent'` 皆 0 次重試、單次呼叫逾 15 秒視為失敗、自首次失敗起算逾 40 秒預算即停止轉 `error`、`retryAttempt` 正確回報（FR-014）
-- [ ] T022 [P] [US3] 擴充 `test/copilot-analysis.test.ts`：驗證 `summaryBlock` 分析失敗不影響 `sentimentBlock`（反之亦然）、狀態依序轉移 `analyzing → retrying → error`、`error` 狀態下透過重試進入點可重新觸發該區塊且不影響另一區塊已顯示內容（FR-006、FR-008）
+- [x] T021 [P] [US3] 於 `test/ai-retry-policy.test.ts`（新檔）以假時鐘（`vi.useFakeTimers()`）驗證 `classifyFailure()`：單次呼叫逾時／5xx → `'transient'`；429 → `'rate-limited'`；401／請求無效／Zod 驗證失敗／未列舉錯誤 → `'permanent'`。並驗證 `withRetry()`：`'transient'` 走 1s → 4s 兩次重試、`'rate-limited'` 與 `'permanent'` 皆 0 次重試、單次呼叫逾 15 秒視為失敗、自首次失敗起算逾 40 秒預算即停止轉 `error`、`retryAttempt` 正確回報（FR-014）
+- [x] T022 [P] [US3] 擴充 `test/copilot-analysis.test.ts`：驗證 `summaryBlock` 分析失敗不影響 `sentimentBlock`（反之亦然）、狀態依序轉移 `analyzing → retrying → error`、`error` 狀態下透過重試進入點可重新觸發該區塊且不影響另一區塊已顯示內容（FR-006、FR-008）
 
 ### Implementation for User Story 3
 
-- [ ] T023 [US3] 於 `server/api/conversations/[id]/copilot/retry.post.ts`（新檔）依 [contracts/copilot-retry-api.md](./contracts/copilot-retry-api.md) 實作：驗證 `block ∈ {'summary','sentiment'}`、目標區塊非 `'error'` 時回 409、否則非同步觸發對應區塊重新分析並回 202（依賴 T010）
-- [ ] T024 [US3] 於 `app/composables/useCopilotSession.ts` 新增 `retry(block: 'summary' | 'sentiment')` 方法，呼叫 T023 端點（依賴 T014、T023）
-- [ ] T025 [P] [US3] 於 `app/components/copilot/SummaryCard.vue` 新增 `error` 狀態的錯誤訊息與可鍵盤操作的重試按鈕（憲法 8.2），以及 `retrying` 狀態的「重試中 (n/2)」進度顯示（不需額外倒數秒數，2026-08-26 定案 CHK030）——FR-014 的進度可視要求對兩個區塊同等適用，不得只有 `SentimentGauge`（T026）有；`analyzing`／`retrying` 期間重試按鈕 MUST 維持可見但停用（`disabled`，非隱藏——2026-08-26 定案 CHK033），不額外加冷卻節流（既有 409 已足夠防止重疊觸發，2026-08-26 定案 CHK032）；呼叫 `retry('summary')`（依賴 T015、T024）
-- [ ] T026 [P] [US3] 於 `app/components/copilot/SentimentGauge.vue` 新增 `error` 狀態的錯誤訊息與可鍵盤操作的重試按鈕，`retrying` 狀態顯示「重試中 (n/2)」進度（FR-014）；`analyzing`／`retrying` 期間重試按鈕 MUST 維持可見但停用、不額外加冷卻節流（同 T025，2026-08-26 定案 CHK032／CHK033）；呼叫 `retry('sentiment')`（依賴 T016、T024）
-- [ ] T027 [US3] 擴充 `test/realtime-http.ts` 的驗收情境，涵蓋三類斷言（2026-08-26 訂正：原描述僅涵蓋第一類，plan.md Testing 一節承諾的 `summary.updated`／`sentiment.updated` 事件收斂缺任務落實；2026-08-26 再訂正：新增第③類，`/speckit-analyze` 發現 FR-010 重連快照缺測試覆蓋）：① 模擬摘要／情緒分析故障或重試進行中時，斷言送出訊息（`POST /api/messages`）仍成功且不被延遲阻擋（SC-002）；② 兩位客服同時開啟 SSE 連線 JOIN 同一對話，觸發一次分析完成，斷言兩條連線皆在合理時間內各自收到對應的 `summary.updated`／`sentiment.updated` 事件（事件收斂，對應 plan.md Testing 承諾）；③ 客服 JOIN 對話並等到分析完成為 `ready` 後斷開 SSE 連線（unwatch），期間不產生新客戶訊息，重新建立連線並 watch 同一對話，斷言**立即**（不必等待任何新事件）收到一次涵蓋既有結果的 `summary.updated`／`sentiment.updated`（FR-010，對應 T010c）（依賴 T010、T010c、T019、T023）
+- [x] T023 [US3] 於 `server/api/conversations/[id]/copilot/retry.post.ts`（新檔）依 [contracts/copilot-retry-api.md](./contracts/copilot-retry-api.md) 實作：驗證 `block ∈ {'summary','sentiment'}`、目標區塊非 `'error'` 時回 409、否則非同步觸發對應區塊重新分析並回 202（依賴 T010）
+- [x] T024 [US3] 於 `app/composables/useCopilotSession.ts` 新增 `retry(block: 'summary' | 'sentiment')` 方法，呼叫 T023 端點（依賴 T014、T023）
+- [x] T025 [P] [US3] 於 `app/components/copilot/SummaryCard.vue` 新增 `error` 狀態的錯誤訊息與可鍵盤操作的重試按鈕（憲法 8.2），以及 `retrying` 狀態的「重試中 (n/2)」進度顯示（不需額外倒數秒數，2026-08-26 定案 CHK030）——FR-014 的進度可視要求對兩個區塊同等適用，不得只有 `SentimentGauge`（T026）有；`analyzing`／`retrying` 期間重試按鈕 MUST 維持可見但停用（`disabled`，非隱藏——2026-08-26 定案 CHK033），不額外加冷卻節流（既有 409 已足夠防止重疊觸發，2026-08-26 定案 CHK032）；呼叫 `retry('summary')`（依賴 T015、T024）
+- [x] T026 [P] [US3] 於 `app/components/copilot/SentimentGauge.vue` 新增 `error` 狀態的錯誤訊息與可鍵盤操作的重試按鈕，`retrying` 狀態顯示「重試中 (n/2)」進度（FR-014）；`analyzing`／`retrying` 期間重試按鈕 MUST 維持可見但停用、不額外加冷卻節流（同 T025，2026-08-26 定案 CHK032／CHK033）；呼叫 `retry('sentiment')`（依賴 T016、T024）
+- [x] T027 [US3] 擴充 `test/realtime-http.ts` 的驗收情境，涵蓋三類斷言（2026-08-26 訂正：原描述僅涵蓋第一類，plan.md Testing 一節承諾的 `summary.updated`／`sentiment.updated` 事件收斂缺任務落實；2026-08-26 再訂正：新增第③類，`/speckit-analyze` 發現 FR-010 重連快照缺測試覆蓋）：① 模擬摘要／情緒分析故障或重試進行中時，斷言送出訊息（`POST /api/messages`）仍成功且不被延遲阻擋（SC-002）；② 兩位客服同時開啟 SSE 連線 JOIN 同一對話，觸發一次分析完成，斷言兩條連線皆在合理時間內各自收到對應的 `summary.updated`／`sentiment.updated` 事件（事件收斂，對應 plan.md Testing 承諾）；③ 客服 JOIN 對話並等到分析完成為 `ready` 後斷開 SSE 連線（unwatch），期間不產生新客戶訊息，重新建立連線並 watch 同一對話，斷言**立即**（不必等待任何新事件）收到一次涵蓋既有結果的 `summary.updated`／`sentiment.updated`（FR-010，對應 T010c）（依賴 T010、T010c、T019、T023）
 
 **Checkpoint**：三個使用者故事皆可獨立驗證——AI 故障時面板降級但主線不受影響，客服可手動重試
 
@@ -126,10 +126,49 @@ description: "Task list for 情緒面板（摘要卡與情緒 Sparkline）"
 
 **Purpose**：跨故事的收尾項目
 
-- [ ] T028 [P] 於 `i18n/locales/zh-TW.json` 補齊情緒面板文案（empty／analyzing／retrying／error／重試按鈕／情緒示警標籤），憲法 8.5
-- [ ] T029 [P] 更新 `docs/ARCHITECTURE.md` §11.5 的 `SentimentPoint` 型別範例以反映 `kind` 判別欄位與 `SentimentMarker` 的新增（data-model.md 附註），並 grep 確認無其他文件仍引用舊形狀（`CLAUDE.md` 正典修改後的必要動作）
+- [x] T028 [P] 於 `i18n/locales/zh-TW.json` 補齊情緒面板文案（empty／analyzing／retrying／error／重試按鈕／情緒示警標籤），憲法 8.5
+- [x] T029 [P] 更新 `docs/ARCHITECTURE.md` §11.5 的 `SentimentPoint` 型別範例以反映 `kind` 判別欄位與 `SentimentMarker` 的新增（data-model.md 附註），並 grep 確認無其他文件仍引用舊形狀（`CLAUDE.md` 正典修改後的必要動作）
 - [ ] T030 依 [quickstart.md](./quickstart.md) 手動走完三個情境的驗證步驟
-- [ ] T031 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認全綠
+  > ⚠️ **2026-08-26 記錄**（實作 session 無瀏覽器存取，本項留給使用者親自操作）：
+  >
+  > 使用者已在真實 `IMBRACE_ENV=stable` 環境親自操作並回報兩個問題，皆已定位、修復、
+  > 補上迴歸測試並重新驗證全綠（見下方「已由使用者操作發現並修復」）。之後使用者也已
+  > 親自確認情境一的「尚無資料」狀態與冷啟動後單次 `analyzing → ready`（不再重複）行為。
+  >
+  > **情境一**：✅ 冷啟動、10 秒內內容就緒、情緒點數對應客戶發言輪數、empty 狀態、
+  > 純附件輪的中性標記（迴紋針圖示正確出現在時間軸底部），皆已由使用者在真實對話
+  > 中實機確認。⚠️ 注意：`MockAIProvider` 對所有評分點固定回傳 `score: 70`，且
+  > `SentimentGauge.vue` 不畫個別評分點的圓點記號，因此走勢圖恆為水平直線——這是
+  > 預期行為，不代表折線邏輯有問題；純附件輪的驗證訊號是「有沒有出現迴紋針標記」，
+  > 不是「折線有沒有轉折」。
+  >
+  > **情境二／三的示警與故障/重試 UI**：❌ **目前的開發環境驗不到**——`MockAIProvider`
+  > 永遠回傳 `label: 'neutral'` 且不會失敗，正式的 `npm run dev` 流程沒有觸發故障或
+  > 負面情緒的手段（故障開關只存在於 vitest 的建構子參數注入，未暴露給執行中的 dev
+  > server）。已徵詢使用者是否要另外加開發用觸發機制（環境變數／debug 端點），
+  > **使用者決定不加，改以既有自動化測試作為這幾項的驗收依據**：
+  > - 示警三者並呈與遲滯規則（`isSentimentAlerting()`）→ `test/copilot-analysis.test.ts`、
+  >   `test/sentiment-attachment-turn.test.ts`
+  > - 故障分類、退避時序、重試進度 → `test/ai-retry-policy.test.ts`
+  > - 故障隔離（一區塊失敗不影響另一區塊）、手動重試 → `test/copilot-analysis.test.ts`
+  >
+  > 代價：`SentimentGauge.vue`／`SummaryCard.vue` 的 `error`／`retrying` 狀態與情緒示警
+  > 三者並呈的**實際畫面呈現**（圖示是否清楚、顏色對比在真實螢幕上是否易讀、文案是否
+  > 通順）從未被人眼看過，只驗證了資料流與狀態機邏輯正確。且 FR-003 示警的具體圖示／
+  > 文案仍未對照 Claude Design 畫布上 `CopilotPanel` 原始檔（`dc-import` 動態渲染，
+  > Artifact 擷取不到內部逐字內容，見 `docs/DESIGN_TOKENS.md` §7.0）核實。
+  >
+  > **已由使用者操作發現並修復**：
+  > 1. `session-manager.ts` 的 `onMessages()` 對任何被 SSE 檢視（未必 JOIN）的對話都會
+  >    觸發，`runIncremental()` 卻會悄悄建立分析狀態，等於未 JOIN 也在分析（違反 FR-001）。
+  >    修復：`runIncremental()` 改為若無既有 `CopilotAnalysisState` 直接略過。
+  > 2. T010c 重連快照呼叫 `fetchSince()`，未依其明文的「錨點被擠出視窗時回傳整批、
+  >    由呼叫端自行去重」約定去重，導致已涵蓋的訊息在對話存活夠久後被誤判為新訊息，
+  >    重複觸發分析、`keyFacts` 不斷疊加同一筆事實。修復：新增 `newCustomerMessagesSince()`
+  >    依 `sentimentBlock.timeline` 已涵蓋的 messageId 集合過濾。
+  >    兩項修復皆已補上迴歸測試（`test/copilot-analysis.test.ts` 新增 5 個測試），
+  >    typecheck／156 個 vitest／build／smoke 全數重新驗證通過。
+- [x] T031 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認全綠
 
 ---
 
