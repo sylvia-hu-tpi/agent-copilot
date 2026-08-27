@@ -16,6 +16,7 @@
  * 失敗即以空集合續行，FR-004）與白名單後驗＋confidence 強制歸零（憲法 4.3、4.4）。
  */
 
+import { isWorkflowInternalMessage } from '../../shared/types/conversation.js'
 import type { Message } from '../../shared/types/conversation.js'
 import type {
   ConversationSummary,
@@ -438,6 +439,79 @@ export function forceNullConfidence(cards: SuggestionCard[], hits: KnowledgeHit[
   return cards.map(c => (c.confidence === null ? c : { ...c, confidence: null }))
 }
 
+// ── 建議卡搶答判定（FR-015、US4 AC#2）───────────────────────────────────
+
+/** 字元二連 gram 集合——中文多半無空白可斷詞，退而求其次用字元層級比對 */
+function charBigrams(text: string): Set<string> {
+  const clean = text.replace(/\s+/g, '')
+  const grams = new Set<string>()
+  for (let i = 0; i < clean.length - 1; i++) grams.add(clean.slice(i, i + 2))
+  return grams
+}
+
+/**
+ * 兩段文字的重疊比例（交集大小 / 較短一方的 gram 數）——刻意不用 Jaccard（交集/聯集），
+ * 那會讓「同事的回覆比建議卡長很多但完整包含其內容」被稀釋成低相似度，
+ * 而那正是最常見的搶答情境（同事的回覆通常比建議卡措辭更完整）。
+ */
+function overlapRatio(a: string, b: string): number {
+  const A = charBigrams(a)
+  const B = charBigrams(b)
+  if (A.size === 0 || B.size === 0) return 0
+  let intersection = 0
+  for (const g of A) if (B.has(g)) intersection++
+  return intersection / Math.min(A.size, B.size)
+}
+
+/** spec.md Assumptions 允許簡單的關鍵詞重疊／相似度比對——判定方式留待實作決定 */
+const SUPERSEDE_OVERLAP_THRESHOLD = 0.6
+
+/**
+ * 標記與 `reply` 內容明顯重複的既有卡片（FR-015）。已標記過的卡片不重複覆蓋
+ * （保留最先搶答者的紀錄）。內容不重疊時回傳原陣列（同一參照），供呼叫端判斷是否需要發布。
+ */
+export function markSupersededCards(
+  cards: SuggestionCard[],
+  reply: { kind: 'agent' | 'ai', messageId: string, text: string },
+): SuggestionCard[] {
+  let changed = false
+  const next = cards.map((c) => {
+    if (c.supersededBy) return c
+    if (overlapRatio(c.text, reply.text) < SUPERSEDE_OVERLAP_THRESHOLD) return c
+    changed = true
+    return { ...c, supersededBy: { kind: reply.kind, messageId: reply.messageId } }
+  })
+  return changed ? next : cards
+}
+
+/**
+ * 同事回覆或（Hybrid 模式下）AI 自動回覆抵達時，檢查既有建議卡是否已被搶答（US4 AC#2）。
+ * ⚠️ AI workflow 的內部訊息（`isWorkflowInternalMessage()`）不算「已回覆」，
+ *    比照撞單檢查的排除原則（憲法 6.5）——客戶根本收不到那則訊息。
+ */
+export async function checkSuggestionsSuperseded(conversationId: string, messages: Message[]): Promise<void> {
+  const replies = messages.filter(m =>
+    (m.sender.type === 'agent' || m.sender.type === 'ai')
+    && !(m.sender.type === 'ai' && isWorkflowInternalMessage(m)),
+  )
+  if (replies.length === 0) return
+
+  const state = await useStateStore().getAnalysisState(conversationId)
+  if (!state || state.suggestionBlock.cards.length === 0) return
+
+  let cards = state.suggestionBlock.cards
+  for (const reply of replies) {
+    cards = markSupersededCards(cards, { kind: reply.sender.type as 'agent' | 'ai', messageId: reply.id, text: reply.text })
+  }
+  if (cards === state.suggestionBlock.cards) return
+
+  const next = await updateAnalysisState(conversationId, s => ({
+    ...s,
+    suggestionBlock: { ...s.suggestionBlock, cards, updatedAt: nowIso() },
+  }))
+  await publishBlock(conversationId, 'suggestions', next)
+}
+
 async function analyzeSuggestions(
   conversationId: string,
   input: { history: Message[], aiReplies: boolean },
@@ -508,6 +582,14 @@ export async function runColdStart(conversationId: string, history: Message[], a
 }
 
 /**
+ * 背景並行節流（憲法 6.2、specs/002-suggestion-knowledge-search research.md #9）——
+ * 同時進行背景重算的對話數量上限；globalThis-keyed 是為了比照既有單例的 HMR 安全模式，
+ * 這份狀態本質類似 `debounceTimers`：純執行期狀態，程序重啟後全部中斷重來也無妨。
+ */
+const BACKGROUND_CONCURRENCY_LIMIT = 10
+const backgroundInFlight = new Set<string>()
+
+/**
  * 新客戶發言的增量觸發（T019，session-manager.ts 的 debounce 之後呼叫）。
  * ⚠️ FR-004：送交模型的輸入僅含既有摘要與新訊息，MUST NOT 含完整歷史。
  * ⚠️ FR-005：呼叫端必須先過濾為 `sender.type === 'customer'` 的訊息，這裡不重複檢查。
@@ -518,8 +600,12 @@ export async function runColdStart(conversationId: string, history: Message[], a
  * 因此這裡改成：**若尚無 `CopilotAnalysisState`（代表從未經過 `runColdStart()`／未曾 JOIN
  * 過），直接略過，不得在此建立**——否則單純打開一個對話頁面就會悄悄跑一次分析。
  *
- * ⚠️ `priority` 參數（specs/002-suggestion-knowledge-search）目前僅沿呼叫鏈往下傳，
- *    尚未產生行為差異——背景並行節流與「背景跳過摘要」的實際邏輯於 §11.2（T046-T048）落地。
+ * ⚠️ `priority === 'background'` 時（specs/002-suggestion-knowledge-search FR-019、FR-020）：
+ *   - 名額已滿（`backgroundInFlight.size >= BACKGROUND_CONCURRENCY_LIMIT`）且本對話尚未佔用
+ *     名額時，**不執行**——改為呼叫 `scheduleIncremental()` 以相同長度重新排一次 debounce
+ *     （沿用既有的 pending 合併邏輯，等同「保留 pending，不清空，不顯示為錯誤」）。
+ *   - 否則佔用一個名額執行，**跳過 `analyzeSummary()`**（摘要是給人看的，人不在就不必更新），
+ *     只執行情緒與建議卡分析（含其必要的知識庫檢索——憲法 6.2 MUST NOT 略過檢索）。
  */
 export async function runIncremental(
   conversationId: string,
@@ -530,7 +616,24 @@ export async function runIncremental(
   if (newCustomerMessages.length === 0) return
   const state = await useStateStore().getAnalysisState(conversationId)
   if (!state) return
-  void priority // 尚未使用，見上方註解
+
+  if (priority === 'background') {
+    if (backgroundInFlight.size >= BACKGROUND_CONCURRENCY_LIMIT && !backgroundInFlight.has(conversationId)) {
+      scheduleIncremental(conversationId, newCustomerMessages, priority, aiReplies)
+      return
+    }
+    backgroundInFlight.add(conversationId)
+    try {
+      await Promise.all([
+        analyzeSentimentBatch(conversationId, newCustomerMessages),
+        analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }),
+      ])
+    }
+    finally {
+      backgroundInFlight.delete(conversationId)
+    }
+    return
+  }
 
   await Promise.all([
     analyzeSummary(conversationId, {
@@ -540,6 +643,29 @@ export async function runIncremental(
     analyzeSentimentBatch(conversationId, newCustomerMessages),
     analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }),
   ])
+}
+
+/**
+ * US4 AC#5、FR-020、research.md #10：客服重新聚焦（切回前景）背景對話時，
+ * 摘要才補跑——背景期間 `runIncremental()` 一律跳過 `analyzeSummary()`，
+ * 這裡用既有的 `basedOnMessageId` 版本錨點（零成本，見型別註解）找出尚未涵蓋的客戶發言，
+ * 沒有新發言時 no-op；有新發言時直接呼叫既有的 `analyzeSummary()`——
+ * 它自己會先發布 `analyzing`（保留舊內容）才呼叫 AIProvider，UI 因此會顯示「更新中」（US4 AC#5）。
+ *
+ * ⚠️ 比對基準是 `summaryBlock.summary.basedOnMessageId`，**不是**情緒時間軸的
+ *    `lastCoveredMessageId()`——背景期間情緒持續更新、摘要不動，兩者現在可能不同步，
+ *    誤用對方的錨點會讓摘要漏補或誤判為已是最新。
+ */
+export async function catchUpSummaryIfStale(conversationId: string, history: Message[]): Promise<void> {
+  const state = await useStateStore().getAnalysisState(conversationId)
+  if (!state) return
+
+  const anchor = state.summaryBlock.summary?.basedOnMessageId ?? null
+  const idx = anchor ? history.findIndex(m => m.id === anchor) : -1
+  const unseen = (idx >= 0 ? history.slice(idx + 1) : history).filter(m => m.sender.type === 'customer')
+  if (unseen.length === 0) return
+
+  await analyzeSummary(conversationId, { history: unseen, previousSummary: state.summaryBlock.summary ?? undefined })
 }
 
 /**
@@ -587,9 +713,12 @@ export function newCustomerMessagesSince(state: CopilotAnalysisState, since: Mes
   return since.filter(m => m.sender.type === 'customer' && !covered.has(m.id))
 }
 
-// ── debounce（§11.1）─────────────────────────────────────────────────
+// ── debounce（§11.1、§11.2）───────────────────────────────────────────
 
 const DEBOUNCE_MS = 1_000
+/** 明顯長於前景（§11.2、FR-021）——背景對話不急著在客服沒看的當下就把結果算出來 */
+const BACKGROUND_DEBOUNCE_MS = 8_000
+
 interface PendingDebounce {
   timer: ReturnType<typeof setTimeout>
   pending: Message[]
@@ -599,14 +728,16 @@ interface PendingDebounce {
 const debounceTimers = new Map<string, PendingDebounce>()
 
 /**
- * 新客戶發言的 debounce 聚合入口（§11.1：1 秒內多筆客戶發言合併為單次分析）。
+ * 新客戶發言的 debounce 聚合入口（§11.1：1 秒內多筆客戶發言合併為單次分析；
+ * §11.2：背景對話改用明顯更長的 `BACKGROUND_DEBOUNCE_MS`）。
  *
  * ⚠️ 呼叫端（server/services/session-manager.ts 的 onMessages()）負責過濾出
  *    `sender.type === 'customer'` 的訊息（FR-005：客服自己送出的訊息 MUST NOT 觸發重新分析）——
  *    本函式信任呼叫端已過濾，不重複檢查。
  *
- * ⚠️ `priority` 目前僅隨 entry 一併保存，尚未用於改變 debounce 長度——
- *    背景 debounce（`BACKGROUND_DEBOUNCE_MS`）於 §11.2（T047）落地。
+ * ⚠️ 與既有 pending 合併時，優先度取「前景蓋過背景」（同一份對話對任一位客服而言只要有人
+ *    前景聚焦就該用前景頻率）——沿用 `PollingMessageSource.aggregateState()` 同一條規則，
+ *    避免兩處判斷各自為政而互相矛盾。
  */
 export function scheduleIncremental(
   conversationId: string,
@@ -618,12 +749,16 @@ export function scheduleIncremental(
 
   const existing = debounceTimers.get(conversationId)
   const pending = existing ? [...existing.pending, ...customerMessages] : [...customerMessages]
+  const mergedPriority: WatchPriority = existing?.priority === 'foreground' || priority === 'foreground'
+    ? 'foreground'
+    : 'background'
   if (existing) clearTimeout(existing.timer)
 
+  const delayMs = mergedPriority === 'background' ? BACKGROUND_DEBOUNCE_MS : DEBOUNCE_MS
   const timer = setTimeout(() => {
     debounceTimers.delete(conversationId)
-    void runIncremental(conversationId, pending, priority, aiReplies)
-  }, DEBOUNCE_MS)
+    void runIncremental(conversationId, pending, mergedPriority, aiReplies)
+  }, delayMs)
   timer.unref?.()
-  debounceTimers.set(conversationId, { timer, pending, priority, aiReplies })
+  debounceTimers.set(conversationId, { timer, pending, priority: mergedPriority, aiReplies })
 }

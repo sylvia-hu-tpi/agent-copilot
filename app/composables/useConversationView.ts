@@ -355,12 +355,16 @@ export function useConversationView(conversationId: Ref<string>) {
   // 切換對話：先跟舊的說再見，再載入新的
   watch(conversationId, async (next, prev) => {
     if (prev && prev !== next) {
+      // ⚠️ specs/002-suggestion-knowledge-search／contracts/presence-watch-control.md：
+      //    joined 必須是離開前那一刻的真實值——寫死 false 會讓 server 端誤判為「已 LEAVE」，
+      //    把仍然 JOIN 著的背景對話的 Copilot 管線整組卸載（research.md #8 的根因）。
+      //    MUST 在下面的 loadAll() 覆蓋 detail 之前讀取，此刻它仍是「prev」那個對話的狀態。
       await $fetch('/api/presence', {
         method: 'POST',
         body: {
           conversationId: prev,
           state: 'away',
-          joined: false,
+          joined: detail.value?.viewerJoined ?? false,
           visible: true,
           clientId: stream.clientId,
         },

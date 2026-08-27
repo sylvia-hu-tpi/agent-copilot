@@ -362,6 +362,76 @@ async function main(): Promise<void> {
       snapshotSummary.at - reconnectAt <= 2_000 && snapshotSentiment.at - reconnectAt <= 2_000,
       `summary ${snapshotSummary.at - reconnectAt}ms／sentiment ${snapshotSentiment.at - reconnectAt}ms`,
     )
+
+    console.log('\n── ⑤ 多對話背景更新：切走仍 JOIN 時繼續背景分析、切回補跑摘要（specs/002-suggestion-knowledge-search US4）──')
+
+    // A 切走但仍 JOIN 著（research.md #8：presence 語意修正後 MUST 變成 background watch，不是 unwatch）
+    const awayRes = await a.call('/api/presence', {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: CONV, state: 'away', joined: true, visible: true, clientId: 'browser-a' }),
+    })
+    check('⑤ A 切走但仍 JOIN 時，presence 上報成功', awayRes.status === 200, `實際 ${awayRes.status}`)
+
+    const cursorBgTrigger = streamA.cursor()
+    gateway.pushMessage('con_1', '客戶：背景期間又問了一個問題')
+
+    // 背景 debounce 是 BACKGROUND_DEBOUNCE_MS（8 秒），給足餘裕
+    const bgSentiment = await streamA.waitFor(
+      e => e.type === 'sentiment.updated',
+      { since: cursorBgTrigger, label: 'A 背景收到 sentiment.updated', timeoutMs: 12_000 },
+    )
+    check('⑤ 客服切走但仍 JOIN 的背景對話，情緒分析仍持續更新（FR-019）', bgSentiment.event.type === 'sentiment.updated')
+
+    const bgSuggestion = await streamA.waitFor(
+      e => e.type === 'suggestion.updated',
+      { since: cursorBgTrigger, label: 'A 背景收到 suggestion.updated', timeoutMs: 12_000 },
+    )
+    check('⑤ 背景對話的建議卡也持續更新（FR-019，含其必要的知識庫檢索）', bgSuggestion.event.type === 'suggestion.updated')
+
+    // 摘要 MUST NOT 在背景期間重算（FR-020）——同一批觸發後的短時間內不該出現 summary.updated
+    const gotSummaryInBackground = await streamA.waitFor(
+      e => e.type === 'summary.updated',
+      { since: cursorBgTrigger, label: '(不該出現) summary.updated', timeoutMs: 2_000 },
+    ).then(() => true).catch(() => false)
+    check('⑤ 背景期間 MUST NOT 重算摘要（FR-020）', !gotSummaryInBackground)
+
+    // 客服切回（重新聚焦）——優先度升級為 foreground（驗證 attach() 不被 watched.has() 擋下，
+    // 即 research.md #8 決策 3／T055），摘要才補跑並先顯示「更新中」（US4 AC#5）
+    const cursorRefocus = streamA.cursor()
+    const refocusAt = Date.now()
+    const refocusRes = await a.call('/api/presence', {
+      method: 'POST',
+      body: JSON.stringify({ conversationId: CONV, state: 'joined', joined: true, visible: true, clientId: 'browser-a' }),
+    })
+    check('⑤ A 切回時 presence 上報成功', refocusRes.status === 200, `實際 ${refocusRes.status}`)
+
+    const analyzingSummary = await streamA.waitFor(
+      e => e.type === 'summary.updated' && e.summary.status === 'analyzing',
+      { since: cursorRefocus, label: '切回後摘要顯示「更新中」', timeoutMs: 3_000 },
+    )
+    check('⑤ 切回背景對話時，摘要先顯示「更新中」再補跑（US4 AC#5）',
+      analyzingSummary.event.type === 'summary.updated' && analyzingSummary.event.summary.status === 'analyzing')
+
+    const readySummary = await streamA.waitFor(
+      e => e.type === 'summary.updated' && e.summary.status === 'ready',
+      { since: cursorRefocus, label: '補跑完成的摘要', timeoutMs: 8_000 },
+    )
+    check('⑤ 摘要補跑後恢復 ready，涵蓋背景期間的新發言',
+      readySummary.at - refocusAt <= 8_000,
+      `實際 ${readySummary.at - refocusAt}ms`)
+
+    // 斷線重連（含瀏覽器重新整理）後，已 JOIN 的對話立即以背景優先度復原，不必等下一次
+    // presence 心跳（research.md #8 決策 4，T056；一併驗證 T059 的重連復原目標）
+    streamA.close()
+    await new Promise(r => setTimeout(r, 300))
+    const restoredStream = await a.openStream('browser-a-restored')
+    const restoredControl = await restoredStream.waitFor(
+      e => e.type === 'control.updated' && e.conversationId === CONV,
+      { label: '重連後不必任何 presence 心跳，立即收到已 JOIN 對話的背景 watch', timeoutMs: 3_000 },
+    )
+    check('⑤ 斷線重連後，已 JOIN 的對話立即以背景優先度復原（不必等下一次 presence 心跳）',
+      restoredControl.event.type === 'control.updated')
+    restoredStream.close()
   }
   finally {
     await harness?.close()

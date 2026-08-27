@@ -37,3 +37,23 @@ export function isStreamControl(payload: unknown): payload is StreamControl {
     && (p.kind === 'watch' || p.kind === 'unwatch')
     && typeof p.conversationId === 'string'
 }
+
+/**
+ * `POST /api/presence` 的 `state`／`joined` 應轉譯成哪一種控制通道訊息——
+ * specs/002-suggestion-knowledge-search／contracts/presence-watch-control.md。
+ *
+ * ⚠️ `state === 'away'` **不再**無條件等於 unwatch（憲法 v3.0.0 修訂動機的程式碼根因）：
+ *    客服切走但仍 JOIN 著的對話，Copilot 管線 MUST 繼續以 background 優先度運作——
+ *    只有真的沒 JOIN（或已 LEAVE）才該 unwatch。抽成純函式，不依賴 H3Event，
+ *    供 test/presence-away-joined.test.ts 直接單元測試（presence.post.ts 本身用了
+ *    Nitro auto-import，無法被 vitest／tsx 直接 import）。
+ */
+export function resolvePresenceControl(
+  state: 'viewing' | 'composing' | 'joined' | 'away',
+  joined: boolean,
+  visible: boolean,
+): { kind: 'watch' | 'unwatch', priority: 'foreground' | 'background' } {
+  const kind = state === 'away' && !joined ? 'unwatch' : 'watch'
+  const priority = state === 'away' ? 'background' : (visible ? 'foreground' : 'background')
+  return { kind, priority }
+}

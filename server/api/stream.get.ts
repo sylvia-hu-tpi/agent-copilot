@@ -18,7 +18,12 @@
 import { controlFromMode } from '../../shared/types/conversation.js'
 import type { CopilotEvent } from '../../shared/types/events.js'
 import { STREAM_HEARTBEAT_MS } from '../../shared/types/events.js'
-import { lastCoveredMessageId, newCustomerMessagesSince, runIncremental } from '../services/copilot-analysis.js'
+import {
+  catchUpSummaryIfStale,
+  lastCoveredMessageId,
+  newCustomerMessagesSince,
+  runIncremental,
+} from '../services/copilot-analysis.js'
 import { useCopilotRuntime } from '../services/copilot-runtime.js'
 import { registerCredential } from '../services/credentials.js'
 import { snapshotOf } from '../services/presence.js'
@@ -87,7 +92,10 @@ export default defineEventHandler(async (event) => {
           watched.delete(convId)
           return
         }
-        if (watched.has(convId)) return
+        // ⚠️ research.md #8 決策 3：即使已在 watched 裡，優先度可能改變（例如客服切回
+        //    這個背景對話變成前景）——不可因為 watched.has(convId) 就直接略過，
+        //    否則第二次 watch 訊息永遠更新不到優先度。先解除舊訂閱再以新優先度重新 attach()。
+        watched.get(convId)?.()
         watched.set(convId, await attach(convId, payload.priority, payload.joined))
       })
     },
@@ -133,6 +141,15 @@ export default defineEventHandler(async (event) => {
     // ⚠️ 純 SSE 推播只在狀態變動時發事件；若離開期間沒有新客戶發言就不會有任何事件，
     //    重新連線的前端會永遠拿不到已保留的結果，因此必須像 control.updated 一樣主動送一次快照。
     void sendAnalysisSnapshotAndResume(conversationId, priority, controlFromMode(mode).aiReplies)
+
+    // US4 AC#5：客服重新聚焦（切回前景）背景對話時，摘要才補跑（FR-020、research.md #10）——
+    // 與上面的重連快照並列呼叫，不是同一件事：快照送的是「已有的結果」，這裡補的是
+    // 「背景期間被跳過、還沒生成」的摘要。
+    if (priority === 'foreground') {
+      void runtime.messageSource.fetchSince(conversationId)
+        .then(history => catchUpSummaryIfStale(conversationId, history))
+        .catch(err => console.error(`[stream] ${conversationId} 摘要補跑失敗:`, err instanceof Error ? err.message : String(err)))
+    }
 
     return () => {
       offTopic()
@@ -186,6 +203,42 @@ export default defineEventHandler(async (event) => {
     })
     return send({ type: 'presence.updated', conversationId, presence: personal })
   }
+
+  // 第零步：連線建立（含重連、含瀏覽器重新整理後的全新連線）時，復原此客服所有已 JOIN
+  // 對話的背景 watch（research.md #8 決策 4）——沒有這一步，只有「當下正在看」的那個對話
+  // 會在新連線建立後被重新 attach()，其餘已 JOIN 但背景的對話會在斷線的當下悄悄停止分析。
+  //
+  // ⚠️ MUST 經由 `enqueue()`（不可 `await` 阻擋在 `return stream.send()` 之前，也不可自己另開
+  // 一條不經 enqueue 的 fire-and-forget 分支）：
+  //   ① 提前呼叫會讓這次連線的 handshake 卡住（`attach()` 內部呼叫 `send()`／`stream.push()`，
+  //      但連線要等 `stream.send()` 真正被呼叫後才開始送資料給 client；已用 vitest 級的
+  //      smoke 手動重現過）。
+  //   ② 若走獨立的 fire-and-forget（不經 enqueue），會跟稍後客服自己送出的第一次 presence
+  //      心跳（觸發同一個 convId 的 attach()）產生競態：兩者都可能通過 `watched.has()` 檢查、
+  //      各自建立一份訂閱，其中一份會變成孤兒（`watched` 只留得住最後寫入的那份 cleanup）。
+  //      經 `enqueue()` 排進同一條佇列，可確保這裡永遠先跑完，客服的第一次心跳（foreground
+  //      升級，見 attach() 的 watched.get(convId)?.() 一律先解舊再建新）才不會撞期。
+  //
+  // ⚠️⚠️ **已知未解問題（2026-08-27，尚未定位根因）**：啟用這段程式碼後，
+  // `test/realtime-http.ts` 既有的「重新連線並 watch 後，MUST 立即收到已保留的
+  // summary.updated／sentiment.updated（FR-010）」一項會穩定失敗——事件延遲到剛好
+  // `STREAM_HEARTBEAT_MS`（25 秒）才送達，高度重現、非偶發。已排除的可能成因：
+  //   - `catchUpSummaryIfStale()` 本身（停用它問題依舊存在）。
+  //   - `ensurePipeline`/`releasePipeline` 的 refcount 不平衡（實測記錄顯示全程配平）。
+  //   - 這段迴圈與控制通道 attach() 之間的競態（改用 `setTimeout(fn, 0)` 額外排到巨任務、
+  //     確定晚於 `stream.send()` 之後仍然重現，已排除）。
+  // 只有**完全移除**這個迴圈（連同下面的 for 迴圈本體）才會讓該項恢復通過——但這正是
+  // T056（research.md #8 決策 4：SSE 重連時復原背景 watch）唯一的實作路徑，本檔自己新增的
+  // US4 場景（test/realtime-http.ts「⑤」）需要它才能驗證背景對話復原，兩者互相矛盾。
+  // **下一步除錯方向**：懷疑與 h3 `EventStream`／`TransformStream` 的 backpressure
+  // 有關（見 node_modules/h3/dist/index.mjs 的 `_sendEvent`/`push`/`send`），但尚未證實；
+  // 也可能與測試哈奈斯反覆用同一個 clientId（`browser-b`）快速重連、舊連線的
+  // `stream.onClosed()` 清理是否確實在 300ms 內完成有關，尚待用更長的等待時間驗證。
+  enqueue(async () => {
+    for (const convId of await store.listJoinedConversations(session.operatorId)) {
+      if (!watched.has(convId)) watched.set(convId, await attach(convId, 'background', true))
+    }
+  })
 
   const heartbeat = setInterval(() => {
     enqueue(() => send({ type: 'stream.heartbeat', at: new Date().toISOString() }))

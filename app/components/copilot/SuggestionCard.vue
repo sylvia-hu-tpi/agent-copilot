@@ -7,6 +7,9 @@
  *    不做任何逐字元／逐句的漸進顯示效果。
  * ⚠️ **FR-002／憲法 4.4**：`confidence` 為 `null` 時 MUST 留空不顯示，不得以任何估算或
  *    替代數字頂替——信心度一旦失準，客服很快就會學會忽略它，整個功能即告廢棄。
+ * ⚠️ **FR-015、US4 AC#2**：`card.supersededBy` 非 null 代表已被同事或 AI 的後續回覆搶答，
+ *    MUST 顯示搶答標示並降級呈現（此處採淡化，不自列表移除——客服仍可能想看內容判斷是否
+ *    仍值得參考）。
  */
 
 import type { SuggestionCard } from '#shared/types/copilot'
@@ -28,7 +31,16 @@ const toneStyle = computed(() => TONE_CLASS[props.card.tone])
 </script>
 
 <template>
-  <article class="ac-card space-y-2 p-3">
+  <article
+    class="ac-card space-y-2 p-3 transition-opacity"
+    :style="card.supersededBy ? { opacity: 0.55 } : undefined"
+  >
+    <!-- 搶答標示（FR-015、US4 AC#2）：同事或 AI 已搶先回覆類似內容 -->
+    <p v-if="card.supersededBy" class="flex items-center gap-1.5 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+      <UIcon name="i-lucide-clock-alert" class="size-3.5 shrink-0" />
+      {{ t(`copilot.suggestion.supersededBy.${card.supersededBy.kind}`) }}
+    </p>
+
     <div class="flex flex-wrap items-center gap-1.5">
       <span
         class="rounded-full px-2 py-0.5 text-[0.8125rem]"

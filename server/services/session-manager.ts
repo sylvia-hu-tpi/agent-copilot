@@ -27,7 +27,7 @@ import type { Unsubscribe, WatchPriority } from '../sources/types.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
 import type { CopilotSession } from '../state/types.js'
-import { scheduleIncremental } from './copilot-analysis.js'
+import { checkSuggestionsSuperseded, scheduleIncremental } from './copilot-analysis.js'
 import { useCopilotRuntime } from './copilot-runtime.js'
 import { inferFromMessages } from './presence.js'
 
@@ -217,6 +217,9 @@ async function onMessages(
     const aiReplies = controlFromMode(runtime.listPoller.latest(conversationId)?.mode).aiReplies
     scheduleIncremental(conversationId, customerMessages, priority, aiReplies)
   }
+
+  // FR-015：同事回覆或 AI 自動回覆抵達時，檢查既有建議卡是否已被搶答（US4 AC#2）
+  void checkSuggestionsSuperseded(conversationId, messages)
 
   await publish(conversationTopic(conversationId), {
     type: 'messages.appended',

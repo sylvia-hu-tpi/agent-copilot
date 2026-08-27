@@ -650,3 +650,84 @@ describe('建議卡故障隔離（US3）', () => {
     expect(state?.sentimentBlock.status).toBe('ready')
   })
 })
+
+// ── US4：背景並行與 debounce（specs/002-suggestion-knowledge-search T046-T048、T060）──
+
+describe('背景並行與 debounce（US4）', () => {
+  it('priority: background 時 runIncremental() 跳過 analyzeSummary()，但仍執行情緒與建議卡分析（FR-019、FR-020）', async () => {
+    let summarizeCalled = false
+    setAIProvider(new (class extends MockAIProvider {
+      override async summarize(input: Parameters<MockAIProvider['summarize']>[0]) {
+        summarizeCalled = true
+        return super.summarize(input)
+      }
+    })())
+
+    const id = convId('background-skip-summary')
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
+    summarizeCalled = false // 只計算冷啟動之後的呼叫
+
+    await runIncremental(id, [customerText(id, '背景新發言', 1)], 'background', false)
+
+    expect(summarizeCalled).toBe(false)
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.sentimentBlock.timeline.length).toBeGreaterThan(1)
+    expect(state?.suggestionBlock.status).toBe('ready')
+  })
+
+  it('scheduleIncremental() 對背景優先度使用明顯更長的 BACKGROUND_DEBOUNCE_MS（8 秒 vs 前景 1 秒）', async () => {
+    vi.useFakeTimers()
+    let callCount = 0
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(input: Parameters<MockAIProvider['analyzeSentiment']>[0]) {
+        callCount++
+        return super.analyzeSentiment(input)
+      }
+    })())
+
+    const id = convId('background-debounce-length')
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
+    callCount = 0
+
+    scheduleIncremental(id, [customerText(id, '背景訊息', 1)], 'background', false)
+
+    await vi.advanceTimersByTimeAsync(1_000) // 前景的 1 秒到了，背景 MUST NOT 提前觸發
+    expect(callCount).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(7_000) // 累計 8 秒，背景 debounce 才到期
+    expect(callCount).toBe(1)
+    vi.useRealTimers()
+  })
+
+  it('BACKGROUND_CONCURRENCY_LIMIT 滿載時，超額對話不執行分析、不顯示為錯誤（僅重排 debounce）', async () => {
+    const ids = Array.from({ length: 11 }, (_, i) => convId(`bg-limit-${i}`))
+    for (const id of ids) await runColdStart(id, [customerText(id, '第一句', 10)], false)
+
+    let callCount = 0
+    let releaseGate: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(input: Parameters<MockAIProvider['analyzeSentiment']>[0]) {
+        callCount++
+        await gate
+        return super.analyzeSentiment(input)
+      }
+    })())
+
+    // 佔滿 10 個名額（BACKGROUND_CONCURRENCY_LIMIT = 10）——皆卡在 gate 上，模擬進行中
+    const first10 = ids.slice(0, 10)
+    const inFlight = first10.map(id => runIncremental(id, [customerText(id, '背景訊息', 1)], 'background', false))
+    await vi.waitFor(() => expect(callCount).toBe(10))
+
+    // 第 11 個對話：名額已滿，MUST NOT 執行（不呼叫 AI、不轉 error，只是重排 debounce）
+    const eleventh = ids[10]!
+    await runIncremental(eleventh, [customerText(eleventh, '第 11 個背景訊息', 1)], 'background', false)
+
+    expect(callCount).toBe(10)
+    const state = await useStateStore().getAnalysisState(eleventh)
+    expect(state?.sentimentBlock.status).not.toBe('error')
+
+    releaseGate?.()
+    await Promise.all(inFlight)
+  })
+})

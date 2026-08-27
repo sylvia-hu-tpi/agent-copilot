@@ -19,7 +19,7 @@ import { useCopilotRuntime } from '../services/copilot-runtime.js'
 import { clearViewing, reportViewing, snapshotOf } from '../services/presence.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
-import { streamControlTopic, type StreamControl } from '../utils/stream-control.js'
+import { resolvePresenceControl, streamControlTopic, type StreamControl } from '../utils/stream-control.js'
 import { assertConversationId } from '../utils/conversation-param.js'
 import { requireActiveBffSession } from '../utils/session.js'
 import { readBodyAs } from '../utils/validate.js'
@@ -69,10 +69,19 @@ export default defineEventHandler(async (event) => {
   // 告訴自己那條 SSE 連線要（不要）訂閱這個對話。
   // ⚠️ 這是「開啟對話 → 立刻收得到訊息」的唯一途徑：SSE 連線建立時還不知道
   //    客服接下來會看哪個對話，而等下一次心跳（20 秒）才訂閱太慢。
+  //
+  // ⚠️ specs/002-suggestion-knowledge-search／contracts/presence-watch-control.md
+  //    （憲法 v3.0.0 修訂動機的程式碼根因）：`state === 'away'` **不再**無條件等於
+  //    unwatch。客服切走但仍 JOIN 著的對話，Copilot 管線 MUST 繼續以 background
+  //    優先度運作——只有真的沒 JOIN（或已 LEAVE）才該 unwatch。
+  //    presence-viewing（上面的 clearViewing／reportViewing）與這裡的訂閱存續是兩件事：
+  //    前者回答「有沒有人在看」，後者回答「背景分析要不要繼續跑」，故意不共用同一個判斷。
+  const { kind, priority } = resolvePresenceControl(state, joined, visible)
+
   await bus.publish(streamControlTopic(session.operatorId, clientId), {
-    kind: state === 'away' ? 'unwatch' : 'watch',
+    kind,
     conversationId: convId,
-    priority: visible ? 'foreground' : 'background',
+    priority,
     joined,
   } satisfies StreamControl)
 
