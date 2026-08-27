@@ -38,6 +38,9 @@ export default defineEventHandler(async (event) => {
   //    在這裡順手清掉全部，會讓同事從彼此的畫面上消失。
   await clearViewing(store, ctx.id, session.operatorId)
 
+  // 背景 JOIN 持久追蹤（specs/002-suggestion-knowledge-search/research.md #8）
+  await store.removeJoinedConversation(session.operatorId, ctx.id)
+
   const control = controlFromMode('automation')
   if (!duplicate) {
     await useEventBus().publish(conversationTopic(ctx.id), {

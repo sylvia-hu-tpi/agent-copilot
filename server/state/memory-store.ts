@@ -35,6 +35,8 @@ export class MemoryStateStore implements StateStore {
   private presence = new Map<string, Map<string, Expiring<PresenceEntry>>>()
   private pollLocks = new Map<string, number>()
   private seenKeys = new Map<string, number>()
+  /** operatorId → 已 JOIN 的 conversationId 集合（specs/002-suggestion-knowledge-search，不設 TTL） */
+  private joinedConversations = new Map<string, Set<string>>()
 
   private sweeper: NodeJS.Timeout | undefined
 
@@ -144,6 +146,28 @@ export class MemoryStateStore implements StateStore {
 
   async releasePollLock(convId: string): Promise<void> {
     this.pollLocks.delete(convId)
+  }
+
+  // ── 背景 JOIN 持久追蹤（不設 TTL，見 StateStore 介面註解）───────────────
+
+  async addJoinedConversation(operatorId: string, conversationId: string): Promise<void> {
+    let set = this.joinedConversations.get(operatorId)
+    if (!set) {
+      set = new Set()
+      this.joinedConversations.set(operatorId, set)
+    }
+    set.add(conversationId)
+  }
+
+  async removeJoinedConversation(operatorId: string, conversationId: string): Promise<void> {
+    const set = this.joinedConversations.get(operatorId)
+    if (!set) return
+    set.delete(conversationId)
+    if (set.size === 0) this.joinedConversations.delete(operatorId)
+  }
+
+  async listJoinedConversations(operatorId: string): Promise<string[]> {
+    return [...(this.joinedConversations.get(operatorId) ?? [])]
   }
 
   // ── 去重 ────────────────────────────────────────────────────────────

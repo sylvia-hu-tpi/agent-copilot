@@ -33,12 +33,13 @@ function createProvider(): AIProvider {
   const env = envVar('NUXT_PUBLIC_IMBRACE_ENV', 'IMBRACE_ENV') || 'stable'
   const summaryAgentId = envVar('NUXT_IMBRACE_SUMMARY_AGENT_ID', 'IMBRACE_SUMMARY_AGENT_ID')
   const sentimentAgentId = envVar('NUXT_IMBRACE_SENTIMENT_AGENT_ID', 'IMBRACE_SENTIMENT_AGENT_ID')
+  const suggestionAgentId = envVar('NUXT_IMBRACE_SUGGESTION_AGENT_ID', 'IMBRACE_SUGGESTION_AGENT_ID')
 
-  if (!apiKey || !orgId || !summaryAgentId || !sentimentAgentId) {
+  if (!apiKey || !orgId || !summaryAgentId || !sentimentAgentId || !suggestionAgentId) {
     console.warn(
       '[ai] 缺少 IMBRACE_API_KEY／IMBRACE_ORGANIZATION_ID／IMBRACE_SUMMARY_AGENT_ID／'
-      + 'IMBRACE_SENTIMENT_AGENT_ID 其中之一，退回 MockAIProvider —— 僅供本機開發，'
-      + '正式環境不應出現這行警告。',
+      + 'IMBRACE_SENTIMENT_AGENT_ID／IMBRACE_SUGGESTION_AGENT_ID 其中之一，退回 MockAIProvider —— '
+      + '僅供本機開發，正式環境不應出現這行警告。',
     )
     return new MockAIProvider()
   }
@@ -48,7 +49,7 @@ function createProvider(): AIProvider {
     baseUrl,
     env: env as Environment,
   })
-  return new ImbraceAgentProvider(client, summaryAgentId, sentimentAgentId)
+  return new ImbraceAgentProvider(client, summaryAgentId, sentimentAgentId, suggestionAgentId)
 }
 
 export function useAIProvider(): AIProvider {

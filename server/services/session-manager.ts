@@ -20,6 +20,7 @@
  *   它不是「有人在看」，只是一根管線。
  */
 
+import { controlFromMode } from '../../shared/types/conversation.js'
 import type { Message } from '../../shared/types/conversation.js'
 import type { CopilotEvent } from '../../shared/types/events.js'
 import type { Unsubscribe, WatchPriority } from '../sources/types.js'
@@ -202,11 +203,20 @@ async function onMessages(
     excludeOperatorId: viewerOperatorId,
   })
 
-  // 情緒面板增量觸發（specs/001-sentiment-panel FR-004、FR-005，T019）——
+  // 情緒／建議卡增量觸發（specs/001-sentiment-panel FR-004、FR-005；
+  // specs/002-suggestion-knowledge-search T019、T021）——
   // ⚠️ 只有客戶發言才觸發重新分析；客服自己送出的訊息 MUST NOT 觸發（FR-005）。
   //    debounce（1 秒聚合）由 scheduleIncremental() 內部處理，這裡只負責過濾。
   const customerMessages = messages.filter(m => m.sender.type === 'customer')
-  if (customerMessages.length > 0) scheduleIncremental(conversationId, customerMessages)
+  if (customerMessages.length > 0) {
+    // ⚠️ 兩者刻意在同一處一次算齊：priority 取自 messageSource（§9.2 聚合規則同一份），
+    //    aiReplies MUST 一律以 controlFromMode() 推導，MUST NOT 寫成 mode === 'hybrid'
+    //    （FR-016，§10.2／§10.6 記錄過的靜默失效地雷）。
+    const runtime = useCopilotRuntime(orgId)
+    const priority = runtime.messageSource.getPriority(conversationId)
+    const aiReplies = controlFromMode(runtime.listPoller.latest(conversationId)?.mode).aiReplies
+    scheduleIncremental(conversationId, customerMessages, priority, aiReplies)
+  }
 
   await publish(conversationTopic(conversationId), {
     type: 'messages.appended',

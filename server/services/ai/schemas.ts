@@ -7,11 +7,12 @@
  */
 
 import { z } from 'zod'
-import type { ConversationSummary, SentimentPoint } from '../../../shared/types/copilot.js'
+import type { ConversationSummary, SentimentPoint, SuggestionCard } from '../../../shared/types/copilot.js'
 import { AIOutputValidationError } from './retry-policy.js'
 
 const RISK_FLAGS = ['churn', 'escalation', 'compliance', 'vip', 'repeat_contact'] as const
 const SENTIMENT_LABELS = ['calm', 'neutral', 'concerned', 'frustrated', 'angry'] as const
+const SUGGESTION_TONES = ['apologetic', 'informative', 'retention', 'closing', 'escalating'] as const
 
 export const ConversationSummarySchema = z.object({
   intent: z.string().min(1),
@@ -57,4 +58,46 @@ export function parseSentimentPoints(raw: unknown[]): SentimentPoint[] {
     }
     return { kind: 'point', ...result.data }
   })
+}
+
+/**
+ * 建議卡 —— specs/002-suggestion-knowledge-search/data-model.md「驗證規則」。
+ *
+ * ⚠️ 這裡只管「格式對不對」。`sopId` 是否真的存在於本次 `knowledgeHits` 集合裡是
+ *    另一層業務白名單檢查（憲法 4.3），刻意不放進這個 schema——
+ *    `knowledgeHits` 是呼叫當下的動態上下文，硬塞進 schema 會讓 schema 定義依賴呼叫時的參數
+ *    （見 server/services/copilot-analysis.ts::whitelistFilter()，research.md #6）。
+ *
+ * ⚠️ `tone` 是必要展示欄位（不像 `riskFlags` 可安全省略），列舉外一律視為該卡驗證失敗。
+ */
+export const SuggestionCardSchema = z.object({
+  id: z.string().min(1),
+  sopId: z.string().nullable(),
+  sopTitle: z.string().nullable(),
+  text: z.string().min(1),
+  confidence: z.number().min(0).max(100).nullable(),
+  rationale: z.string(),
+  tone: z.enum(SUGGESTION_TONES),
+  requiresData: z.array(z.string()),
+  supersededBy: z.object({
+    kind: z.enum(['agent', 'ai']),
+    messageId: z.string(),
+  }).nullable(),
+})
+
+/**
+ * 單張卡片驗證失敗即跳過，不使整批失敗（比照既有 `riskFlags` 的容錯精神）。
+ *
+ * @throws {AIOutputValidationError} 整批皆非陣列時
+ */
+export function parseSuggestionCards(raw: unknown): SuggestionCard[] {
+  if (!Array.isArray(raw)) {
+    throw new AIOutputValidationError('建議卡輸出不是陣列')
+  }
+  const cards: SuggestionCard[] = []
+  for (const item of raw) {
+    const result = SuggestionCardSchema.safeParse(item)
+    if (result.success) cards.push(result.data)
+  }
+  return cards
 }

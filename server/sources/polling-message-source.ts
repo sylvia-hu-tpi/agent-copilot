@@ -153,6 +153,17 @@ export class PollingMessageSource implements MessageSource {
   }
 
   /**
+   * specs/002-suggestion-knowledge-search/research.md #9：背景並行節流的判斷依據，
+   * 直接重用既有的「前景蓋過背景」聚合邏輯（aggregateState()），不另訂一套規則。
+   * 目前無任何訂閱者時回傳 'background'（安全預設）。
+   */
+  getPriority(conversationId: string): WatchPriority {
+    const entry = this.entries.get(conversationId)
+    if (!entry) return 'background'
+    return this.aggregateState(entry).priority
+  }
+
+  /**
    * 送出訊息後呼叫：把本地錨點推到最新，避免自己送的那則被當成「別人的新訊息」
    * 再 fan-out 一次。
    */

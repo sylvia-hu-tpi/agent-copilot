@@ -22,7 +22,9 @@ import type {
   AIProvider,
   ConversationSummary,
   SentimentPoint,
+  SuggestionCard,
 } from '../../../shared/types/copilot.js'
+import type { KnowledgeHit } from '../../../shared/types/knowledge.js'
 import { AIOutputValidationError, AIProviderHttpError } from './retry-policy.js'
 
 const SENDER_LABEL: Record<string, string> = {
@@ -49,6 +51,36 @@ function buildSummaryPrompt(input: { history: Message[], previousSummary?: Conve
 function buildSentimentPrompt(messages: Message[]): string {
   const lines = messages.map((m, i) => `${i + 1}. ${m.text}`).join('\n')
   return `請針對以下客戶發言，依序給出情緒判斷（陣列長度需與發言則數一致，共 ${messages.length} 則）：\n\n${lines}`
+}
+
+/**
+ * ⚠️ 訊息內容一律取 `Message.text`，MUST NOT 讀 `caption`——後者是上傳時的原始檔名，
+ *    客戶上傳時為空（憲法 6.5／FR-017）。`transcriptLine()` 本來就只讀 `m.text`，此處沿用。
+ */
+function buildSuggestionPrompt(input: {
+  history: Message[]
+  knowledgeHits: KnowledgeHit[]
+  aiReplies: boolean
+}): string {
+  const transcript = input.history.map(transcriptLine).join('\n')
+  const hitsText = input.knowledgeHits.length > 0
+    ? input.knowledgeHits.map(h => `- id: ${h.id}\n  標題：${h.title}\n  內容：${h.snippet}`).join('\n')
+    : '（本次知識庫檢索無相關結果）'
+
+  return `你是客服助理，請針對以下對話產生建議回覆卡（輸出 JSON 陣列）。\n\n`
+    + `對話內容：\n${transcript}\n\n`
+    + `知識庫檢索結果：\n${hitsText}\n\n`
+    + (input.aiReplies
+      ? '⚠️ 此對話目前為 Hybrid 模式，AI 也會自動回覆客戶，你的建議應以補位、避免與 AI 重複為優先。\n\n'
+      : '')
+    + '規則（務必遵守）：\n'
+    + '① 最多產出 5 張卡\n'
+    + '② sopId 只能是上方知識庫檢索結果列出的 id，若無合適引用請填 null，不得自行編造\n'
+    + '③ 無法確認的具體資料（工單編號、金額、時間等）請填入 requiresData 陣列交由客服補上，不得寫入 text\n\n'
+    + '每張卡片需包含欄位：sopId（字串或 null）、sopTitle（字串或 null）、text（回覆全文）、'
+    + 'confidence（一律填 null）、rationale（建議理由）、'
+    + 'tone（apologetic／informative／retention／closing／escalating 之一）、'
+    + 'requiresData（字串陣列）。'
 }
 
 /**
@@ -86,6 +118,7 @@ export class ImbraceAgentProvider implements AIProvider {
     private readonly client: ImbraceClient,
     private readonly summaryAgentId: string,
     private readonly sentimentAgentId: string,
+    private readonly suggestionAgentId: string,
   ) {}
 
   async summarize(input: {
@@ -132,6 +165,40 @@ export class ImbraceAgentProvider implements AIProvider {
         label: item.label,
         drivers: item.drivers,
       } as SentimentPoint
+    })
+  }
+
+  /**
+   * ⚠️ `id` 由本層以 `crypto.randomUUID()` 產生，不信任模型輸出——模型沒有理由知道
+   *    穩定唯一的 id，比照 `analyzeSentiment()` 不信任模型給的 `messageId`/`at` 同一原則。
+   *    其餘欄位原樣帶出，交由呼叫端的 `parseSuggestionCards()`（憲法 4.2）與
+   *    `whitelistFilter()`（憲法 4.3）驗證與後驗。
+   */
+  async suggest(input: {
+    history: Message[]
+    knowledgeHits: KnowledgeHit[]
+    aiReplies: boolean
+  }): Promise<SuggestionCard[]> {
+    const text = await this.callAgent(this.suggestionAgentId, buildSuggestionPrompt(input))
+    const parsed = extractLeadingJson(text)
+
+    if (!Array.isArray(parsed)) {
+      throw new AIOutputValidationError('建議卡輸出不是陣列')
+    }
+
+    return parsed.map((item) => {
+      const raw = item as Record<string, unknown>
+      return {
+        id: crypto.randomUUID(),
+        sopId: raw.sopId,
+        sopTitle: raw.sopTitle,
+        text: raw.text,
+        confidence: raw.confidence,
+        rationale: raw.rationale,
+        tone: raw.tone,
+        requiresData: raw.requiresData,
+        supersededBy: null,
+      } as SuggestionCard
     })
   }
 

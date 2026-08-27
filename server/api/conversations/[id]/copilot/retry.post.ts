@@ -10,7 +10,9 @@
  */
 
 import { z } from 'zod'
+import { controlFromMode } from '../../../../../shared/types/conversation.js'
 import { retryBlock } from '../../../../services/copilot-analysis.js'
+import { useCopilotRuntime } from '../../../../services/copilot-runtime.js'
 import { fetchLatest } from '../../../../sources/message-fetch.js'
 import { useStateStore } from '../../../../state/index.js'
 import { conversationIdParam } from '../../../../utils/conversation-param.js'
@@ -19,7 +21,7 @@ import { requireActiveBffSession } from '../../../../utils/session.js'
 import { readBodyAs } from '../../../../utils/validate.js'
 
 const Body = z.object({
-  block: z.enum(['summary', 'sentiment']),
+  block: z.enum(['summary', 'sentiment', 'suggestions']),
 })
 
 export default defineEventHandler(async (event) => {
@@ -32,7 +34,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: '這個對話尚無任何分析結果，無法重試' })
   }
 
-  const targetStatus = block === 'summary' ? state.summaryBlock.status : state.sentimentBlock.status
+  const targetStatus = block === 'summary'
+    ? state.summaryBlock.status
+    : block === 'sentiment'
+      ? state.sentimentBlock.status
+      : state.suggestionBlock.status
   if (targetStatus !== 'error') {
     throw createError({
       statusCode: 409,
@@ -41,10 +47,13 @@ export default defineEventHandler(async (event) => {
   }
 
   const client = imbraceClientFor(session)
+  const aiReplies = controlFromMode(
+    useCopilotRuntime(session.orgId).listPoller.latest(conversationId)?.mode,
+  ).aiReplies
   void (async () => {
     try {
       const history = await fetchLatest(client, conversationId)
-      await retryBlock(conversationId, block, history)
+      await retryBlock(conversationId, block, history, aiReplies)
     }
     catch (err) {
       console.error(`[copilot-analysis] ${conversationId} ${block} 手動重試取歷史失敗:`, err instanceof Error ? err.message : String(err))

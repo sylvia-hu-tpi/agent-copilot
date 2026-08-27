@@ -38,7 +38,9 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
     organizationId: requireEnv('IMBRACE_ORGANIZATION_ID'),
     env: 'stable',
   })
-  const provider = new ImbraceAgentProvider(client, summaryAgentId, sentimentAgentId)
+  // 本 probe 只驗證 summarize()／analyzeSentiment()，suggestionAgentId 非必要——
+  // 缺少時傳空字串即可（suggest() 未在本 probe 被呼叫）
+  const provider = new ImbraceAgentProvider(client, summaryAgentId, sentimentAgentId, env('IMBRACE_SUGGESTION_AGENT_ID') ?? '')
 
   let summaryOk = 0
   let sentimentOk = 0

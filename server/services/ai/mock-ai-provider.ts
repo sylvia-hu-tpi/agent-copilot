@@ -10,19 +10,24 @@ import type {
   AIProvider,
   ConversationSummary,
   SentimentPoint,
+  SuggestionCard,
 } from '../../../shared/types/copilot.js'
 import type { Message } from '../../../shared/types/conversation.js'
+import type { KnowledgeHit } from '../../../shared/types/knowledge.js'
 
 export interface MockAIProviderOptions {
   /** 每次呼叫前的延遲（ms）—— 測試用，模擬 AI 呼叫的執行時間 */
   summarizeDelayMs?: number
   sentimentDelayMs?: number
+  suggestDelayMs?: number
   /** 每次呼叫時執行；回傳 Error 即拋出該錯誤，回傳 null 表示這次不失敗 */
   summarizeFailure?: () => Error | null
   sentimentFailure?: () => Error | null
+  suggestFailure?: () => Error | null
   /** 回傳不符合 Zod schema 的輸出（空字串 intent／超出範圍的 score），測試驗證失敗路徑用 */
   invalidSummaryOutput?: boolean
   invalidSentimentOutput?: boolean
+  invalidSuggestOutput?: boolean
 }
 
 function sleep(ms: number): Promise<void> {
@@ -78,5 +83,36 @@ export class MockAIProvider implements AIProvider {
       label: 'neutral' as const,
       drivers: [],
     }))
+  }
+
+  async suggest(input: {
+    history: Message[]
+    knowledgeHits: KnowledgeHit[]
+    aiReplies: boolean
+  }): Promise<SuggestionCard[]> {
+    if (this.opts.suggestDelayMs) await sleep(this.opts.suggestDelayMs)
+
+    const failure = this.opts.suggestFailure?.()
+    if (failure) throw failure
+
+    if (this.opts.invalidSuggestOutput) {
+      // text 為空字串 —— schema 驗證要求 min(1)，測試用的格式外輸出
+      return [{ text: '' }] as unknown as SuggestionCard[]
+    }
+
+    const hit = input.knowledgeHits[0]
+    return [
+      {
+        id: `mock-suggestion-${input.history.length}`,
+        sopId: hit?.id ?? null,
+        sopTitle: hit?.title ?? null,
+        text: '建議先向客戶致歉，並確認目前的處理進度',
+        confidence: null,
+        rationale: '客戶語氣顯示不滿，建議先安撫再處理',
+        tone: 'apologetic' as const,
+        requiresData: [],
+        supersededBy: null,
+      },
+    ]
   }
 }

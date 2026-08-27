@@ -1,5 +1,5 @@
 /**
- * 摘要／情緒分析管線 —— specs/001-sentiment-panel/plan.md、data-model.md。
+ * 摘要／情緒／建議卡分析管線 —— specs/001-sentiment-panel、specs/002-suggestion-knowledge-search。
  *
  * 冷啟動（JOIN）與增量（新客戶發言）共用同一套邏輯：
  *   ① 呼叫 AIProvider 前先把該區塊標為 'analyzing' 並立即 publish（不等待 AI 呼叫），
@@ -11,6 +11,9 @@
  *   ⑥ 寫回 CopilotAnalysisState（與 CopilotSession 是不同物件，見 server/state/types.ts）。
  *   ⑦ publish 最終結果事件；錯誤記錄僅留 conversationId、失敗分類、錯誤類別與 HTTP 狀態碼
  *      （憲法 1.5，research.md #6）——不含訊息全文或 drivers，這些都不是個資。
+ *
+ * 建議卡（specs/002-suggestion-knowledge-search）額外多兩步：知識庫檢索（不重試，
+ * 失敗即以空集合續行，FR-004）與白名單後驗＋confidence 強制歸零（憲法 4.3、4.4）。
  */
 
 import type { Message } from '../../shared/types/conversation.js'
@@ -19,7 +22,10 @@ import type {
   SentimentMarker,
   SentimentPoint,
   SentimentTimelineEntry,
+  SuggestionCard,
 } from '../../shared/types/copilot.js'
+import type { KnowledgeHit } from '../../shared/types/knowledge.js'
+import type { WatchPriority } from '../sources/types.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
 import type { CopilotAnalysisState } from '../state/types.js'
@@ -32,9 +38,10 @@ import {
   RetryExhaustedError,
   withRetry,
 } from './ai/retry-policy.js'
-import { parseConversationSummary, parseSentimentPoints } from './ai/schemas.js'
+import { parseConversationSummary, parseSentimentPoints, parseSuggestionCards } from './ai/schemas.js'
+import { useKnowledgeProvider } from './knowledge/index.js'
 
-export type AnalysisBlock = 'summary' | 'sentiment'
+export type AnalysisBlock = 'summary' | 'sentiment' | 'suggestions'
 
 /** sliding TTL：每次讀取或寫入皆續期。見 data-model.md「CopilotAnalysisState」生命週期一節 */
 const ANALYSIS_STATE_TTL_MS = 2 * 60 * 60 * 1000
@@ -89,6 +96,7 @@ function initialState(conversationId: string): CopilotAnalysisState {
     conversationId,
     summaryBlock: { status: 'empty', summary: null, updatedAt: at },
     sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: at },
+    suggestionBlock: { status: 'empty', cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, updatedAt: at },
   }
 }
 
@@ -103,8 +111,8 @@ async function ensureState(conversationId: string): Promise<CopilotAnalysisState
 
 /**
  * ⚠️ 即使 `getAnalysisState()`／`setAnalysisState()` 內部沒有任何 `await`，
- *    async function 呼叫本身一定會讓出至少一個 microtask —— 摘要／情緒兩個區塊
- *    透過 `Promise.all()` 並行執行時，若不序列化，兩者的 read-modify-write 會交錯，
+ *    async function 呼叫本身一定會讓出至少一個 microtask —— 摘要／情緒／建議卡三個區塊
+ *    透過 `Promise.all()` 並行執行時，若不序列化，各自的 read-modify-write 會交錯，
  *    後寫入者會拿著「對方尚未更新前」的舊快照覆蓋回去，把對方剛寫入的欄位悄悄復原。
  *    因此同一個 conversationId 的所有更新一律排進同一條佇列，逐一執行。
  */
@@ -135,11 +143,18 @@ async function publishBlock(conversationId: string, block: AnalysisBlock, state:
       summary: state.summaryBlock,
     })
   }
-  else {
+  else if (block === 'sentiment') {
     await useEventBus().publish(conversationTopic(conversationId), {
       type: 'sentiment.updated',
       conversationId,
       sentiment: state.sentimentBlock,
+    })
+  }
+  else {
+    await useEventBus().publish(conversationTopic(conversationId), {
+      type: 'suggestion.updated',
+      conversationId,
+      suggestion: state.suggestionBlock,
     })
   }
 }
@@ -168,12 +183,13 @@ function logFailure(conversationId: string, block: AnalysisBlock, kind: FailureK
 async function beginAnalyzing(conversationId: string, block: AnalysisBlock): Promise<void> {
   const next = await updateAnalysisState(conversationId, (state) => {
     const at = nowIso()
-    // firstFailureAt／retryAttempt 僅在 status ∈ {retrying, error} 時有值（data-model.md）——
-    // 這是一次全新的嘗試（含手動重試 error → analyzing），上一輪失敗序列的時間戳不再適用，
-    // 否則殘留的舊 firstFailureAt 會讓前端／測試誤以為本輪早就逾了 40 秒預算。
-    return block === 'summary'
-      ? { ...state, summaryBlock: { ...state.summaryBlock, status: 'analyzing' as const, firstFailureAt: undefined, retryAttempt: undefined, updatedAt: at } }
-      : { ...state, sentimentBlock: { ...state.sentimentBlock, status: 'analyzing' as const, firstFailureAt: undefined, retryAttempt: undefined, updatedAt: at } }
+    if (block === 'summary') {
+      return { ...state, summaryBlock: { ...state.summaryBlock, status: 'analyzing' as const, firstFailureAt: undefined, retryAttempt: undefined, updatedAt: at } }
+    }
+    if (block === 'sentiment') {
+      return { ...state, sentimentBlock: { ...state.sentimentBlock, status: 'analyzing' as const, firstFailureAt: undefined, retryAttempt: undefined, updatedAt: at } }
+    }
+    return { ...state, suggestionBlock: { ...state.suggestionBlock, status: 'analyzing' as const, firstFailureAt: undefined, retryAttempt: undefined, updatedAt: at } }
   })
   await publishBlock(conversationId, block, next)
 }
@@ -185,27 +201,40 @@ async function publishRetrying(
 ): Promise<void> {
   const next = await updateAnalysisState(conversationId, (state) => {
     const at = nowIso()
-    return block === 'summary'
-      ? {
-          ...state,
-          summaryBlock: {
-            ...state.summaryBlock,
-            status: 'retrying' as const,
-            retryAttempt: info.attempt,
-            firstFailureAt: info.firstFailureAt,
-            updatedAt: at,
-          },
-        }
-      : {
-          ...state,
-          sentimentBlock: {
-            ...state.sentimentBlock,
-            status: 'retrying' as const,
-            retryAttempt: info.attempt,
-            firstFailureAt: info.firstFailureAt,
-            updatedAt: at,
-          },
-        }
+    if (block === 'summary') {
+      return {
+        ...state,
+        summaryBlock: {
+          ...state.summaryBlock,
+          status: 'retrying' as const,
+          retryAttempt: info.attempt,
+          firstFailureAt: info.firstFailureAt,
+          updatedAt: at,
+        },
+      }
+    }
+    if (block === 'sentiment') {
+      return {
+        ...state,
+        sentimentBlock: {
+          ...state.sentimentBlock,
+          status: 'retrying' as const,
+          retryAttempt: info.attempt,
+          firstFailureAt: info.firstFailureAt,
+          updatedAt: at,
+        },
+      }
+    }
+    return {
+      ...state,
+      suggestionBlock: {
+        ...state.suggestionBlock,
+        status: 'retrying' as const,
+        retryAttempt: info.attempt,
+        firstFailureAt: info.firstFailureAt,
+        updatedAt: at,
+      },
+    }
   })
   await publishBlock(conversationId, block, next)
 }
@@ -217,27 +246,40 @@ async function finishBlockError(conversationId: string, block: AnalysisBlock, er
 
   const next = await updateAnalysisState(conversationId, (state) => {
     const at = nowIso()
-    return block === 'summary'
-      ? {
-          ...state,
-          summaryBlock: {
-            ...state.summaryBlock,
-            status: 'error' as const,
-            retryAttempt: undefined,
-            firstFailureAt,
-            updatedAt: at,
-          },
-        }
-      : {
-          ...state,
-          sentimentBlock: {
-            ...state.sentimentBlock,
-            status: 'error' as const,
-            retryAttempt: undefined,
-            firstFailureAt,
-            updatedAt: at,
-          },
-        }
+    if (block === 'summary') {
+      return {
+        ...state,
+        summaryBlock: {
+          ...state.summaryBlock,
+          status: 'error' as const,
+          retryAttempt: undefined,
+          firstFailureAt,
+          updatedAt: at,
+        },
+      }
+    }
+    if (block === 'sentiment') {
+      return {
+        ...state,
+        sentimentBlock: {
+          ...state.sentimentBlock,
+          status: 'error' as const,
+          retryAttempt: undefined,
+          firstFailureAt,
+          updatedAt: at,
+        },
+      }
+    }
+    return {
+      ...state,
+      suggestionBlock: {
+        ...state.suggestionBlock,
+        status: 'error' as const,
+        retryAttempt: undefined,
+        firstFailureAt,
+        updatedAt: at,
+      },
+    }
   })
   await publishBlock(conversationId, block, next)
 }
@@ -375,10 +417,85 @@ async function analyzeSentimentBatch(conversationId: string, messages: Message[]
   }
 }
 
+// ── 建議卡（specs/002-suggestion-knowledge-search）──────────────────────
+
+/**
+ * FR-003、憲法 4.3：`sopId` 非 null 時必須存在於呼叫當下 `knowledgeHits` 的 `id` 集合，
+ * 否則**整卡捨棄**（不只清空 `sopId`）——那是模型杜撰引用，不是格式問題（research.md #6）。
+ */
+export function whitelistFilter(cards: SuggestionCard[], hits: KnowledgeHit[]): SuggestionCard[] {
+  const validIds = new Set(hits.map(h => h.id))
+  return cards.filter(c => c.sopId === null || validIds.has(c.sopId))
+}
+
+/**
+ * 憲法 4.4、FR-002：`knowledgeHits` 全數 `score === null` 時（iMBrace 路徑恆如此），
+ * `confidence` MUST 被覆寫為 `null`——Zod 的 `.nullable()` 擋不住模型自評的數字，
+ * 只靠 prompt 交代等同沒有規則，因此抽成純函式在寫入前強制執行。
+ */
+export function forceNullConfidence(cards: SuggestionCard[], hits: KnowledgeHit[]): SuggestionCard[] {
+  if (!hits.every(h => h.score === null)) return cards
+  return cards.map(c => (c.confidence === null ? c : { ...c, confidence: null }))
+}
+
+async function analyzeSuggestions(
+  conversationId: string,
+  input: { history: Message[], aiReplies: boolean },
+): Promise<void> {
+  await beginAnalyzing(conversationId, 'suggestions')
+
+  const query = input.history
+    .filter(isTextCustomerMessage)
+    .map(m => m.text)
+    .join('\n')
+
+  let knowledgeHits: KnowledgeHit[] = []
+  try {
+    knowledgeHits = await useKnowledgeProvider().search(query, { topK: 5 })
+  }
+  catch (err) {
+    // FR-004：檢索失敗時以空集合續行（誠實降級，非整塊轉 error）——
+    // 憲法 6.2 v3.0.1 禁止的是「略過檢索」，不是「結果是空的」
+    console.error(`[copilot-analysis] ${conversationId} 知識庫檢索失敗，改以無引用續行:`, err instanceof Error ? err.message : String(err))
+  }
+  // 檢索呼叫**送出後**即視為已跑過，無論結果多寡或是否拋錯 —— 憲法 6.2 v3.0.1 要求的可稽核證據
+  const knowledgeSearch = { ran: true, hitCount: knowledgeHits.length }
+
+  try {
+    const outcome = await withRetry(
+      async () => parseSuggestionCards(await useAIProvider().suggest({
+        history: input.history,
+        knowledgeHits,
+        aiReplies: input.aiReplies,
+      })),
+      { onRetry: info => publishRetrying(conversationId, 'suggestions', info) },
+    )
+
+    const whitelisted = whitelistFilter(outcome.value, knowledgeHits)
+    const cards = forceNullConfidence(whitelisted, knowledgeHits)
+
+    const next = await updateAnalysisState(conversationId, state => ({
+      ...state,
+      suggestionBlock: {
+        status: 'ready' as const,
+        cards,
+        knowledgeSearch,
+        retryAttempt: undefined,
+        firstFailureAt: undefined,
+        updatedAt: nowIso(),
+      },
+    }))
+    await publishBlock(conversationId, 'suggestions', next)
+  }
+  catch (err) {
+    await finishBlockError(conversationId, 'suggestions', err)
+  }
+}
+
 // ── 對外入口 ──────────────────────────────────────────────────────────
 
-/** JOIN 冷啟動（T013）：送交模型全量歷史，兩區塊各自獨立分析並可各自先行顯示（FR-011） */
-export async function runColdStart(conversationId: string, history: Message[]): Promise<void> {
+/** JOIN 冷啟動（T013）：送交模型全量歷史，各區塊各自獨立分析並可各自先行顯示（FR-011） */
+export async function runColdStart(conversationId: string, history: Message[], aiReplies: boolean): Promise<void> {
   await ensureState(conversationId)
   // FR-009：客戶尚無任何發言（含純附件）時維持 empty，不呼叫 AI
   if (!history.some(m => m.sender.type === 'customer')) return
@@ -386,6 +503,7 @@ export async function runColdStart(conversationId: string, history: Message[]): 
   await Promise.all([
     analyzeSummary(conversationId, { history, previousSummary: undefined }),
     analyzeSentimentBatch(conversationId, history),
+    analyzeSuggestions(conversationId, { history, aiReplies }),
   ])
 }
 
@@ -399,11 +517,20 @@ export async function runColdStart(conversationId: string, history: Message[]): 
  * 不代表該對話已經 JOIN。分析範圍以 JOIN 為界（FR-001：「客服 JOIN 對話後」才產生摘要），
  * 因此這裡改成：**若尚無 `CopilotAnalysisState`（代表從未經過 `runColdStart()`／未曾 JOIN
  * 過），直接略過，不得在此建立**——否則單純打開一個對話頁面就會悄悄跑一次分析。
+ *
+ * ⚠️ `priority` 參數（specs/002-suggestion-knowledge-search）目前僅沿呼叫鏈往下傳，
+ *    尚未產生行為差異——背景並行節流與「背景跳過摘要」的實際邏輯於 §11.2（T046-T048）落地。
  */
-export async function runIncremental(conversationId: string, newCustomerMessages: Message[]): Promise<void> {
+export async function runIncremental(
+  conversationId: string,
+  newCustomerMessages: Message[],
+  priority: WatchPriority,
+  aiReplies: boolean,
+): Promise<void> {
   if (newCustomerMessages.length === 0) return
   const state = await useStateStore().getAnalysisState(conversationId)
   if (!state) return
+  void priority // 尚未使用，見上方註解
 
   await Promise.all([
     analyzeSummary(conversationId, {
@@ -411,6 +538,7 @@ export async function runIncremental(conversationId: string, newCustomerMessages
       previousSummary: state.summaryBlock.summary ?? undefined,
     }),
     analyzeSentimentBatch(conversationId, newCustomerMessages),
+    analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }),
   ])
 }
 
@@ -418,13 +546,21 @@ export async function runIncremental(conversationId: string, newCustomerMessages
  * 手動重試單一區塊（FR-008，server/api/conversations/[id]/copilot/retry.post.ts）。
  * 等同冷啟動的該區塊部分：使用全量歷史重新分析，不影響另一區塊（contracts/copilot-retry-api.md）。
  */
-export async function retryBlock(conversationId: string, block: AnalysisBlock, history: Message[]): Promise<void> {
+export async function retryBlock(
+  conversationId: string,
+  block: AnalysisBlock,
+  history: Message[],
+  aiReplies: boolean,
+): Promise<void> {
   await ensureState(conversationId)
   if (block === 'summary') {
     await analyzeSummary(conversationId, { history, previousSummary: undefined })
   }
-  else {
+  else if (block === 'sentiment') {
     await analyzeSentimentBatch(conversationId, history)
+  }
+  else {
+    await analyzeSuggestions(conversationId, { history, aiReplies })
   }
 }
 
@@ -454,7 +590,13 @@ export function newCustomerMessagesSince(state: CopilotAnalysisState, since: Mes
 // ── debounce（§11.1）─────────────────────────────────────────────────
 
 const DEBOUNCE_MS = 1_000
-const debounceTimers = new Map<string, { timer: ReturnType<typeof setTimeout>, pending: Message[] }>()
+interface PendingDebounce {
+  timer: ReturnType<typeof setTimeout>
+  pending: Message[]
+  priority: WatchPriority
+  aiReplies: boolean
+}
+const debounceTimers = new Map<string, PendingDebounce>()
 
 /**
  * 新客戶發言的 debounce 聚合入口（§11.1：1 秒內多筆客戶發言合併為單次分析）。
@@ -462,8 +604,16 @@ const debounceTimers = new Map<string, { timer: ReturnType<typeof setTimeout>, p
  * ⚠️ 呼叫端（server/services/session-manager.ts 的 onMessages()）負責過濾出
  *    `sender.type === 'customer'` 的訊息（FR-005：客服自己送出的訊息 MUST NOT 觸發重新分析）——
  *    本函式信任呼叫端已過濾，不重複檢查。
+ *
+ * ⚠️ `priority` 目前僅隨 entry 一併保存，尚未用於改變 debounce 長度——
+ *    背景 debounce（`BACKGROUND_DEBOUNCE_MS`）於 §11.2（T047）落地。
  */
-export function scheduleIncremental(conversationId: string, customerMessages: Message[]): void {
+export function scheduleIncremental(
+  conversationId: string,
+  customerMessages: Message[],
+  priority: WatchPriority,
+  aiReplies: boolean,
+): void {
   if (customerMessages.length === 0) return
 
   const existing = debounceTimers.get(conversationId)
@@ -472,8 +622,8 @@ export function scheduleIncremental(conversationId: string, customerMessages: Me
 
   const timer = setTimeout(() => {
     debounceTimers.delete(conversationId)
-    void runIncremental(conversationId, pending)
+    void runIncremental(conversationId, pending, priority, aiReplies)
   }, DEBOUNCE_MS)
   timer.unref?.()
-  debounceTimers.set(conversationId, { timer, pending })
+  debounceTimers.set(conversationId, { timer, pending, priority, aiReplies })
 }

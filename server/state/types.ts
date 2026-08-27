@@ -10,7 +10,7 @@
 
 import type { OrganizationChoice } from '../../shared/types/auth.js'
 import type { PresenceEntry } from '../../shared/types/conversation.js'
-import type { SentimentBlock, SummaryBlock } from '../../shared/types/copilot.js'
+import type { SentimentBlock, SuggestionBlock, SummaryBlock } from '../../shared/types/copilot.js'
 
 // ── BFF Session（§7.1 / §7.2）──────────────────────────────────────────
 
@@ -98,6 +98,8 @@ export interface CopilotAnalysisState {
   conversationId: string
   summaryBlock: SummaryBlock
   sentimentBlock: SentimentBlock
+  /** 新增（specs/002-suggestion-knowledge-search） */
+  suggestionBlock: SuggestionBlock
   /** debounce 計時器用的最後一次觸發時間戳（epoch ms），非對外欄位，供 copilot-analysis.ts 內部使用 */
   lastAnalysisTriggerAt?: number
 }
@@ -140,6 +142,16 @@ export interface StateStore {
    * `if (await store.seen(key, ttl)) return`。
    */
   seen(eventKey: string, ttlMs: number): Promise<boolean>
+
+  // 背景 JOIN 持久追蹤（specs/002-suggestion-knowledge-search/research.md #8）——
+  // 獨立於 watcher refcount，供 SSE 重連復原背景 watch 用。不設 TTL：JOIN／LEAVE 是明確操作。
+
+  /** JOIN 成功時呼叫；冪等（重複呼叫同一組合不產生副作用） */
+  addJoinedConversation(operatorId: string, conversationId: string): Promise<void>
+  /** LEAVE 成功時呼叫 */
+  removeJoinedConversation(operatorId: string, conversationId: string): Promise<void>
+  /** SSE 連線建立時查詢，用於重建背景 watch */
+  listJoinedConversations(operatorId: string): Promise<string[]>
 }
 
 export type Unsubscribe = () => void

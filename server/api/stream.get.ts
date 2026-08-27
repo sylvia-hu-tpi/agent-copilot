@@ -132,7 +132,7 @@ export default defineEventHandler(async (event) => {
     // 情緒面板重連快照 + 補跑（specs/001-sentiment-panel FR-010，T010c）——
     // ⚠️ 純 SSE 推播只在狀態變動時發事件；若離開期間沒有新客戶發言就不會有任何事件，
     //    重新連線的前端會永遠拿不到已保留的結果，因此必須像 control.updated 一樣主動送一次快照。
-    void sendAnalysisSnapshotAndResume(conversationId)
+    void sendAnalysisSnapshotAndResume(conversationId, priority, controlFromMode(mode).aiReplies)
 
     return () => {
       offTopic()
@@ -145,20 +145,25 @@ export default defineEventHandler(async (event) => {
    * 離開期間累積的客戶發言。⚠️ 快照失敗（含補跑判斷本身）不得影響這條 SSE 連線的
    * 其餘功能（憲法 3.2）——僅記錄，不拋出。
    */
-  async function sendAnalysisSnapshotAndResume(conversationId: string): Promise<void> {
+  async function sendAnalysisSnapshotAndResume(
+    conversationId: string,
+    priority: 'foreground' | 'background',
+    aiReplies: boolean,
+  ): Promise<void> {
     try {
       const analysisState = await store.getAnalysisState(conversationId)
       if (!analysisState) return
 
       await send({ type: 'summary.updated', conversationId, summary: analysisState.summaryBlock })
       await send({ type: 'sentiment.updated', conversationId, sentiment: analysisState.sentimentBlock })
+      await send({ type: 'suggestion.updated', conversationId, suggestion: analysisState.suggestionBlock })
 
       const since = await runtime.messageSource.fetchSince(conversationId, lastCoveredMessageId(analysisState))
       // ⚠️ fetchSince() 的「找不到錨點時回傳整批」約定要求呼叫端自行去重，
       // 見 newCustomerMessagesSince() 的說明
       const newCustomerMessages = newCustomerMessagesSince(analysisState, since)
       if (newCustomerMessages.length > 0) {
-        void runIncremental(conversationId, newCustomerMessages)
+        void runIncremental(conversationId, newCustomerMessages, priority, aiReplies)
       }
     }
     catch (err) {

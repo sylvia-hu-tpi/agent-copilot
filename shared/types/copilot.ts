@@ -8,6 +8,7 @@
  */
 
 import type { Message } from './conversation.js'
+import type { KnowledgeHit } from './knowledge.js'
 
 // ── 區塊狀態 ──────────────────────────────────────────────────────────
 
@@ -113,13 +114,61 @@ export function isSentimentAlerting(timeline: SentimentTimelineEntry[]): boolean
   return false
 }
 
+// ── 建議卡（specs/002-suggestion-knowledge-search/data-model.md §1.1）───
+
+export interface SuggestionCard {
+  id: string
+  /** 必須來自本次 knowledgeHits 集合，經白名單後驗；無引用時為 null（FR-004） */
+  sopId: string | null
+  /** 清理過的知識庫來源標題；sopId 為 null 時亦為 null（見 research.md #2） */
+  sopTitle: string | null
+  /** 可直接送出的回覆全文（繁中、客服語氣） */
+  text: string
+  /** 0–100；無真實依據時為 null，UI 留空不顯示，不得估算填充（憲法 4.4） */
+  confidence: number | null
+  /** 為何建議這句，供客服判斷，不隨「一鍵帶入」帶入 Composer */
+  rationale: string
+  tone: 'apologetic' | 'informative' | 'retention' | 'closing' | 'escalating'
+  /** 需客服補上的實際資料，如「工單編號」；缺乏資料時 MUST NOT 推測填入（憲法 4.5） */
+  requiresData: string[]
+  /**
+   * 這張卡是否已被同事或 AI 的後續回覆搶先說掉（FR-015、US4）。
+   * `null` = 尚未評估過重複性（例如卡片剛產生）；有值時代表已完成一次重複性判定。
+   */
+  supersededBy: { kind: 'agent' | 'ai', messageId: string } | null
+}
+
+export interface SuggestionBlock {
+  status: AnalysisBlockStatus
+  retryAttempt?: number
+  firstFailureAt?: string
+  /**
+   * 依生成順序排列。張數上限 3–5 張（ARCHITECTURE §14.6）於**生成階段**落實
+   * （prompt 明示上限，FR-001），此欄位不做事後截斷——截掉的卡片已經付出過 AI 呼叫成本。
+   */
+  cards: SuggestionCard[]
+  /**
+   * 本次生成所依據的知識庫檢索「發生了什麼」（憲法 6.2 v3.0.1 要求的可稽核證據）。
+   *
+   * ⚠️ 這裡**必須是兩個欄位**，不能只留一個計數：
+   *   - `ran: false`              → 根本沒查（憲法 6.2 禁止的情形，正常路徑不該出現）
+   *   - `ran: true,  hitCount: 0` → 查了但 0 命中，或呼叫失敗後以空集合續行（FR-004 允許的誠實降級）
+   *   - `ran: true,  hitCount: n` → 有命中；模型仍可能判斷全部無關而不引用
+   */
+  knowledgeSearch: { ran: boolean, hitCount: number }
+  updatedAt: string
+}
+
 // ── AIProvider 介面（docs/ARCHITECTURE.md §8.2b）───────────────────────
 
-/**
- * ⚠️ `suggest` 不在本功能範圍內（建議卡屬後續功能），介面上刻意省略——
- *    等該功能落地時再擴充，不要為了「介面完整」預先加上用不到的方法。
- */
 export interface AIProvider {
   summarize(input: { history: Message[], previousSummary?: ConversationSummary }): Promise<ConversationSummary>
   analyzeSentiment(input: { messages: Message[] }): Promise<SentimentPoint[]>
+  /** knowledgeHits 由呼叫端先查好傳入，agent 只能從其中選 sopId（§11.6①的流程） */
+  suggest(input: {
+    history: Message[]
+    knowledgeHits: KnowledgeHit[]
+    /** Hybrid 模式下 AI 也在自動回覆（FR-016），prompt 需知悉並以補位性質為優先 */
+    aiReplies: boolean
+  }): Promise<SuggestionCard[]>
 }

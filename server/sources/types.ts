@@ -92,4 +92,10 @@ export interface MessageSource {
 
   /** 外部訊號說「這個對話有新東西了」（§9.3.1 第一層通知第二層），立刻拉一次 */
   poke(conversationId: string): void
+
+  /**
+   * 該對話目前對任一位客服而言是否為前景（specs/002-suggestion-knowledge-search/research.md #9）。
+   * 對話目前無任何訂閱者時回傳 `'background'`（安全預設）。
+   */
+  getPriority(conversationId: string): WatchPriority
 }
