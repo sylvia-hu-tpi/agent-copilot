@@ -31,6 +31,12 @@ plan.md／data-model.md 引用章節號。
 
 1. 呼叫知識庫 agent（掛 Knowledge Hub，見下方決策 4）的 `streamChat()`，過濾 `tool-output-available`
    且 `toolName === 'RAGknowledge'` 的事件，取其 `output.result`。
+   ⚠️ **實作時二次核對 fixture 發現**：`tool-output-available` 事件本身**不帶 `toolName`**——
+   該欄位只出現在同一次工具呼叫較早的 `tool-input-start`／`tool-input-available` 事件上，
+   兩者以 `toolCallId` 相關聯。因此實作（`AgentKnowledgeProvider`）改為先建立
+   `toolCallId → toolName` 對照表，再用它反查 `tool-output-available` 屬於哪個工具——
+   直接比對 `tool-output-available` 事件的 `toolName` 恆為 `undefined`，會靜默找不到任何輸出。
+   本節原描述的資料流向不變，只有比對方式修正。
 2. 以正則 `/\[Source: ([^\]]+)\]\n([\s\S]*?)(?=\n\[Source: |$)/g` 切出「(檔名, chunk 原文)」配對——
    **每個 chunk 出現即為一筆 `KnowledgeHit`**，同一檔名重複出現也各自成一筆（見決策 2 的理由）。
 3. 檔名先做 `decodeURIComponent()`（樣本檔名是雙重 URL-encode，需 decode 兩次）還原可讀標題。

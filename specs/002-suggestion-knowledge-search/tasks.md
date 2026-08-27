@@ -29,7 +29,7 @@ description: "Task list template for feature implementation"
 
 ## Phase 1: Setup
 
-- [ ] T001 在 [nuxt.config.ts](nuxt.config.ts) 既有的 `NUXT_IMBRACE_*` 橋接表（約第 30-41 行，緊接
+- [X] T001 在 [nuxt.config.ts](nuxt.config.ts) 既有的 `NUXT_IMBRACE_*` 橋接表（約第 30-41 行，緊接
   `NUXT_IMBRACE_SENTIMENT_AGENT_ID`）新增兩筆：`NUXT_IMBRACE_KNOWLEDGE_AGENT_ID` → `IMBRACE_KNOWLEDGE_AGENT_ID`、
   `NUXT_IMBRACE_SUGGESTION_AGENT_ID` → `IMBRACE_SUGGESTION_AGENT_ID`（research.md #4）
 
@@ -41,13 +41,13 @@ description: "Task list template for feature implementation"
 
 ### 型別
 
-- [ ] T002 [P] 新增 `shared/types/knowledge.ts`，**一次寫入最終形狀**（data-model.md §2、§5）：
+- [X] T002 [P] 新增 `shared/types/knowledge.ts`，**一次寫入最終形狀**（data-model.md §2、§5）：
   `KnowledgeHit`（`id`/`title`/`snippet`/`score: number | null`/`updatedAt: string | null`/`sourceRef`）、
   `KnowledgeProvider`（`search(query, opts?: { topK?: number, fileId?: string, timeoutMs?: number }): Promise<KnowledgeHit[]>`
   —— `fileId` 供「展開全文」限定檔案內搜尋（US2／research.md #3），`timeoutMs` 供 SC-002 的逾時保障；
   **不設 `channel` 選項**，本功能無任何使用者）、`KnowledgeSearchRequest`（`{ query: string, expandRef?: string }`）、
   `KnowledgeSearchResponse`（`{ hits: KnowledgeHit[], degraded?: boolean }`）
-- [ ] T003 修改 `shared/types/copilot.ts`：新增 `SuggestionCard`（`id`/`sopId`/`sopTitle`/`text`/
+- [X] T003 修改 `shared/types/copilot.ts`：新增 `SuggestionCard`（`id`/`sopId`/`sopTitle`/`text`/
   `confidence: number | null`/`rationale`/`tone`/`requiresData`/`supersededBy`，data-model.md §1.1）與
   `SuggestionBlock`（`status`/`retryAttempt?`/`firstFailureAt?`/`cards`/
   **`knowledgeSearch: { ran: boolean, hitCount: number }`**/`updatedAt`，§1.1——⚠️ 必須是兩個欄位，
@@ -55,33 +55,33 @@ description: "Task list template for feature implementation"
   在 `AIProvider` 介面新增 `suggest(input: { history, knowledgeHits: KnowledgeHit[], aiReplies: boolean }): Promise<SuggestionCard[]>`
   （data-model.md §1.2）；**同時刪除第 118-121 行「`suggest` 不在本功能範圍內，介面上刻意省略」的過期註解**
   （CLAUDE.md「正典文件修改後必須 grep 舊說法」的程式碼註解版本）（依賴 T002 的 `KnowledgeHit`）
-- [ ] T004 修改 `shared/types/events.ts`：`CopilotEvent` 新增
+- [X] T004 修改 `shared/types/events.ts`：`CopilotEvent` 新增
   `{ type: 'suggestion.updated', conversationId: string, suggestion: SuggestionBlock }` 成員（contracts/copilot-suggestion-events.md）；
   **同時把第 65 行「M3 的 suggestions 屆時再加」的過期註解改為反映本功能已落地**（依賴 T003）
-- [ ] T005 [P] 修改 `server/state/types.ts`：`CopilotAnalysisState` 新增 `suggestionBlock: SuggestionBlock` 欄位
+- [X] T005 [P] 修改 `server/state/types.ts`：`CopilotAnalysisState` 新增 `suggestionBlock: SuggestionBlock` 欄位
   （data-model.md §3.1）；`StateStore` 介面新增三個 async 方法 `addJoinedConversation(operatorId, conversationId)`／
   `removeJoinedConversation(operatorId, conversationId)`／`listJoinedConversations(operatorId): Promise<string[]>`
   （data-model.md §3.2，供 research.md #8 的背景 watch 復原使用）（依賴 T003 的 `SuggestionBlock`）
-- [ ] T006 修改 `server/state/memory-store.ts`：實作 T005 新增的三個 `StateStore` 方法，內部用
+- [X] T006 修改 `server/state/memory-store.ts`：實作 T005 新增的三個 `StateStore` 方法，內部用
   `Map<operatorId, Set<conversationId>>`，**不設 TTL**（JOIN/LEAVE 是明確操作，data-model.md §3.2 理由）；
   `addJoinedConversation`/`removeJoinedConversation` 需冪等（依賴 T005）
-- [ ] T051 修改 `server/api/conversations/[id]/join.post.ts`：JOIN 成功後呼叫
+- [X] T051 修改 `server/api/conversations/[id]/join.post.ts`：JOIN 成功後呼叫
   `store.addJoinedConversation(session.operatorId, ctx.id)`（依賴 T006）
-- [ ] T052 修改 `server/api/conversations/[id]/leave.post.ts`：LEAVE 成功後呼叫
+- [X] T052 修改 `server/api/conversations/[id]/leave.post.ts`：LEAVE 成功後呼叫
   `store.removeJoinedConversation(session.operatorId, ctx.id)`（依賴 T006）
 
   > ⚠️ T051／T052 的 ID 屬 US4 區段，但**刻意置於 Foundational**：它們是
   > `listJoinedConversations()` 的唯一寫入端，US2 的 T035（Phase 4）與 US4 的 T056 都是讀取端。
   > 留在 Phase 6 會讓 US2 的 JOIN 門檻恆回 403。ID 不重編，避免依賴關係全面位移。
-- [ ] T007 [P] 修改 `server/sources/types.ts`：`MessageSource` 介面新增 `getPriority(conversationId: string): WatchPriority`
+- [X] T007 [P] 修改 `server/sources/types.ts`：`MessageSource` 介面新增 `getPriority(conversationId: string): WatchPriority`
   （research.md #9）
-- [ ] T008 修改 `server/sources/polling-message-source.ts`：實作 `getPriority()`，直接回傳
+- [X] T008 修改 `server/sources/polling-message-source.ts`：實作 `getPriority()`，直接回傳
   `this.aggregateState(entry).priority`（對應既有私有方法，約第 209-217 行），對話目前無任何訂閱者時回傳
   `'background'`（安全預設）；並於 `test/message-source.test.ts` 新增對應測試（依賴 T007）
 
 ### 知識庫檢索
 
-- [ ] T009 [P] 新增 `server/services/knowledge/agent-knowledge-provider.ts`：`AgentKnowledgeProvider implements KnowledgeProvider`，
+- [X] T009 [P] 新增 `server/services/knowledge/agent-knowledge-provider.ts`：`AgentKnowledgeProvider implements KnowledgeProvider`，
   呼叫知識庫 agent 的 `streamChat()`、過濾 `tool-output-available` 且 `toolName === 'RAGknowledge'` 的事件，
   以正則 `/\[Source: ([^\]]+)\]\n([\s\S]*?)(?=\n\[Source: |$)/g` 切出 chunk、對檔名做兩次 `decodeURIComponent()`、
   比對 `folder_info.folders[].files[].name` 取得 `id`（比對不到時退回檔名雜湊）、以正則
@@ -90,25 +90,25 @@ description: "Task list template for feature implementation"
   匯出常數 `KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000`（plan.md Constraints：短於 SC-002 的 10 秒門檻），
   `opts.timeoutMs` 可覆寫，逾時即拋錯交由呼叫端降級（**不重試**：檢索失敗時 FR-004 允許以空集合續行，
   重試只是再等一次）（依賴 T002）
-- [ ] T010 [P] 新增 `server/services/knowledge/mock-knowledge-provider.ts`：`MockKnowledgeProvider implements KnowledgeProvider`，
+- [X] T010 [P] 新增 `server/services/knowledge/mock-knowledge-provider.ts`：`MockKnowledgeProvider implements KnowledgeProvider`，
   回傳固定樣本 `KnowledgeHit[]`，比照 `server/services/ai/mock-ai-provider.ts` 的故障開關模式提供
   `MockKnowledgeProviderOptions`（`searchDelayMs?`/`searchFailure?: () => Error | null`）供測試用（依賴 T002）
-- [ ] T011 新增 `server/services/knowledge/index.ts`：`useKnowledgeProvider()`/`setKnowledgeProvider()` 裝配入口，
+- [X] T011 新增 `server/services/knowledge/index.ts`：`useKnowledgeProvider()`/`setKnowledgeProvider()` 裝配入口，
   比照 `server/services/ai/index.ts` 的 `envVar()` 雙鍵名讀法與 globalThis 單例模式；讀取
   `NUXT_IMBRACE_KNOWLEDGE_AGENT_ID`/`IMBRACE_KNOWLEDGE_AGENT_ID`（連同既有 API_KEY/ORG_ID），缺憑證時退回
   `MockKnowledgeProvider` 並印警告（research.md #4）（依賴 T009、T010）
 
 ### AI 建議卡生成
 
-- [ ] T012 修改 `server/services/ai/schemas.ts`：新增 `SuggestionCardSchema`（Zod；`tone` 用 `z.enum`、
+- [X] T012 修改 `server/services/ai/schemas.ts`：新增 `SuggestionCardSchema`（Zod；`tone` 用 `z.enum`、
   `confidence`/`sopId`/`sopTitle` 為 `.nullable()`）與 `parseSuggestionCards(raw): SuggestionCard[]`，**單張卡片**
   驗證失敗即跳過（不使整批失敗，比照既有 `riskFlags` 容錯精神，research.md #6）。
   ⚠️ schema 的 `.nullable()` **允許數字通過**，擋不住模型自評的 `confidence`——憲法 4.4 的強制歸零
   在 T018 落實，不要以為宣告成 nullable 就完事（依賴 T003）
-- [ ] T013 [P] 修改 `server/services/ai/mock-ai-provider.ts`：新增 `suggest()` 方法與對應的
+- [X] T013 [P] 修改 `server/services/ai/mock-ai-provider.ts`：新增 `suggest()` 方法與對應的
   `suggestDelayMs?`/`suggestFailure?`/`invalidSuggestOutput?` 故障開關（比照既有 `summarize`/`analyzeSentiment`
   的 `MockAIProviderOptions` 模式），回傳固定樣本 `SuggestionCard[]`（依賴 T003）
-- [ ] T014 [P] 修改 `server/services/ai/imbrace-agent-provider.ts`：`ImbraceAgentProvider` constructor 新增
+- [X] T014 [P] 修改 `server/services/ai/imbrace-agent-provider.ts`：`ImbraceAgentProvider` constructor 新增
   `suggestionAgentId` 參數；新增 `suggest()` 方法，組 prompt（客戶發言 history + 傳入的 `knowledgeHits` 列表 +
   `aiReplies` 旗標，見 research.md #4「不掛 Knowledge Hub，hits 由呼叫端先查好傳入」），沿用既有
   `extractLeadingJson()`/`callAgent()` 的解析與錯誤處理模式。prompt MUST 明示三件事：
@@ -118,7 +118,7 @@ description: "Task list template for feature implementation"
   ③ 無法確認的具體資料走 `requiresData`，不得編入 `text`（憲法 4.5）。
   ⚠️ 組 prompt 時訊息內容一律取 `Message.text`，**MUST NOT** 讀 `caption`（憲法 6.5／FR-017——
   `caption` 是上傳時的原始檔名，客戶上傳時為空）（依賴 T003）
-- [ ] T015 修改 `server/services/ai/index.ts`：`createProvider()` 新增讀取
+- [X] T015 修改 `server/services/ai/index.ts`：`createProvider()` 新增讀取
   `NUXT_IMBRACE_SUGGESTION_AGENT_ID`/`IMBRACE_SUGGESTION_AGENT_ID`，缺憑證時的警告訊息一併列入，並把
   `suggestionAgentId` 傳入 `new ImbraceAgentProvider(...)`（依賴 T014）
 
@@ -135,14 +135,14 @@ description: "Task list template for feature implementation"
 
 ### Server
 
-- [ ] T016 [US1] 修改 `server/services/copilot-analysis.ts`：`AnalysisBlock` 型別擴充為
+- [X] T016 [US1] 修改 `server/services/copilot-analysis.ts`：`AnalysisBlock` 型別擴充為
   `'summary' | 'sentiment' | 'suggestions'`；`beginAnalyzing()`/`publishRetrying()`/`finishBlockError()`/
   `publishBlock()`（約第 130-243 行）各自新增第三個分支，讀寫 `state.suggestionBlock` 並 publish
   `{ type: 'suggestion.updated', conversationId, suggestion }`
-- [ ] T017 [US1] 修改 `server/services/copilot-analysis.ts`：新增純函式
+- [X] T017 [US1] 修改 `server/services/copilot-analysis.ts`：新增純函式
   `whitelistFilter(cards: SuggestionCard[], hits: KnowledgeHit[]): SuggestionCard[]`——`sopId === null` 或存在於
   `hits` 的 `id` 集合中才保留，否則整卡捨棄（不只清空 `sopId`，research.md #6、FR-003、憲法 4.3）
-- [ ] T018 [US1] 修改 `server/services/copilot-analysis.ts`：新增
+- [X] T018 [US1] 修改 `server/services/copilot-analysis.ts`：新增
   `analyzeSuggestions(conversationId, input: { history: Message[], aiReplies: boolean })`——以 `history` 中
   `sender.type === 'customer'` 的最近幾則 `.text`（**不得使用 `caption`**，FR-017）串接為查詢字串，呼叫
   `useKnowledgeProvider().search(query, { topK: 5 })`（research.md #5；逾時 8 秒由 provider 內建，T009）
@@ -159,7 +159,7 @@ description: "Task list template for feature implementation"
     這個欄位就是該條要求的可稽核證據，不得簡化回單一計數。
   - **檢索失敗不使整塊轉 error**：`search()` 拋錯時捕捉、以 `knowledgeHits = []` 續行生成
     （FR-004 的誠實降級），`ran` 仍為 `true`
-- [ ] T019 [US1] 修改 `server/services/copilot-analysis.ts`：`runColdStart()`／`runIncremental()`／`retryBlock()`／
+- [X] T019 [US1] 修改 `server/services/copilot-analysis.ts`：`runColdStart()`／`runIncremental()`／`retryBlock()`／
   `scheduleIncremental()` 簽章新增 `aiReplies: boolean` 參數並沿呼叫鏈往下傳；`runColdStart()`/`runIncremental()`
   的 `Promise.all()` 加入 `analyzeSuggestions()`（與 summary/sentiment 併行）；`retryBlock()` 的
   `block === 'suggestions'` 分支呼叫 `analyzeSuggestions(conversationId, { history, aiReplies })`（FR-001、
@@ -169,40 +169,40 @@ description: "Task list template for feature implementation"
 > `mode === 'hybrid'`。兩式在 `automation` 與 `null`（從未 JOIN）兩種 mode 下結論不同，
 > 且不會有任何型別錯誤——這正是 §10.2／§10.6 記錄過的靜默失效地雷。
 
-- [ ] T020 [US1] 修改 `server/api/conversations/[id]/join.post.ts`：`triggerColdStartIfNeeded()` 呼叫
+- [X] T020 [US1] 修改 `server/api/conversations/[id]/join.post.ts`：`triggerColdStartIfNeeded()` 呼叫
   `runColdStart()` 時傳入 `aiReplies: controlFromMode(mode).aiReplies`
-- [ ] T021 [US1] 修改 `server/services/session-manager.ts`：`onMessages()`（約第 184-216 行）呼叫
+- [X] T021 [US1] 修改 `server/services/session-manager.ts`：`onMessages()`（約第 184-216 行）呼叫
   `scheduleIncremental()` 前，一次算齊**兩個**新參數並傳入——
   `aiReplies`（`controlFromMode(runtime.listPoller.latest(conversationId)?.mode).aiReplies`）與
   `priority`（`runtime.messageSource.getPriority(conversationId)`，T008）。
   ⚠️ 兩者刻意在同一個任務完成：它們改的是同一個呼叫點的同一行，拆成兩個 Phase 只會讓第二次動工時
   得重讀第一次的成果（`priority` 在 T047／T048 之前不會產生行為差異，提前傳入無害）
   （依賴 T008、T019）
-- [ ] T022 [US1] 修改 `server/api/conversations/[id]/copilot/retry.post.ts`：`Body.block` 的 `z.enum` 新增
+- [X] T022 [US1] 修改 `server/api/conversations/[id]/copilot/retry.post.ts`：`Body.block` 的 `z.enum` 新增
   `'suggestions'`；`targetStatus` 查表新增 `state.suggestionBlock.status` 分支；呼叫 `retryBlock()` 前以
   `controlFromMode(useCopilotRuntime(session.orgId).listPoller.latest(conversationId)?.mode).aiReplies`
   算出 `aiReplies` 一併傳入（contracts/copilot-suggestion-events.md「重試 API 契約擴充」）
-- [ ] T023 [US1] 修改 `server/api/stream.get.ts`：`sendAnalysisSnapshotAndResume()`（約第 148-167 行）新增
+- [X] T023 [US1] 修改 `server/api/stream.get.ts`：`sendAnalysisSnapshotAndResume()`（約第 148-167 行）新增
   `await send({ type: 'suggestion.updated', conversationId, suggestion: analysisState.suggestionBlock })`
   （contracts/copilot-suggestion-events.md「重連快照」）
 
 ### Server 測試
 
-- [ ] T024 [P] [US1] 新增 `test/agent-knowledge-provider.test.ts`：以 fixture
+- [X] T024 [P] [US1] 新增 `test/agent-knowledge-provider.test.ts`：以 fixture
   `scripts/spike/out/11-宏宏企業-knowledge-raw.json` 驗證 chunk 切分、雙重 `decodeURIComponent()`、
   `folder_info` id 比對、`updatedAt` 正則擷取（含擷取不到回傳 `null` 的情境）、`title` 清理後綴
   （research.md #1、#2）
-- [ ] T025 [P] [US1] 新增 `test/suggestion-whitelist.test.ts`：`whitelistFilter()`——合法 `sopId` 保留、
+- [X] T025 [P] [US1] 新增 `test/suggestion-whitelist.test.ts`：`whitelistFilter()`——合法 `sopId` 保留、
   不在白名單的 `sopId` 整卡捨棄（非僅清空欄位）、`sopId === null` 一律保留、全數捨棄後回傳空陣列；
   併測 `forceNullConfidence()`（T018）——hits 全數 `score === null` 時，模型回傳的 `confidence: 87`
   MUST 被覆寫為 `null`（憲法 4.4、FR-002）
-- [ ] T026 [US1] 修改 `test/copilot-analysis.test.ts`：新增 US1 案例——冷啟動的 `Promise.all()` 含
+- [X] T026 [US1] 修改 `test/copilot-analysis.test.ts`：新增 US1 案例——冷啟動的 `Promise.all()` 含
   `analyzeSuggestions()`；`knowledgeHits` 為空時建議卡仍以 `sopId: null` 產生（不因空檢索而不產生建議卡，
   對照 FR-004 與 FR-019 的差異見 data-model.md §1.1 `knowledgeSearch` 註解）；單張卡片 schema 驗證失敗時
   僅該卡被跳過、其餘卡片仍然 ready；全數白名單捨棄後 `status` 仍為 `'ready'`、`cards: []`；
   **`knowledgeSearch.ran` 在每一條成功路徑上皆為 `true`**（憲法 6.2 v3.0.1 的可稽核證據）；
   **含附件的訊息輪只以 `Message.text` 進入 prompt，`caption` 不出現在送給模型的內容裡**（FR-017、憲法 6.5）
-- [ ] T026a [P] [US1] 新增 `test/suggestion-send-path.test.ts`（SC-004 明文要求以自動化測試驗證）：
+- [X] T026a [P] [US1] 新增 `test/suggestion-send-path.test.ts`（SC-004 明文要求以自動化測試驗證）：
   以建議卡「一鍵帶入」與快查「插入為回覆」兩條路徑寫入草稿後送出，斷言 `POST /api/messages` 攜帶的
   `lastMessageId` 版本錨點與客服手動輸入時**完全一致**，撞單檢查照常觸發、無任何繞過路徑
   （FR-006、憲法 7.2／3.3①）。⚠️ 這是本功能唯一直接觸及「刻意阻斷封閉集合」的保證，
@@ -210,12 +210,12 @@ description: "Task list template for feature implementation"
 
 ### App
 
-- [ ] T027 [P] [US1] 修改 `app/composables/useCopilotSession.ts`：新增 `emptySuggestionBlock()`
+- [X] T027 [P] [US1] 修改 `app/composables/useCopilotSession.ts`：新增 `emptySuggestionBlock()`
   （`status: 'empty'`、`cards: []`、`knowledgeSearch: { ran: false, hitCount: 0 }`——尚未查過，
   `ran` 為 `false` 在此是正確的：憲法 6.2 管的是「生成建議卡時不得略過檢索」，不是「初始狀態」）、
   `suggestions: Ref<SuggestionBlock>`，`handle()` 新增 `case 'suggestion.updated'`，`retry()` 的參數型別擴充納入
   `'suggestions'`，切換對話時一併重置為 empty
-- [ ] T028 [P] [US1] 新增 `app/components/copilot/SuggestionCard.vue`：五態呈現（比照
+- [X] T028 [P] [US1] 新增 `app/components/copilot/SuggestionCard.vue`：五態呈現（比照
   `app/components/copilot/SummaryCard.vue` 的模式，`status` 為 `empty`/`analyzing`/`retrying`/`ready`/`error`），
   `ready` 狀態顯示 `text`/`sopTitle`（null 時顯示「未引用知識庫」）/`tone` 標籤/`confidence`（null 時留空不顯示）/
   `requiresData` 清單；「一鍵帶入」按鈕 emit `insert` 事件並帶出 `card.text`（**不含 `rationale`**，
@@ -224,7 +224,7 @@ description: "Task list template for feature implementation"
   **FR-026**（卡片內容不得逐字串流——與憲法 4.3「顯示前驗證、驗不過整張捨棄」不相容，
   串流會讓客服看著讀到一半的卡整張消失）與 **FR-002／憲法 4.4**（`confidence` 為 `null` 時留空不顯示，
   不得改用「—」以外的任何估算或替代數字）
-- [ ] T029 [US1] 新增 `app/components/copilot/SuggestionList.vue`：掛載 `SuggestionCard.vue` × `cards.length`，
+- [X] T029 [US1] 新增 `app/components/copilot/SuggestionList.vue`：掛載 `SuggestionCard.vue` × `cards.length`，
   區分「尚無資料」（`status==='empty'`，FR-014）／「產生中」（`analyzing`/`retrying`，含
   `retryAttempt` 顯示「重試中 (n/2)」）／「本次未產生建議」（`ready` 且 `cards.length===0`，中性文案，非錯誤）／
   「暫時無法產生建議」（`error`，含重試按鈕 emit `retry`）四種可互相區分的狀態；卡片數超出可視高度時捲動而非截斷
@@ -236,15 +236,15 @@ description: "Task list template for feature implementation"
   `error` 狀態可用（失敗的結果不進快取，重試才真的會重新呼叫）。元件註解寫明此約束與理由
   （§11.3 的快取鍵 `{conversationId}:{lastMessageId}` 使同一狀態不會產生不同結果，
   任何「重新產生」都只是給出系統做不到的承諾）（依賴 T028）
-- [ ] T030 [US1] 新增 `app/composables/useOverwriteConfirm.ts`：共用確認流程（research.md #11、FR-018、憲法
+- [X] T030 [US1] 新增 `app/composables/useOverwriteConfirm.ts`：共用確認流程（research.md #11、FR-018、憲法
   8.4）——`request(text: string)`：若當前草稿非空白，設定 `pending.value = text` 等待確認；空白則直接呼叫
   `onApply(text)`；`confirm()`/`cancel()` 控制 `pending` 的解除；供 `SuggestionCard.vue` 的「一鍵帶入」與（US2）
   `KnowledgeSearch.vue` 的「插入為回覆」共用，不使用瀏覽器原生 `confirm()`（需可鍵盤操作）
-- [ ] T031 [US1] 修改 `app/pages/c/[conversationId].vue`：在右欄既有 `CopilotSummaryCard`/`CopilotSentimentGauge`
+- [X] T031 [US1] 修改 `app/pages/c/[conversationId].vue`：在右欄既有 `CopilotSummaryCard`/`CopilotSentimentGauge`
   下方掛載 `<CopilotSuggestionList>`；以 `useOverwriteConfirm()` 包裝草稿寫入，`request()` 的
   `onApply` 呼叫 `draft.text.value = text`；`pending` 非 null 時顯示 inline 確認 UI（沿用 `ac-alert-warn`
   樣式慣例，含「覆蓋」/「取消」兩個可鍵盤操作按鈕）（依賴 T029、T030）
-- [ ] T032 [US1] 修改 `i18n/locales/zh-TW.json`：新增 `copilot.suggestion.*`（title/empty/analyzing/updating/
+- [X] T032 [US1] 修改 `i18n/locales/zh-TW.json`：新增 `copilot.suggestion.*`（title/empty/analyzing/updating/
   retrying/error/readyEmpty/insert/tone 各列舉值標籤/requiresData 標籤/未引用知識庫文案）與
   `copilot.draftOverwrite.*`（confirm/cancel/message）鍵值
 
