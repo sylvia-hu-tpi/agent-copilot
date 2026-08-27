@@ -566,3 +566,87 @@ describe('analyzeSuggestions()（US1，specs/002-suggestion-knowledge-search）'
     expect(querySeen).toBe('這是客戶的原始文字')
   })
 })
+
+// ── US3：故障隔離（specs/002-suggestion-knowledge-search T043）─────────────
+
+describe('建議卡故障隔離（US3）', () => {
+  it('AIProvider.suggest() 失敗時僅 suggestionBlock 轉 error，summaryBlock／sentimentBlock 不受影響', async () => {
+    setAIProvider(new (class extends MockAIProvider {
+      override async suggest(): Promise<SuggestionCard[]> {
+        throw new AIProviderHttpError('boom', 400)
+      }
+    })())
+
+    const id = convId('suggestion-isolate-from-others')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('error')
+    expect(state?.summaryBlock.status).toBe('ready')
+    expect(state?.sentimentBlock.status).toBe('ready')
+  })
+
+  it('反之：摘要／情緒失敗不影響建議卡（三區塊互相獨立）', async () => {
+    setAIProvider(new MockAIProvider({
+      summarizeFailure: () => new AIProviderHttpError('boom', 400),
+      sentimentFailure: () => new AIProviderHttpError('boom', 400),
+    }))
+
+    const id = convId('suggestion-unaffected-by-others')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.summaryBlock.status).toBe('error')
+    expect(state?.sentimentBlock.status).toBe('error')
+    expect(state?.suggestionBlock.status).toBe('ready')
+  })
+
+  it('KnowledgeProvider.search() 失敗時，建議卡不整塊轉 error，改以空 knowledgeHits 續行生成通用建議（FR-004）', async () => {
+    setKnowledgeProvider({
+      search: async () => { throw new Error('知識庫服務暫時不可用') },
+    })
+
+    const id = convId('suggestion-knowledge-fail-degrade')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('ready')
+    expect(state?.suggestionBlock.cards.length).toBeGreaterThan(0)
+    // 憲法 6.2 v3.0.1：檢索確實跑過（送出呼叫），只是失敗了——ran 仍為 true，hitCount 為 0
+    expect(state?.suggestionBlock.knowledgeSearch).toEqual({ ran: true, hitCount: 0 })
+  })
+
+  it('故障開關彼此獨立：只開 searchFailure 時，MockAIProvider.suggest() 本身仍成功', async () => {
+    let suggestCalled = false
+    setAIProvider(new (class extends MockAIProvider {
+      override async suggest(input: Parameters<MockAIProvider['suggest']>[0]): Promise<SuggestionCard[]> {
+        suggestCalled = true
+        return super.suggest(input)
+      }
+    })())
+    setKnowledgeProvider({
+      search: async () => { throw new Error('知識庫故障') },
+    })
+
+    const id = convId('fault-switches-independent')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    expect(suggestCalled).toBe(true)
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('ready')
+  })
+
+  it('故障開關彼此獨立：suggestFailure／summarizeFailure／sentimentFailure 各自只影響自己的區塊', async () => {
+    setAIProvider(new MockAIProvider({
+      suggestFailure: () => new AIProviderHttpError('boom', 400),
+    }))
+
+    const id = convId('suggest-failure-isolated')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('error')
+    expect(state?.summaryBlock.status).toBe('ready')
+    expect(state?.sentimentBlock.status).toBe('ready')
+  })
+})
