@@ -536,19 +536,27 @@ export interface MessageSource {
 
 ```ts
 export interface KnowledgeHit {
+  /** 僅供系統內部白名單核對（憲法 4.3）使用，不對客服顯示——見下方 2026-08-27 訂正 */
   id: string
-  /** 顯示用的條目編號，如 SOP #12 */
-  code: string
   title: string
   snippet: string
   /** 檢索分數（非模型自評）。iMBrace 路徑無分數來源，一律為 null；
    *  換上 viki 的 answer-attribution 後才會有值。UI 依 null 與否決定顯示與否，不得估算填充 */
   score: number | null
-  /** 條目最後更新日期，介面需顯示；過舊條目應標示提醒 */
-  updatedAt: string
+  /** 條目最後更新日期；iMBrace 路徑可能無法可靠取得，為 null 時不觸發過舊提醒（見 §12.4①） */
+  updatedAt: string | null
   sourceRef: { type: 'knowledge' | 'docIQ' | 'board' | 'static'; ref: string }
 }
+```
 
+> **2026-08-27 訂正**：介面原有一個 `code`（顯示用條目編號，如「SOP #12」）欄位，取自
+> `docs/DESIGN_TOKENS.md` §7.2 對設計稿示範文案的判讀。`specs/002-suggestion-knowledge-search`
+> 落地時確認：那組「SOP #12」「SOP #47」是設計稿為展示效果虛構的示範資料，iMBrace 知識庫本身
+> 沒有正式的編號制度（檔案就是一般檔案）。堅持保留一個顯示用編號欄位只能自行杜撰（例如取檔案
+> id 的短版本），對客服沒有實際資訊價值，屬於過度設計，已撤銷此欄位——來源僅以 `title` 顯示，
+> `id` 純供白名單核對，不進 UI。詳見該規格 `research.md` #2、`spec.md` Assumptions。
+
+```ts
 export interface KnowledgeProvider {
   search(query: string, opts?: { topK?: number; channel?: string }): Promise<KnowledgeHit[]>
 }
@@ -1200,7 +1208,7 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 | `StaticSopProvider` | ✅ 開發期 | 讀 `config/sop.yaml`（尚未建立，M2），離線 fallback |
 | ~~自建向量檢索~~ | ❌ 已排除 | 依賴的 `ai.embed()` 回 404 |
 
-無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源（SOP 編號）不可省**，否則憲法 4.3（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
+無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源不可省**（2026-08-27 訂正：此處指的是「來源真實存在、可白名單核對」，不是要顯示一套正式編號——iMBrace 平台本身沒有 SOP 編號制度，介面僅顯示來源標題，見 §8.2 訂正說明），否則憲法 4.3（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
 
 ### 12.3 知識庫快查 UX
 
@@ -1212,16 +1220,43 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 │  ┌───────────────────────────────────┐  │
 │  │ 🔍 訊號異常代碼 重複斷線           │  │
 │  └───────────────────────────────────┘  │
-│  訊號強度異常代碼對照表   SOP #12 · 2026/05│
-│  重複斷線客訴優先工單建立流程 SOP #47 · 2026/03│
+│  訊號強度異常代碼對照表          2026/05 │
+│  重複斷線客訴優先工單建立流程    2026/03 │
 └─────────────────────────────────────────┘
 ```
 
+> 2026-08-27 訂正：此示意圖原畫有「SOP #12」「SOP #47」一類編號，取自 `demo_agentCopilot02.png`
+> 示範文案；已依下方「設計要點」的最終決定移除，僅標題＋更新日期。
+
 **採 inline 而非 modal 的理由**：客服不需離開對話視線即可查詢，modal 會遮蔽訊息流與建議卡。
 
-**設計要點**：結果顯示 `title` + `code` + `updatedAt`，不顯示分數（分數只用於排序）；條目過舊（建議門檻 12 個月）標示提醒；結果可「插入為回覆」或「展開全文」；輸入需 debounce（建議 300ms）。
+**設計要點**：結果顯示 `title` + `updatedAt`，不顯示分數（分數只用於排序）、不顯示獨立編號（2026-08-27 訂正：`code` 欄位已撤銷，見 §8.2 訂正說明——設計稿的「SOP #12」是示範文案，非平台真實欄位）；條目過舊（建議門檻 12 個月）標示提醒，`updatedAt` 為 `null` 時不觸發此提醒；結果可「插入為回覆」或「展開全文」；輸入需 debounce（建議 300ms）。
 
 **第一版只做 inline 面板。** `Ctrl/Cmd + K` 的 Command Palette 可作為後續增強，非必要功能。
+
+### 12.4 知識庫快查已知限制（2026-08-27，`specs/002-suggestion-knowledge-search` 落地時實測發現）
+
+三項記錄下來但刻意不在本輪解決的限制，比照 §11.8 情緒面板已知限制的做法留待後續評估：
+
+**① `RAGknowledge` 工具回傳的是未結構化的 chunk 拼接字串，不是逐筆命中陣列。** §8.2 的
+`KnowledgeHit[]` 介面草案假設平台會回傳結構化陣列；實測（`scripts/spike/out/11-宏宏企業-knowledge-raw.json`）顯示 `tool-output-available` 的 `output.result` 是單一字串，多筆命中以重複的
+`[Source: 檔名]` 標記串接。`AgentKnowledgeProvider` 需自行正則切分，每個 `[Source: X]` 段落視為
+一筆 `KnowledgeHit`。詳見 `specs/002-suggestion-knowledge-search/research.md` #1。
+
+**② 知識庫檔案沒有「最後修改時間」中繼資料，也沒有正式的 SOP 編號制度。** `folder_info` 裡的檔案
+清單只有 `id`／`name`，`remarks` 恆為 `null`；檔名本身可能含日期片段（如 `_V1_20250925_`）但這是
+啟發式擷取，不是平台保證欄位。`KnowledgeHit.updatedAt` 因此改為 `string | null`，擷取不到時前端
+顯示「更新日期未知」而非觸發過舊提醒。**介面因此不再嘗試顯示一個獨立的「編號」欄位**（2026-08-27
+再次訂正：曾規劃以檔案 id 的短版本頂替一個顯示用編號，經檢視發現這只是為了呼應設計稿示範文案
+而做的過度設計，對客服沒有實際資訊價值，已撤銷——來源僅以 `title` 顯示，`id` 純供白名單核對，
+不進 UI，見 §8.2 訂正說明）。已列入 `docs/IMBRACE_QUESTIONS.md` 新增提問（是否有正式編號制度，
+若有可再評估恢復顯示）。詳見 `specs/002-suggestion-knowledge-search/research.md` #2、
+`spec.md` Assumptions。
+
+**③「展開全文」無法保證涵蓋整份文件。** 平台沒有獨立的「取得檔案完整內容」端點，`RAGknowledge`
+即使把 `document_file_ids` 限定為單一檔案，回傳的仍可能只是該檔案內 top-K 相關片段，不是全文。
+MVP 做法是把限定檔案後拿到的所有片段依序串接顯示，並誠實標示「本次可取得的相關內容，可能未涵蓋
+完整文件」，不宣稱是真正的全文。詳見 `specs/002-suggestion-knowledge-search/research.md` #3。
 
 ---
 
@@ -1515,7 +1550,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M2 — Copilot 核心
 
-**內容**：摘要卡、情緒 sparkline、建議卡、一鍵帶入；前景／背景分級、debounce、快取；AI 可先用 mock provider，UI 先行完成；知識庫先用 `StaticSopProvider`，之後接 `AgentKnowledgeProvider`（§8.2）；**不含**客戶資料卡（§19.1 #21）、舊資料型 `file` 附件內容與語音、**圖片與 PDF 附件的 vision／文件分析**（2026-08-26 訂正：原列於本里程碑，經 `specs/001-sentiment-panel` 的 `/speckit-analyze` 發現 tasks.md 完全未落實此項且預估 5～10 人日，決策延後至 M3，見下方）。
+**內容**：摘要卡、情緒 sparkline、建議卡、一鍵帶入、**知識庫自然語言快查**（inline 面板，見 §12.3；2026-08-27 由 M3 併入本里程碑——`specs/002-suggestion-knowledge-search` 落地時發現快查與建議卡共用同一個 `KnowledgeProvider` 裝配，拆開實作反而要重複組裝一次，見該規格 research.md #12）；前景／背景分級、debounce、快取；AI 可先用 mock provider，UI 先行完成；知識庫直接採 `AgentKnowledgeProvider`（§8.2；2026-08-27 訂正：不再經由 `StaticSopProvider` 過渡——`ImbraceAgentProvider` 已於摘要／情緒路徑上線並驗證可行，建議卡／知識庫快查落地時直接沿用同一裝配模式，見 `specs/002-suggestion-knowledge-search/research.md` #4）；**不含**客戶資料卡（§19.1 #21）、舊資料型 `file` 附件內容與語音、**圖片與 PDF 附件的 vision／文件分析**（2026-08-26 訂正：原列於本里程碑，經 `specs/001-sentiment-panel` 的 `/speckit-analyze` 發現 tasks.md 完全未落實此項且預估 5～10 人日，決策延後至 M3，見下方）。
 
 **驗收**：
 - [ ] JOIN 後 3 秒內面板區塊出現並明確標示分析中（此條不要求該時點已有實質內容）
@@ -1526,7 +1561,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] AI 失敗時，訊息流與 Composer 仍完全可用
 - [ ] 建議卡的 `sopId` 若不在檢索結果白名單中，該卡被丟棄
 - [ ] `confidence` 無真實分數來源時顯示為留空，不得顯示模型自評的替代數字（§11.6②）
-- [ ] Copilot 面板五大區塊（摘要卡 `SummaryCard.vue`、情緒走勢 `SentimentGauge.vue`、建議卡、知識庫快查、對話紀錄／結案摘要——後三者尚未實作，待建置時一併核對）之圖示、色票、文案措辭、`error`／`retrying` 等狀態呈現，已對照 Claude Design 畫布 artboard 2a 原始檔 `CopilotPanel.dc.html`（見 `docs/DESIGN_TOKENS.md` §7）逐一核實；有落差者已訂正，或已記錄不採用的理由（2026-08-27 新增：`specs/001-sentiment-panel` FR-003 明文排除視覺樣式於原驗收範圍外，且 `tasks.md` T030 記錄此核對動作從未執行，此前為已知但無人排入排程的缺口）
+- [ ] 知識庫自然語言快查能回傳含標題與更新日期（或「更新日期未知」）的結果列表，不顯示獨立編號；空白查詢不觸發呼叫；查無結果與「尚未輸入查詢」視覺可區分（2026-08-27 新增，隨知識庫快查併入本里程碑一併提出，見 `specs/002-suggestion-knowledge-search`）
+- [ ] Copilot 面板五大區塊（摘要卡 `SummaryCard.vue`、情緒走勢 `SentimentGauge.vue`、建議卡、知識庫快查、對話紀錄／結案摘要——**後兩者**尚未實作，待建置時一併核對；2026-08-27 訂正：知識庫快查已隨本里程碑實作，見上一項）之圖示、色票、文案措辭、`error`／`retrying` 等狀態呈現，已對照 Claude Design 畫布 artboard 2a 原始檔 `CopilotPanel.dc.html`（見 `docs/DESIGN_TOKENS.md` §7）逐一核實；有落差者已訂正，或已記錄不採用的理由（2026-08-27 新增：`specs/001-sentiment-panel` FR-003 明文排除視覺樣式於原驗收範圍外，且 `tasks.md` T030 記錄此核對動作從未執行，此前為已知但無人排入排程的缺口）
 - [ ] 左側對話列表（`Sidebar.vue`）與中間對話訊息欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、`PresenceBar.vue`、`ModeSelect.vue`）已對照 Claude Design 畫布 artboard 1c（主工作區）核實（2026-08-27 新增，隨上一項一併提出）；⚠️ `docs/DESIGN_TOKENS.md` 目前 1c 只有截圖（`docs/wireframe/03-workspace_lightTheme.png`／`_darkTheme.png`），尚無逐字文字規格（見該檔第 10 行），核對前須先比對截圖，或依該檔附錄流程向畫布擁有者取得 1c 逐字規格再核對，不得憑既有 token 臨場判斷後就視為已核實
 
 **外部依賴**：無
@@ -1535,11 +1571,10 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M3 — 知識庫與結案
 
-**內容**：依 #19 RAG 品質的回覆結果，定案知識庫來源（沿用 `AgentKnowledgeProvider` 或換上 `VikiKnowledgeProvider`，見 §8.2、§12.2）；知識庫快查（inline 面板，見 §12.3）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11；2026-08-26 由 M2 移入——iMBrace 平台已確認無內建 OCR，`docs/IMBRACE_QUESTIONS.md` H-2a／H-2b，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已同步訂正為排除範圍，見該檔 Assumptions）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前 M2 一律讓 429 直接轉錯誤狀態，見 §17 韌性表）。
+**內容**：依 #19 RAG 品質的回覆結果，視情況將知識庫來源由 `AgentKnowledgeProvider` 換上 `VikiKnowledgeProvider`（見 §8.2、§12.2；2026-08-27 訂正：知識庫快查本身的 UI／功能已隨 M2 落地，見上一節，本項僅指「換 provider」這個決策，與快查功能本身是兩件事，`specs/002-suggestion-knowledge-search/research.md` #12）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11；2026-08-26 由 M2 移入——iMBrace 平台已確認無內建 OCR，`docs/IMBRACE_QUESTIONS.md` H-2a／H-2b，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已同步訂正為排除範圍，見該檔 Assumptions）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前 M2 一律讓 429 直接轉錯誤狀態，見 §17 韌性表）。
 
 **驗收**：
-- [ ] 自然語言快查能回傳含 SOP 編號的結果；分數欄位依實際 provider 有值則顯示、`null` 則留空
-- [ ] 建議卡能正確引用真實 SOP 條目
+- [ ] 若換上 `VikiKnowledgeProvider`：知識庫快查與建議卡的 `score`／`confidence` 欄位開始出現真實數值（不再恆為 `null`），且 UI 不需改動即可正確顯示（2026-08-27 訂正：快查本身的功能驗收已移至 M2，本項僅驗證換 provider 後分數欄位的行為，見上方 M2 驗收與 `specs/002-suggestion-knowledge-search`）
 - [ ] 摘要可編輯後才寫入 Board
 - [ ] 重複觸發摘要為覆蓋而非新增
 - [ ] LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用
