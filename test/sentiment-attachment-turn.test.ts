@@ -63,7 +63,7 @@ describe('純附件輪的中性標記（FR-002、FR-012）', () => {
     const attachMsg = customerAttachmentOnly(convId, 4)
     const agentMsg = agentText(convId, '好的，我幫您查詢', 3)
 
-    await runColdStart(convId, [textMsg, attachMsg, agentMsg])
+    await runColdStart(convId, [textMsg, attachMsg, agentMsg], false)
 
     const state = await useStateStore().getAnalysisState(convId)
     expect(state).not.toBeNull()
@@ -91,7 +91,7 @@ describe('純附件輪的中性標記（FR-002、FR-012）', () => {
 
     const convId = `conv-attach-only-${Date.now()}`
     const attachMsg = customerAttachmentOnly(convId, 1)
-    await runColdStart(convId, [attachMsg])
+    await runColdStart(convId, [attachMsg], false)
 
     // 只有純附件輪、沒有任何含文字客戶發言時，analyzeSentiment 完全不會被呼叫
     expect(calledWith).toBeUndefined()

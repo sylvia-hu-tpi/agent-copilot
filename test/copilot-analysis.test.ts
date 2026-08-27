@@ -1,5 +1,5 @@
 /**
- * 摘要／情緒分析管線 —— specs/001-sentiment-panel。
+ * 摘要／情緒／建議卡分析管線 —— specs/001-sentiment-panel、specs/002-suggestion-knowledge-search。
  *
  * US1（T012）：冷啟動輸入涵蓋完整歷史、無客戶發言時維持 empty、Zod 驗證失敗轉 error、
  *              analyzing 事件先於 AI 呼叫 resolve 前發布。
@@ -7,6 +7,8 @@
  *              ready → analyzing 保留舊內容、isSentimentAlerting() 遲滯規則。
  * US3（T022）：兩區塊獨立成敗、analyzing → retrying → error 狀態轉移、
  *              手動重試（retryBlock）只影響指定區塊。
+ * US1（specs/002-suggestion-knowledge-search T026）：建議卡併入冷啟動 Promise.all()、
+ *              knowledgeSearch 可稽核證據、單卡驗證失敗容錯、白名單全數捨棄仍為 ready。
  */
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -21,12 +23,15 @@ import {
 import { setAIProvider } from '../server/services/ai/index.js'
 import { AIProviderHttpError } from '../server/services/ai/retry-policy.js'
 import { MockAIProvider } from '../server/services/ai/mock-ai-provider.js'
+import { setKnowledgeProvider } from '../server/services/knowledge/index.js'
+import { MockKnowledgeProvider } from '../server/services/knowledge/mock-knowledge-provider.js'
 import { useEventBus, useStateStore } from '../server/state/index.js'
 import { conversationTopic } from '../server/state/types.js'
 import { isSentimentAlerting } from '../shared/types/copilot.js'
 import type { CopilotEvent } from '../shared/types/events.js'
-import type { ConversationSummary } from '../shared/types/copilot.js'
+import type { ConversationSummary, SuggestionCard } from '../shared/types/copilot.js'
 import type { Message } from '../shared/types/conversation.js'
+import type { KnowledgeHit } from '../shared/types/knowledge.js'
 
 let seq = 0
 function customerText(convId: string, text: string, minutesAgo = 1): Message {
@@ -64,6 +69,7 @@ function collect(id: string): CopilotEvent[] {
 
 afterEach(() => {
   setAIProvider(new MockAIProvider())
+  setKnowledgeProvider(new MockKnowledgeProvider())
   vi.useRealTimers()
 })
 
@@ -91,7 +97,7 @@ describe('runColdStart()（US1）', () => {
       agentText(id, '您好，有什麼可以幫忙', 9),
       customerText(id, '我的訂單還沒到', 8),
     ]
-    await runColdStart(id, history)
+    await runColdStart(id, history, false)
 
     expect(historySeen).toEqual(history)
     expect(sentimentMessagesSeen).toEqual(history.filter(m => m.sender.type === 'customer'))
@@ -107,7 +113,7 @@ describe('runColdStart()（US1）', () => {
     })())
 
     const id = convId('empty')
-    await runColdStart(id, [agentText(id, '歡迎光臨', 1)])
+    await runColdStart(id, [agentText(id, '歡迎光臨', 1)], false)
 
     expect(called).toBe(false)
     const state = await useStateStore().getAnalysisState(id)
@@ -119,7 +125,7 @@ describe('runColdStart()（US1）', () => {
     setAIProvider(new MockAIProvider({ invalidSummaryOutput: true, invalidSentimentOutput: true }))
 
     const id = convId('invalid')
-    await runColdStart(id, [customerText(id, '你好')])
+    await runColdStart(id, [customerText(id, '你好')], false)
 
     const state = await useStateStore().getAnalysisState(id)
     expect(state?.summaryBlock.status).toBe('error')
@@ -139,7 +145,7 @@ describe('runColdStart()（US1）', () => {
     const id = convId('analyzing-order')
     const events = collect(id)
 
-    const promise = runColdStart(id, [customerText(id, '你好')])
+    const promise = runColdStart(id, [customerText(id, '你好')], false)
 
     // 讓 runColdStart 內部跑到「卡在 summarize() 的 await」那一步
     await vi.waitFor(() => expect(resolveSummarize).toBeDefined())
@@ -168,12 +174,12 @@ describe('runIncremental()（US2）', () => {
     })())
 
     const id = convId('incremental')
-    await runColdStart(id, [customerText(id, '第一句', 10)])
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
     const stateAfterCold = await useStateStore().getAnalysisState(id)
     expect(stateAfterCold?.summaryBlock.status).toBe('ready')
 
     const newMsg = customerText(id, '第二句', 1)
-    await runIncremental(id, [newMsg])
+    await runIncremental(id, [newMsg], "foreground", false)
 
     expect(historySeen).toEqual([newMsg])
     expect(previousSummarySeen).toEqual(stateAfterCold?.summaryBlock.summary)
@@ -181,7 +187,7 @@ describe('runIncremental()（US2）', () => {
 
   it('ready → analyzing 轉移時保留舊內容，不清空（data-model.md 呈現規則）', async () => {
     const id = convId('keep-old')
-    await runColdStart(id, [customerText(id, '第一句', 10)])
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
     const before = await useStateStore().getAnalysisState(id)
     expect(before?.summaryBlock.summary).not.toBeNull()
 
@@ -194,7 +200,7 @@ describe('runIncremental()（US2）', () => {
     })())
 
     const events = collect(id)
-    const promise = runIncremental(id, [customerText(id, '第二句', 1)])
+    const promise = runIncremental(id, [customerText(id, '第二句', 1)], "foreground", false)
     await vi.waitFor(() => expect(resolveSummarize).toBeDefined())
 
     const analyzingEvent = events.find(e => e.type === 'summary.updated' && e.summary.status === 'analyzing')
@@ -219,13 +225,13 @@ describe('scheduleIncremental()（US2，§11.1 debounce）', () => {
     })())
 
     const id = convId('debounce')
-    await runColdStart(id, [customerText(id, '第一句', 10)])
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
     callCount = 0 // 只計算 debounce 之後的呼叫
 
     const m1 = customerText(id, 'A', 2)
     const m2 = customerText(id, 'B', 1)
-    scheduleIncremental(id, [m1])
-    scheduleIncremental(id, [m2])
+    scheduleIncremental(id, [m1], "foreground", false)
+    scheduleIncremental(id, [m2], "foreground", false)
 
     await vi.advanceTimersByTimeAsync(1_100)
 
@@ -262,7 +268,7 @@ describe('故障隔離與重試（US3）', () => {
     }))
 
     const id = convId('isolate')
-    await runColdStart(id, [customerText(id, '你好')])
+    await runColdStart(id, [customerText(id, '你好')], false)
 
     const state = await useStateStore().getAnalysisState(id)
     expect(state?.summaryBlock.status).toBe('error')
@@ -278,7 +284,7 @@ describe('故障隔離與重試（US3）', () => {
     const events = collect(id)
 
     vi.useFakeTimers()
-    const promise = runColdStart(id, [customerText(id, '你好')])
+    const promise = runColdStart(id, [customerText(id, '你好')], false)
     await vi.runAllTimersAsync()
     await promise
     vi.useRealTimers()
@@ -299,14 +305,14 @@ describe('故障隔離與重試（US3）', () => {
 
     const id = convId('manual-retry')
     const history = [customerText(id, '你好')]
-    await runColdStart(id, history)
+    await runColdStart(id, history, false)
 
     const failed = await useStateStore().getAnalysisState(id)
     expect(failed?.sentimentBlock.status).toBe('error')
     const summaryBeforeRetry = failed?.summaryBlock.summary
 
     setAIProvider(new MockAIProvider())
-    await retryBlock(id, 'sentiment', history)
+    await retryBlock(id, 'sentiment', history, false)
 
     const recovered = await useStateStore().getAnalysisState(id)
     expect(recovered?.sentimentBlock.status).toBe('ready')
@@ -319,14 +325,14 @@ describe('lastCoveredMessageId()（T010c 重連快照的補跑判斷依據）', 
   it('回傳 timeline 最後一筆的 messageId', async () => {
     const id = convId('covered')
     const history = [customerText(id, '第一句', 10), customerText(id, '第二句', 1)]
-    await runColdStart(id, history)
+    await runColdStart(id, history, false)
 
     const state = await useStateStore().getAnalysisState(id)
     expect(lastCoveredMessageId(state!)).toBe(history[1]!.id)
   })
 
   it('尚無任何資料時回傳 null', () => {
-    const empty = { conversationId: 'x', summaryBlock: { status: 'empty' as const, summary: null, updatedAt: '' }, sentimentBlock: { status: 'empty' as const, timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' } }
+    const empty = { conversationId: 'x', summaryBlock: { status: 'empty' as const, summary: null, updatedAt: '' }, sentimentBlock: { status: 'empty' as const, timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' }, suggestionBlock: { status: 'empty' as const, cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, updatedAt: '' } }
     expect(lastCoveredMessageId(empty)).toBeNull()
   })
 })
@@ -351,7 +357,7 @@ describe('迴歸：未 JOIN 的對話不得被 runIncremental() 悄悄分析', (
     })())
 
     const id = convId('never-joined')
-    await runIncremental(id, [customerText(id, '客戶在對話仍未 JOIN 時發言')])
+    await runIncremental(id, [customerText(id, '客戶在對話仍未 JOIN 時發言')], "foreground", false)
 
     expect(called).toBe(false)
     expect(await useStateStore().getAnalysisState(id)).toBeNull()
@@ -359,12 +365,12 @@ describe('迴歸：未 JOIN 的對話不得被 runIncremental() 悄悄分析', (
 
   it('已 runColdStart()（已 JOIN）過的對話，runIncremental() 正常運作', async () => {
     const id = convId('already-joined')
-    await runColdStart(id, [customerText(id, '第一句', 10)])
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
 
     const before = await useStateStore().getAnalysisState(id)
     expect(before?.summaryBlock.status).toBe('ready')
 
-    await runIncremental(id, [customerText(id, '第二句', 1)])
+    await runIncremental(id, [customerText(id, '第二句', 1)], "foreground", false)
 
     const after = await useStateStore().getAnalysisState(id)
     expect(after?.sentimentBlock.timeline).toHaveLength(2)
@@ -375,7 +381,7 @@ describe('迴歸：newCustomerMessagesSince() 對已涵蓋的訊息去重（T010
   it('fetchSince() 因錨點被擠出視窗而回傳整批時，已涵蓋的訊息 MUST 被濾掉', async () => {
     const id = convId('anchor-evicted')
     const covered = customerText(id, '已經分析過的訊息', 10)
-    await runColdStart(id, [covered])
+    await runColdStart(id, [covered], false)
 
     const state = await useStateStore().getAnalysisState(id)
     expect(state?.sentimentBlock.timeline).toHaveLength(1)
@@ -388,7 +394,7 @@ describe('迴歸：newCustomerMessagesSince() 對已涵蓋的訊息去重（T010
   it('整批中混雜真正的新訊息時，只留下尚未涵蓋的部分', async () => {
     const id = convId('anchor-evicted-mixed')
     const covered = customerText(id, '已經分析過的訊息', 10)
-    await runColdStart(id, [covered])
+    await runColdStart(id, [covered], false)
     const state = await useStateStore().getAnalysisState(id)
 
     const freshMsg = customerText(id, '真正的新訊息', 1)
@@ -399,7 +405,7 @@ describe('迴歸：newCustomerMessagesSince() 對已涵蓋的訊息去重（T010
   it('過濾同時排除非客戶訊息（防禦性——理論上 fetchSince 就可能混雜 agent/ai 訊息）', async () => {
     const id = convId('anchor-evicted-agent')
     const covered = customerText(id, '已經分析過的訊息', 10)
-    await runColdStart(id, [covered])
+    await runColdStart(id, [covered], false)
     const state = await useStateStore().getAnalysisState(id)
 
     const agentMsg = agentText(id, '客服的回覆', 1)
@@ -425,7 +431,7 @@ describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-2
     const id = convId('chunked')
     // 9 則客戶發言：預期分成 6 + 3 兩批（SENTIMENT_CHUNK_SIZE = 6）
     const history = Array.from({ length: 9 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 20 - i))
-    await runColdStart(id, history)
+    await runColdStart(id, history, false)
 
     expect(callSizes).toEqual([6, 3])
     expect(callSizes.every(n => n <= 6)).toBe(true)
@@ -452,7 +458,7 @@ describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-2
     const history = Array.from({ length: 9 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 20 - i))
 
     vi.useFakeTimers()
-    const promise = runColdStart(id, history)
+    const promise = runColdStart(id, history, false)
     await vi.runAllTimersAsync()
     await promise
     vi.useRealTimers()
@@ -462,5 +468,101 @@ describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-2
     // 第一批已成功的 8 個點不落地——寧可整批視為失敗、之後手動重試整批重來，
     // 也不留一份只算了一半的殘缺 timeline（見 copilot-analysis.ts 的設計取捨說明）
     expect(state?.sentimentBlock.timeline).toHaveLength(0)
+  })
+})
+
+// ── US1：建議卡（specs/002-suggestion-knowledge-search T026）─────────────
+
+function knowledgeHit(id: string): KnowledgeHit {
+  return { id, title: `文件-${id}`, snippet: '片段內容', score: null, updatedAt: null, sourceRef: { type: 'knowledge', ref: id } }
+}
+
+describe('analyzeSuggestions()（US1，specs/002-suggestion-knowledge-search）', () => {
+  it('冷啟動的 Promise.all() 含 analyzeSuggestions()，建議卡與摘要／情緒併行產生', async () => {
+    const id = convId('suggestion-cold')
+    await runColdStart(id, [customerText(id, '我的訂單還沒到')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('ready')
+    expect(state?.suggestionBlock.cards.length).toBeGreaterThan(0)
+  })
+
+  it('knowledgeHits 為空時，建議卡仍以 sopId: null 產生（不因空檢索而不產生建議卡，FR-004）', async () => {
+    setKnowledgeProvider({ search: async () => [] })
+
+    const id = convId('suggestion-empty-hits')
+    await runColdStart(id, [customerText(id, '我的訂單還沒到')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('ready')
+    expect(state!.suggestionBlock.cards.every(c => c.sopId === null)).toBe(true)
+    expect(state?.suggestionBlock.knowledgeSearch).toEqual({ ran: true, hitCount: 0 })
+  })
+
+  it('單張卡片 schema 驗證失敗時，僅該卡被跳過、其餘卡片仍然 ready', async () => {
+    setAIProvider(new (class extends MockAIProvider {
+      override async suggest(input: Parameters<MockAIProvider['suggest']>[0]): Promise<SuggestionCard[]> {
+        const [valid] = await super.suggest(input)
+        // 第二張缺必要欄位（text 為空字串），schema 驗證應使其被跳過而非整批失敗
+        return [valid!, { text: '' } as unknown as SuggestionCard]
+      }
+    })())
+
+    const id = convId('suggestion-partial-invalid')
+    await runColdStart(id, [customerText(id, '我要退貨')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('ready')
+    expect(state?.suggestionBlock.cards).toHaveLength(1)
+  })
+
+  it('全數因白名單捨棄後 status 仍為 ready（非 error）、cards 為空陣列', async () => {
+    setKnowledgeProvider({ search: async () => [knowledgeHit('real-hit')] })
+    setAIProvider(new (class extends MockAIProvider {
+      override async suggest(): Promise<SuggestionCard[]> {
+        return [{
+          id: 'c1',
+          sopId: 'ghost-not-in-hits',
+          sopTitle: '幻覺標題',
+          text: '幻覺內容',
+          confidence: null,
+          rationale: 'r',
+          tone: 'informative',
+          requiresData: [],
+          supersededBy: null,
+        }]
+      }
+    })())
+
+    const id = convId('suggestion-all-whitelisted-out')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.status).toBe('ready')
+    expect(state?.suggestionBlock.cards).toEqual([])
+  })
+
+  it('knowledgeSearch.ran 在每一條成功路徑上皆為 true（憲法 6.2 v3.0.1 可稽核證據）', async () => {
+    const id = convId('suggestion-ran-true')
+    await runColdStart(id, [customerText(id, '你好')], false)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.suggestionBlock.knowledgeSearch.ran).toBe(true)
+  })
+
+  it('查詢字串只由 Message.text 組成（FR-017、憲法 6.5：不得讀取任何非文字欄位）', async () => {
+    let querySeen: string | undefined
+    setKnowledgeProvider({
+      search: async (query: string) => {
+        querySeen = query
+        return []
+      },
+    })
+
+    const id = convId('suggestion-text-only')
+    const msg = customerText(id, '這是客戶的原始文字')
+    await runColdStart(id, [msg], false)
+
+    expect(querySeen).toBe('這是客戶的原始文字')
   })
 })

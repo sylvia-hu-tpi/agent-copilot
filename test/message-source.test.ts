@@ -165,6 +165,26 @@ describe('fetchSince', () => {
   })
 })
 
+describe('getPriority（specs/002-suggestion-knowledge-search/research.md #9）', () => {
+  it('沒有任何訂閱者時回傳 background（安全預設）', async () => {
+    active = makeSource([msg('m1')])
+    expect(active.source.getPriority('c1')).toBe('background')
+  })
+
+  it('至少一位前景訂閱者時回傳 foreground（前景蓋過背景）', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {}, { priority: 'background' })
+    active.source.subscribe('c1', () => {}, { priority: 'foreground' })
+    expect(active.source.getPriority('c1')).toBe('foreground')
+  })
+
+  it('全部訂閱者皆為背景時回傳 background', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {}, { priority: 'background' })
+    expect(active.source.getPriority('c1')).toBe('background')
+  })
+})
+
 describe('錯誤處理（憲法 3.2 靜默降級）', () => {
   it('單一訂閱者拋錯不影響其他訂閱者', async () => {
     active = makeSource([msg('m1')])
