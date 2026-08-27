@@ -41,7 +41,14 @@ function createProvider(): AIProvider {
       + 'IMBRACE_SENTIMENT_AGENT_ID／IMBRACE_SUGGESTION_AGENT_ID 其中之一，退回 MockAIProvider —— '
       + '僅供本機開發，正式環境不應出現這行警告。',
     )
-    return new MockAIProvider()
+    // ⚠️ smoke:realtime（specs/002-suggestion-knowledge-search T045）用來注入建議卡
+    // 生成故障，驗證訊息流與 Composer 不受影響（憲法 3.2）。只在已經退回 Mock 的路徑上生效，
+    // 不影響任何正式環境行為。
+    return new MockAIProvider({
+      suggestFailure: process.env.AC_SMOKE_FORCE_SUGGEST_FAILURE
+        ? () => new Error('smoke 測試注入的建議卡生成故障')
+        : undefined,
+    })
   }
 
   const client = clientForApiKey(apiKey, {

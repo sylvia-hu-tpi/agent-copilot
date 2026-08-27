@@ -17,6 +17,12 @@
  * ❌ 不涵蓋：瀏覽器 `EventSource` 本身的行為、以及前端 store 何時決定重連。
  *    後者由 `test/nuxt/stream-store.test.ts` 對真正的 `app/stores/stream.ts` 驗，
  *    前者只有真實瀏覽器驗得到 —— 但它是瀏覽器的實作，不是我方的程式碼。
+ *
+ * ── ④ 建議卡／知識庫檢索故障（specs/002-suggestion-knowledge-search US3、T045）───
+ * 獨立起第二份 server（`AC_SMOKE_FORCE_SUGGEST_FAILURE`／`AC_SMOKE_FORCE_KNOWLEDGE_FAILURE`
+ * 環境變數注入故障），驗證 HTTP／SSE 這一層的保證：故障不得拖慢或阻擋送出訊息。
+ * 兩個 provider 各自的故障隔離邏輯已由 test/copilot-analysis.test.ts 的單元測試涵蓋，
+ * 這裡不重複測業務邏輯本身。
  */
 
 import type { CopilotEvent } from '../shared/types/events.js'
@@ -83,6 +89,74 @@ async function watch(
 
 function appendedTexts(evt: CopilotEvent): string[] {
   return evt.type === 'messages.appended' ? evt.messages.map(m => m.text) : []
+}
+
+/**
+ * ④ 建議卡／知識庫檢索故障時，訊息流與 Composer 不受影響（specs/002-suggestion-knowledge-search
+ * US3、T045）——獨立起一份 server（env 注入故障開關），避免影響上面 ①②③ 用的那份 harness。
+ *
+ * 兩個開關同時打開：`AIProvider.suggest()` 恆失敗、`KnowledgeProvider.search()` 恆失敗——
+ * 兩者各自獨立的故障隔離已由 test/copilot-analysis.test.ts 的單元測試涵蓋，這裡只驗證
+ * HTTP／SSE 這一層的保證：故障不得拖慢或阻擋送出訊息，且對應區塊／端點如實回報錯誤狀態。
+ */
+async function runFaultInjectionScenario(): Promise<void> {
+  console.log('\n── ④ 建議卡／知識庫檢索故障：訊息流不受影響（US3）──────────')
+
+  let harness: NitroHarness | undefined
+  try {
+    harness = await startNitro({
+      port: 3125,
+      env: {
+        AC_SMOKE_FORCE_SUGGEST_FAILURE: '1',
+        AC_SMOKE_FORCE_KNOWLEDGE_FAILURE: '1',
+      },
+    })
+    const a = harness.client()
+    await a.signIn('agent@example.com')
+
+    await a.call(`/api/conversations/${CONV}`)
+    const joined = await a.call(`/api/conversations/${CONV}/join`, {
+      method: 'POST', body: JSON.stringify({ mode: 'manual' }),
+    })
+    check('④ JOIN 仍然成功（故障不影響 JOIN 本身）', joined.status === 200, `實際 ${joined.status}`)
+
+    const streamA = await watch(a, 'browser-a-fault', true)
+
+    // SC-003：即使建議卡生成必然失敗，送出訊息仍須立即成功、不被拖慢
+    const sendAt = Date.now()
+    await send(a, 'A：即使建議卡故障，這則訊息也該正常送出', (await messagesOf(a)).lastMessageId)
+    const sendElapsed = Date.now() - sendAt
+    check(
+      '④ 建議卡／知識庫故障期間，送出訊息仍立即成功、不被阻擋或延遲（SC-003、憲法 3.2）',
+      sendElapsed <= DELIVERY_BUDGET_MS,
+      `實際 ${sendElapsed}ms`,
+    )
+
+    // 建議卡最終應顯示 error（AIProvider.suggest() 恆失敗），不影響摘要／情緒
+    const suggestionError = await streamA.waitFor(
+      e => e.type === 'suggestion.updated' && e.suggestion.status === 'error',
+      { label: 'A 收到 suggestion.updated（status: error）', timeoutMs: 15_000 },
+    )
+    check(
+      '④ 建議卡生成故障時，suggestionBlock 最終轉為 error（不影響訊息流本身）',
+      suggestionError.event.type === 'suggestion.updated' && suggestionError.event.suggestion.status === 'error',
+    )
+
+    // 知識庫快查端點：MUST NOT 回 5xx，改以 degraded:true 降級（憲法 3.1／3.2）
+    const searchRes = await a.call(`/api/conversations/${CONV}/knowledge-search`, {
+      method: 'POST',
+      body: JSON.stringify({ query: '故障期間的查詢' }),
+    })
+    const searchBody = JSON.parse(searchRes.body) as { hits: unknown[], degraded?: boolean }
+    check(
+      '④ 知識庫檢索故障時，快查端點回 200 { hits: [], degraded: true }（不是 5xx）',
+      searchRes.status === 200 && searchBody.degraded === true && searchBody.hits.length === 0,
+      `status=${searchRes.status} body=${searchRes.body}`,
+    )
+  }
+  finally {
+    await harness?.close()
+  }
 }
 
 async function main(): Promise<void> {
@@ -292,6 +366,8 @@ async function main(): Promise<void> {
   finally {
     await harness?.close()
   }
+
+  await runFaultInjectionScenario()
 
   console.log(
     failures === 0

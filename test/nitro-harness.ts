@@ -67,7 +67,7 @@ export interface NitroHarness {
 }
 
 export async function startNitro(
-  opts: { port?: number, gateway?: MockGatewayOptions } = {},
+  opts: { port?: number, gateway?: MockGatewayOptions, env?: Record<string, string> } = {},
 ): Promise<NitroHarness> {
   const gateway = await startMockGateway(opts.gateway)
   // ⚠️ 預設不是 3123 —— 那個埠屬於 `smoke-http.ts`。
@@ -87,6 +87,7 @@ export async function startNitro(
         NUXT_SESSION_SECRET: 'smoke-test-secret',
         NUXT_IMBRACE_BASE_URL: gateway.baseUrl,
         NUXT_PUBLIC_IMBRACE_ENV: 'stable',
+        ...opts.env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })

@@ -35,7 +35,14 @@ function createProvider(): KnowledgeProvider {
       '[knowledge] 缺少 IMBRACE_API_KEY／IMBRACE_ORGANIZATION_ID／IMBRACE_KNOWLEDGE_AGENT_ID '
       + '其中之一，退回 MockKnowledgeProvider —— 僅供本機開發，正式環境不應出現這行警告。',
     )
-    return new MockKnowledgeProvider()
+    // ⚠️ smoke:realtime（specs/002-suggestion-knowledge-search T045）用來注入知識庫檢索
+    // 故障，驗證建議卡改以無引用續行、快查顯示 degraded（憲法 3.2）。只在已經退回 Mock 的
+    // 路徑上生效，不影響任何正式環境行為。
+    return new MockKnowledgeProvider({
+      searchFailure: process.env.AC_SMOKE_FORCE_KNOWLEDGE_FAILURE
+        ? () => new Error('smoke 測試注入的知識庫檢索故障')
+        : undefined,
+    })
   }
 
   const client = clientForApiKey(apiKey, {
