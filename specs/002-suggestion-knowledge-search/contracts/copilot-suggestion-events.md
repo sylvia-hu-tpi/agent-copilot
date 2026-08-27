@@ -19,7 +19,9 @@
   - `analyzing` / `retrying` → 骨架或產生中狀態，`retryAttempt` 有值時顯示「重試中 (n/2)」
     （沿用 FR-014 既有文案格式）。
   - `ready` 且 `cards.length === 0` → 顯示「本次未產生建議」的中性狀態（**不是**錯誤，也不是
-    「尚無資料」——區分見 data-model.md §7）。
+    「尚無資料」）。此組合底下有兩種語意（知識庫真的沒這題／有命中但引用全遭白名單捨棄），
+    對客服的呈現一致，但 MUST 依 `suggestion.knowledgeSearch.hitCount` 分辨並記錄——
+    後者是模型杜撰引用的訊號。完整對照表見 data-model.md §7。
   - `error` → 顯示「暫時無法產生建議」＋重試按鈕，呼叫 `POST /copilot/retry { block: 'suggestions' }`
     （既有端點擴充合法值，見下一份契約）。
 - 每張卡片的「一鍵帶入」呼叫端**必須**先檢查 `useDraft().text.value` 是否非空白，非空白時走

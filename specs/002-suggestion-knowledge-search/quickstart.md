@@ -21,7 +21,8 @@ npm run build && npm run smoke     # 動到 server/api/**、server/sources/**、
 | 檔案 | 涵蓋範圍 |
 |---|---|
 | `test/agent-knowledge-provider.test.ts` | research.md #1 的 `RAGknowledge` 輸出解析（含真實樣本 `scripts/spike/out/11-宏宏企業-knowledge-raw.json` 作為 fixture）、#2 的 `title`/`updatedAt` 衍生規則（不含編號） |
-| `test/suggestion-whitelist.test.ts` | FR-003 白名單整卡捨棄（research.md #6），含「全數捨棄後仍為 `ready` 狀態」case |
+| `test/suggestion-whitelist.test.ts` | FR-003 白名單整卡捨棄（research.md #6），含「全數捨棄後仍為 `ready` 狀態」case；併測 `forceNullConfidence()`（憲法 4.4：hits 無分數時模型自評的 `confidence` MUST 被覆寫為 `null`） |
+| `test/suggestion-send-path.test.ts` | SC-004：一鍵帶入／插入為回覆送出時 `lastMessageId` 錨點與手動輸入一致，撞單檢查無繞過路徑（FR-006、憲法 7.2） |
 | `test/copilot-analysis.test.ts`（擴充） | `runIncremental` 依 `priority` 決定是否呼叫 `analyzeSummary`；`scheduleIncremental` 依 `priority` 選擇 debounce 長度；`BACKGROUND_CONCURRENCY_LIMIT` 排隊行為 |
 | `test/catch-up-summary.test.ts` | research.md #10：重新聚焦時以 `basedOnMessageId` 為錨點補跑摘要，且無新訊息時為 no-op |
 | `test/presence-away-joined.test.ts` | contracts/presence-watch-control.md：`away+joined` 語意 |
@@ -35,6 +36,11 @@ npm run build && npm run smoke     # 動到 server/api/**、server/sources/**、
 1. 以測試帳號登入，開啟一段已有客戶發言的對話，按下「加入對話」。
 2. **預期**：3 秒內面板出現建議卡區塊並標示產生中；10 秒內至少一張建議卡完整呈現，含回覆全文、
    來源（若有）、語氣分類。
+   ⚠️ **這一步就是 SC-001 的驗收本身**——它刻意不進自動化：`smoke` 用的是 Mock provider，
+   對它斷言延遲只是在測自己設的 `suggestDelayMs`。因此本步驟 MUST 以真實憑證（staging 或
+   `IMBRACE_ENV` 指向的環境）手動計時，且 MUST NOT 因為「自動化測試已經綠燈」而略過。
+   另檢查：`confidence` 應**留空不顯示**（iMBrace 路徑無檢索分數，憲法 4.4）——
+   若看到任何百分比數字，代表 `forceNullConfidence()` 未生效。
 3. 按下某張卡的「一鍵帶入」——**預期** Composer 出現該文字、可編輯、未自動送出。
 4. 在另一個瀏覽器分頁（或請同事）先行回覆這段對話，接著在原分頁按下送出——**預期**撞單攔截提示
    出現，行為與手動輸入文字送出時一致（沿用既有撞單機制，本功能不改動它）。
@@ -84,3 +90,8 @@ npm run build && npm run smoke     # 動到 server/api/**、server/sources/**、
   觸發過舊提醒（research.md #2）。
 - 知識庫來源不顯示獨立編號，只顯示標題——iMBrace 平台本身沒有正式的 SOP 編號制度，硬湊一個只是
   呼應設計稿的過度設計（research.md #2）。
+- 「未引用知識庫」的通用建議仍是 AI 即時生成的文字，**不是**取自任何預存文字庫。iMBrace 後台的
+  罐頭訊息（message templates）理論上可作為第二個引用來源，但其端點形狀未經實測，本功能不納入
+  （spike 見 T068，結論寫入 `docs/PLATFORM_CAPABILITY.md`）。
+- 知識庫檢索逾時上限為 8 秒（`KNOWLEDGE_SEARCH_TIMEOUT_MS`）：超過即顯示「知識庫服務暫時無法使用」
+  ＋重試，而非「查無相關結果」——兩者都是空結果，但語意與處置完全不同。

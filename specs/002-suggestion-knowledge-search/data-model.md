@@ -35,15 +35,22 @@ export interface SuggestionBlock {
   status: AnalysisBlockStatus
   retryAttempt?: number
   firstFailureAt?: string
-  /** 依生成順序排列；面板上限 3–5 張見 ARCHITECTURE §14.6，超過以捲動呈現，本欄位不截斷 */
+  /**
+   * 依生成順序排列。張數上限 3–5 張（ARCHITECTURE §14.6）於**生成階段**落實
+   * （prompt 明示上限，FR-001），此欄位不做事後截斷——截掉的卡片已經付出過 AI 呼叫成本。
+   */
   cards: SuggestionCard[]
   /**
-   * 本次生成依據的知識庫檢索是否為空（FR-004 的「未引用知識庫」與 FR-019 的
-   * 「MUST NOT 以空檢索結果產生建議卡」是兩個不同語意——前者可能命中但模型判斷無關，
-   * 後者是檢索本身沒跑或失敗。此欄位記錄的是**後者**：knowledgeHits.length === 0
-   * 且非因為呼叫失敗導致，供邊界情境（spec.md Edge Cases 第 3 條，白名單全捨棄）判斷用。
+   * 本次生成所依據的知識庫檢索「發生了什麼」（憲法 6.2 v3.0.1 要求的可稽核證據）。
+   *
+   * ⚠️ 這裡**必須是兩個欄位**，不能只留一個計數：
+   *   - `ran: false`              → 根本沒查（憲法 6.2 禁止的情形，正常路徑不該出現）
+   *   - `ran: true,  hitCount: 0` → 查了但 0 命中，或呼叫失敗後以空集合續行（FR-004 允許的誠實降級）
+   *   - `ran: true,  hitCount: n` → 有命中；模型仍可能判斷全部無關而不引用
+   * 早期版本只有 `knowledgeHitCount: number`，前兩種情形都得到 0、無法分辨——
+   * 而 FR-004 與憲法 6.2 的處置方式完全不同，那個欄位承擔不起它被賦予的職責。
    */
-  knowledgeHitCount: number
+  knowledgeSearch: { ran: boolean, hitCount: number }
   updatedAt: string
 }
 ```
@@ -82,7 +89,12 @@ export interface KnowledgeHit {
 }
 
 export interface KnowledgeProvider {
-  search(query: string, opts?: { topK?: number, channel?: string }): Promise<KnowledgeHit[]>
+  /**
+   * @param opts.fileId 限定在單一檔案內檢索（「展開全文」用，research.md #3）
+   * @param opts.timeoutMs 逾時上限；預設 KNOWLEDGE_SEARCH_TIMEOUT_MS（見 plan.md Constraints）。
+   *                       MUST 短於 SC-002 的 10 秒門檻，逾時後依 FR-012 降級而非無限等待。
+   */
+  search(query: string, opts?: { topK?: number, fileId?: string, timeoutMs?: number }): Promise<KnowledgeHit[]>
 }
 ```
 
@@ -150,10 +162,18 @@ export type CopilotEvent =
 
 export interface KnowledgeSearchRequest {
   query: string
+  /** 有值時 query 沿用原查詢字串，但限定在該 sourceRef.ref 對應的檔案內搜尋（「展開全文」，FR-010） */
+  expandRef?: string
 }
 
 export interface KnowledgeSearchResponse {
   hits: KnowledgeHit[]
+  /**
+   * 檢索呼叫失敗或逾時（憲法 3.1／3.2：這支端點 MUST NOT 回 5xx）。
+   * 前端據此顯示「知識庫服務暫時無法使用」＋重試，而非「查無相關結果」——
+   * 兩者都會是 `hits: []`，少了這個欄位就無法區分。
+   */
+  degraded?: boolean
 }
 ```
 
@@ -162,11 +182,12 @@ export interface KnowledgeSearchResponse {
 | 欄位 | 規則 | 對應 FR／憲法 |
 |---|---|---|
 | `SuggestionCard.sopId` | 非 null 時必須存在於呼叫當下 `knowledgeHits` 的 `id` 集合，否則整卡捨棄（不只清空此欄位） | FR-003、憲法 4.3 |
-| `SuggestionCard.confidence` | `knowledgeHits` 全數 `score === null` 時（iMBrace 路徑恆如此）本欄位 MUST 為 `null`，不得由模型自評頂替 | FR-002、憲法 4.4 |
+| `SuggestionCard.confidence` | `knowledgeHits` 全數 `score === null` 時（iMBrace 路徑恆如此）本欄位 MUST 為 `null`，不得由模型自評頂替。⚠️ **MUST 由後端在寫入 `CopilotAnalysisState` 前強制歸零**——Zod schema 只能宣告 `.nullable()`（允許數字通過），擋不住模型自評；只靠 prompt 交代等同沒有規則 | FR-002、憲法 4.4 |
 | `SuggestionCard.requiresData` | 模型無法確認的具體資料（工單編號、金額等）MUST 走此欄位，不得直接編入 `text` | FR-002、憲法 4.5 |
 | `SuggestionCard.tone` | 僅接受列舉值；列舉外一律視為該卡驗證失敗（整卡跳過，非單欄位丟棄——`tone` 是必要展示欄位，不像 `riskFlags` 可安全省略） | 憲法 4.6 精神延伸 |
 | `KnowledgeHit.updatedAt` | 無法從檔名可靠擷取時為 `null`；為 `null` 時 MUST NOT 觸發 FR-009 過舊提醒，UI 顯示「更新日期未知」 | FR-009、憲法 4.5 |
-| `KnowledgeSearchRequest.query` | 空白或僅空白字元時，端點 MUST 回傳 400 或空結果且不呼叫 `KnowledgeProvider`；前端 MUST 在送出前先擋（debounce 300ms 後仍為空白則不送） | FR-008 |
+| `KnowledgeSearchRequest.query` | 空白或僅空白字元時，端點 MUST 回傳 **200 `{ hits: [] }`**（不是 400——那是「尚未查詢」，不是用戶端錯誤）且不呼叫 `KnowledgeProvider`；前端 MUST 在送出前先擋（debounce 300ms 後仍為空白則不送），並依「是否曾送出過非空白查詢」而非 `hits.length` 決定顯示哪個空狀態 | FR-008、contracts/knowledge-search-api.md |
+| `CopilotAnalysisState.suggestionBlock.knowledgeSearch.ran` | 每次建議卡生成（前景或背景）MUST 為 `true`；`false` 代表略過了檢索，是憲法 6.2 禁止的路徑 | FR-019、憲法 6.2 v3.0.1 |
 | `CopilotAnalysisState.suggestionBlock` | `priority === 'background'` 的增量分析**仍然**重算此欄位（與 `summaryBlock` 不同，後者背景時不重算） | FR-019、憲法 6.2 |
 
 ## 7. 狀態轉換：`SuggestionBlock.status`
@@ -176,9 +197,18 @@ export interface KnowledgeSearchResponse {
 
 - 冷啟動（JOIN）與前景/背景增量皆會重新進入 `analyzing`（建議卡不像摘要在背景被跳過）。
 - 進入 `ready` 前必經 FR-003 白名單過濾——若過濾後 `cards.length === 0`（本次候選全數因引用不在
-  白名單而被捨棄），狀態仍為 `ready`（不是 `error`），`cards: []`，UI 依 `knowledgeHitCount` 與
-  `cards.length` 的組合區分「尚無資料」（FR-014）／「全數被捨棄」（Edge Cases 第 3 條）／
-  「正常無建議」三種观感一致但語意不同的空狀態（详见 quickstart.md 對應場景）。
+  白名單而被捨棄），狀態仍為 `ready`（不是 `error`），`cards: []`。
+
+  `ready && cards.length === 0` 這個組合底下實際有兩種語意，UI MUST 依 `knowledgeSearch.hitCount`
+  區分（`status === 'empty'` 的「尚無資料」FR-014 是第三種，由 `status` 本身區分，不在此列）：
+
+  | `knowledgeSearch` | 語意 | UI |
+  |---|---|---|
+  | `{ ran: true, hitCount: 0 }` | 知識庫沒有相關內容，模型也未產出通用建議 | 「本次未產生建議」中性狀態 |
+  | `{ ran: true, hitCount: n > 0 }` | 有命中，但候選卡片的引用全數不在白名單而被捨棄（Edge Cases 第 3 條） | 「本次未產生建議」中性狀態＋不得顯示被捨棄卡片的任何殘餘內容 |
+
+  兩者對客服的呈現可以一致（都是中性空狀態，都不是錯誤），但**日誌與稽核 MUST 能分辨**——
+  後者代表模型正在杜撰引用，是需要調 prompt 的訊號；前者只是知識庫沒這題。
 
 ## 8. 背景並行狀態（不進 `StateStore`，純記憶體、無需持久化）
 

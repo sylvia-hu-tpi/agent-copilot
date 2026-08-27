@@ -51,11 +51,15 @@ quickstart.md US4）
 10 秒內回應（SC-002）；背景對話不受此門檻約束（SC-007，改以「切回時已更新」為驗收依據，非延遲
 時間）
 
-**Constraints**: 沿用 001 已定案的 AI 呼叫重試/退避數值（15s 逾時、1s→4s 退避、40s 總預算、
-429 不重試）；新增背景並行上限 `BACKGROUND_CONCURRENCY_LIMIT = 10`（§11.2 建議值）與背景
-debounce（明顯長於前景 1 秒，建議 8 秒，FR-021）；建議卡數量上限沿用既有面板共識 3–5 張
-（`docs/ARCHITECTURE.md` §14.6）；建議卡內容 MUST NOT 逐字串流（FR-026，與 4.3「顯示前驗證」
-不相容）
+**Constraints**: 沿用 001 已定案的 **AI** 呼叫重試/退避數值（15s 逾時、1s→4s 退避、40s 總預算、
+429 不重試）；**知識庫檢索另設 `KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000`**——001 的 15s 是 AI 呼叫的數值，
+套到檢索上會直接吃掉 SC-002 的 10 秒門檻，故取 8 秒（留 2 秒給 BFF 往返與前端渲染），逾時走
+`degraded` 降級而非重試（檢索失敗時 FR-004 允許以空集合續行，重試只會再等一次）；新增背景並行上限
+`BACKGROUND_CONCURRENCY_LIMIT = 10`（§11.2 建議值）與背景 debounce（明顯長於前景 1 秒，建議 8 秒，
+FR-021）；建議卡數量上限 3–5 張（`docs/ARCHITECTURE.md` §14.6）**於 prompt 落實，不做事後截斷**
+（FR-001）；建議卡內容 MUST NOT 逐字串流（FR-026，與 4.3「顯示前驗證」不相容）；
+「AI 是否正在自動回覆」一律取 `controlFromMode(mode).aiReplies`，MUST NOT 另寫 `mode === 'hybrid'`
+（FR-016，§10.2／§10.6 的靜默失效地雷）
 
 **Scale/Scope**: 涵蓋客服**所有已 JOIN**的對話（不限前景聚焦），這是與 001（僅前景）最主要的
 範圍差異，也是本功能複雜度的主要來源
@@ -71,7 +75,7 @@ debounce（明顯長於前景 1 秒，建議 8 秒，FR-021）；建議卡數量
 | **三、Copilot 不得拖垮主線** | 本功能兩條主線皆以此為最高原則 | ✅ 通過。FR-012／FR-013／FR-025 對應 3.1/3.2；知識庫快查的 JOIN 門檻（FR-025）不是新的刻意阻斷情境——它與「未 JOIN 時 Composer 唯讀」同一性質（功能本身需要前提條件，不是故障降級），3.3 封閉集合不變 |
 | **四、AI 輸出必須可驗證** | 建議卡、知識庫檢索皆為 AI/檢索產物 | ✅ 通過且是本規格 FR-002～FR-004、FR-022 的核心。4.3 白名單後驗**整卡捨棄**（research.md #6，比 001 的欄位級容錯更嚴格，因為此處捨棄的是「引用是否存在」這種正確性問題，不是「格式是否合法」）；4.4 `confidence`／`KnowledgeHit.score` 皆為 nullable，無真實依據不填充；4.5 `requiresData` 承接事實缺口 |
 | **五、AI 產物寫入正式紀錄** | 不適用 | 本功能不寫入 Data Board（結案摘要屬 M3） |
-| **六、資源使用** | 6.2 是本功能第二條主線的直接對象 | ✅ 通過，且是憲法 v3.0.0 修訂後**第一個落地驗證「背景跑受限子集＋節流」是否可行**的功能。6.2 的兩道節流（並行上限、較長 debounce）皆已納入設計（research.md #9）；6.3（patch）不新增額外違反；6.5（附件快取）不適用——本功能不新增附件處理路徑，`Message.text` 沿用既有文字化結果 |
+| **六、資源使用** | 6.2 是本功能第二條主線的直接對象 | ✅ 通過（依 v3.0.1），且是憲法 v3.0.0 修訂後**第一個落地驗證「背景跑受限子集＋節流」是否可行**的功能。6.2 的兩道節流（並行上限、較長 debounce）皆已納入設計（research.md #9）；「MUST NOT 略過檢索」＋可稽核證據 `knowledgeSearch.ran`（v3.0.1）見 data-model.md §1.1——v3.0.0 原措辭「MUST NOT 以空的檢索結果執行」與 FR-004 牴觸，已於 2026-08-27 修訂；6.3（patch）不新增額外違反；6.5（附件快取）不適用——本功能不新增附件處理路徑，`Message.text` 沿用既有文字化結果 |
 | **七、協同與資料一致性** | 不改動 JOIN／LEAVE／送出訊息的核心邏輯，但新增 `StateStore` 對 JOIN 狀態的持久追蹤 | ✅ 通過。新增的 `addJoinedConversation`/`removeJoinedConversation` 是**旁側記錄**（供背景 watch 復原用），不影響 7.1（JOIN 非排他鎖）、7.2（送出前樂觀併發檢查，本功能的一鍵帶入/插入為回覆送出時完整複用，FR-006）的既有行為；7.3（JOIN 去重）不受影響 |
 | **八、介面與無障礙** | 8.1／8.2／8.4／8.5 | ✅ 通過。8.1：本功能無新增僅靠顏色表達的狀態（信心度/過舊提醒皆為文字＋圖示）；8.2：一鍵帶入/插入為回覆需可鍵盤操作；**8.4 是本功能第一次出現「非使用者輸入、程式主動要覆蓋草稿」的場景**（FR-018），新增確認流程見 research.md #11；8.5：新文案入 i18n |
 | **九、渲染與部署** | 不涉及 `nuxt.config.ts` 或部署形態變更 | 不適用 |
@@ -151,6 +155,8 @@ app/
 ├── composables/
 │   ├── useCopilotSession.ts                # MODIFIED — 訂閱 suggestion.updated
 │   ├── useKnowledgeSearch.ts                # NEW — debounce 300ms、loading/error/hits
+│   ├── useOverwriteConfirm.ts              # NEW — 草稿覆蓋確認，一鍵帶入／插入為回覆共用
+│   │                                        #        （FR-018、憲法 8.4，研究 #11）
 │   └── useConversationView.ts              # MODIFIED — 切換對話時送出真實 viewerJoined（研究 #8）
 ├── components/copilot/
 │   ├── SuggestionCard.vue                  # NEW
@@ -161,15 +167,24 @@ app/
 test/
 ├── agent-knowledge-provider.test.ts        # NEW
 ├── suggestion-whitelist.test.ts            # NEW
+├── suggestion-send-path.test.ts            # NEW — 帶入內容送出仍走撞單檢查，無繞過路徑（SC-004）
 ├── copilot-analysis.test.ts                # MODIFIED（擴充）
 ├── catch-up-summary.test.ts                # NEW
 ├── presence-away-joined.test.ts            # NEW
 ├── stream-reconnect-background.test.ts     # NEW
-└── knowledge-search-api.test.ts            # NEW
+├── knowledge-search-api.test.ts            # NEW
+├── message-source.test.ts                  # MODIFIED — getPriority() 的聚合規則
+└── realtime-http.ts                        # MODIFIED — smoke:realtime 場景擴充（US3 故障隔離、
+                                             #            US4 背景更新）
 
 docs/
 ├── ARCHITECTURE.md                          # MODIFIED — §18 M2/M3 內容同步、新增 §12.4（研究 #3、#12）
+├── PLATFORM_CAPABILITY.md                   # MODIFIED — 罐頭訊息端點的實測結論（spike 17）
 └── IMBRACE_QUESTIONS.md                     # MODIFIED — 新增檔案最後修改時間／SOP 編號制度提問（研究 #2）
+
+scripts/spike/
+└── 17-message-templates.ts                  # NEW — 罐頭訊息端點形狀實測（不影響本功能實作，
+                                             #        結論供後續 feature 決定是否納入白名單來源）
 ```
 
 **Structure Decision**: 沿用專案既有三層結構，不引入新頂層目錄。`server/services/knowledge/` 是

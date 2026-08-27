@@ -31,8 +31,12 @@ FR-007）；`updatedAt` 可能為 `null`（research.md #2）。
 | 客服未 JOIN 該對話 | 403 | `{ message: '需先加入對話' }` | FR-025——前端收到後顯示「需先 JOIN 才能使用」，與空白查詢／查無結果／錯誤狀態视觉可區分 |
 | `KnowledgeProvider.search()` 逾時或拋錯 | 200 | `{ hits: [], degraded: true }` | 憲法 3.1/3.2——**MUST NOT** 讓這支端點的失敗變成 5xx 打斷前端的錯誤處理流程；`degraded: true` 讓前端顯示「知識庫服務暫時無法使用」＋重試，而非「查無相關結果」 |
 
-`degraded` 是本契約唯一新增於 `KnowledgeSearchResponse` 之外的欄位，僅用於錯誤與「真的查不到」
-的區分——`data-model.md` §5 的型別需相應加上 `degraded?: boolean`。
+`degraded` 僅用於區分「錯誤」與「真的查不到」——兩者都是 `hits: []`。此欄位已收進
+`data-model.md` §5 的 `KnowledgeSearchResponse`（`expandRef` 同樣已收進 `KnowledgeSearchRequest`），
+型別定義以 `data-model.md` 為準，本契約不另立形狀。
+
+檢索呼叫 MUST 帶逾時上限（`KNOWLEDGE_SEARCH_TIMEOUT_MS`，見 `plan.md` Constraints），
+逾時即走上表最後一列的 `degraded` 路徑——SC-002 的 10 秒門檻靠這個上限成立，不靠 provider 自律。
 
 ## 前端契約（`useKnowledgeSearch.ts`）
 
