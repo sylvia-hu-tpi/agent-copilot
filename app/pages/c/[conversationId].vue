@@ -26,6 +26,9 @@ const copilot = useCopilotSession(conversationId)
 const draft = useDraft(conversationId)
 const composer = ref<{ focus: () => void } | null>(null)
 
+// 建議卡「一鍵帶入」的草稿覆蓋確認（FR-018、憲法 8.4，research.md #11）
+const overwriteConfirm = useOverwriteConfirm(draft.text, (text) => { draft.text.value = text })
+
 // ── 側欄 ────────────────────────────────────────────────────────────
 
 const sidebarWidth = ref(280)
@@ -278,6 +281,30 @@ const title = computed(() =>
         @load-older="view.loadOlder()"
       />
 
+      <!-- 一鍵帶入／插入為回覆覆蓋非空白草稿前的確認（FR-018、憲法 8.4） -->
+      <div
+        v-if="overwriteConfirm.pending.value !== null"
+        class="ac-alert-warn mx-4 mb-2 flex items-center justify-between gap-3 px-3 py-2"
+      >
+        <span class="flex items-center gap-2">
+          <UIcon name="i-lucide-alert-triangle" class="size-3.5 shrink-0" />
+          {{ $t('copilot.draftOverwrite.message') }}
+        </span>
+        <span class="flex shrink-0 gap-2">
+          <button type="button" class="ac-btn-primary h-7 px-2.5 text-[0.8125rem]" @click="overwriteConfirm.confirm()">
+            {{ $t('copilot.draftOverwrite.confirm') }}
+          </button>
+          <button
+            type="button"
+            class="h-7 rounded-lg border px-2.5 text-[0.8125rem]"
+            :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
+            @click="overwriteConfirm.cancel()"
+          >
+            {{ $t('copilot.draftOverwrite.cancel') }}
+          </button>
+        </span>
+      </div>
+
       <ConversationComposer
         ref="composer"
         v-model:draft="draft.text.value"
@@ -305,8 +332,8 @@ const title = computed(() =>
     />
 
     <!--
-      右欄 Copilot 面板 —— specs/001-sentiment-panel（M2）。
-      §14.1.1 規劃的其餘區塊（建議卡、知識庫快查等）仍是後續功能，先留白。
+      右欄 Copilot 面板 —— specs/001-sentiment-panel（摘要卡／情緒）與
+      specs/002-suggestion-knowledge-search（建議卡；知識庫快查見 T038）。
     -->
     <div
       v-if="conversationId"
@@ -315,6 +342,11 @@ const title = computed(() =>
     >
       <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
       <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
+      <CopilotSuggestionList
+        :block="copilot.suggestions.value"
+        @retry="copilot.retry('suggestions')"
+        @insert="overwriteConfirm.request($event)"
+      />
     </div>
   </div>
 </template>

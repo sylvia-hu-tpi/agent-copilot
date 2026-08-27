@@ -7,7 +7,7 @@
  */
 
 import type { CopilotEvent } from '#shared/types/events'
-import type { SentimentBlock, SummaryBlock } from '#shared/types/copilot'
+import type { SentimentBlock, SuggestionBlock, SummaryBlock } from '#shared/types/copilot'
 
 function emptySummaryBlock(): SummaryBlock {
   return { status: 'empty', summary: null, updatedAt: new Date().toISOString() }
@@ -22,12 +22,26 @@ function emptySentimentBlock(): SentimentBlock {
   }
 }
 
+/**
+ * `knowledgeSearch: { ran: false, hitCount: 0 }`——尚未查過，`ran` 為 `false` 在此是正確的：
+ * 憲法 6.2 管的是「生成建議卡時不得略過檢索」，不是「初始狀態」（specs/002-suggestion-knowledge-search）。
+ */
+function emptySuggestionBlock(): SuggestionBlock {
+  return {
+    status: 'empty',
+    cards: [],
+    knowledgeSearch: { ran: false, hitCount: 0 },
+    updatedAt: new Date().toISOString(),
+  }
+}
+
 export function useCopilotSession(conversationId: Ref<string>) {
   const stream = useStreamStore()
 
   const summary = ref<SummaryBlock>(emptySummaryBlock())
   const sentiment = ref<SentimentBlock>(emptySentimentBlock())
-  const retrying = ref<Partial<Record<'summary' | 'sentiment', boolean>>>({})
+  const suggestions = ref<SuggestionBlock>(emptySuggestionBlock())
+  const retrying = ref<Partial<Record<'summary' | 'sentiment' | 'suggestions', boolean>>>({})
 
   function handle(evt: CopilotEvent): void {
     if (!('conversationId' in evt) || evt.conversationId !== conversationId.value) return
@@ -39,6 +53,9 @@ export function useCopilotSession(conversationId: Ref<string>) {
       case 'sentiment.updated':
         sentiment.value = evt.sentiment
         break
+      case 'suggestion.updated':
+        suggestions.value = evt.suggestion
+        break
     }
   }
 
@@ -46,7 +63,7 @@ export function useCopilotSession(conversationId: Ref<string>) {
    * FR-008：手動重試單一區塊。202 代表已接受，結果透過上面的 SSE 事件送達 ——
    * 這裡不等待分析完成，只負責觸發（contracts/copilot-retry-api.md）。
    */
-  async function retry(block: 'summary' | 'sentiment'): Promise<void> {
+  async function retry(block: 'summary' | 'sentiment' | 'suggestions'): Promise<void> {
     if (retrying.value[block]) return
     retrying.value[block] = true
     try {
@@ -77,7 +94,8 @@ export function useCopilotSession(conversationId: Ref<string>) {
   watch(conversationId, () => {
     summary.value = emptySummaryBlock()
     sentiment.value = emptySentimentBlock()
+    suggestions.value = emptySuggestionBlock()
   })
 
-  return { summary, sentiment, retry }
+  return { summary, sentiment, suggestions, retry }
 }

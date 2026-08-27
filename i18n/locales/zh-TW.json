@@ -133,6 +133,34 @@
         "angry": "客戶情緒：生氣"
       }
     },
+    "suggestion": {
+      "title": "建議回覆",
+      "empty": "尚無資料",
+      "analyzing": "產生中…",
+      "updating": "更新中…",
+      "retrying": "重試中 ({attempt}/2)",
+      "error": "暫時無法產生建議",
+      "readyEmpty": "本次未產生建議",
+      "insert": "一鍵帶入",
+      "noKnowledgeRef": "未引用知識庫",
+      "confidence": "信心度 {value}%",
+      "tone": {
+        "apologetic": "致歉",
+        "informative": "說明",
+        "retention": "挽留",
+        "closing": "結案",
+        "escalating": "升級"
+      },
+      "supersededBy": {
+        "agent": "同事已回覆類似內容",
+        "ai": "AI 已回覆類似內容"
+      }
+    },
+    "draftOverwrite": {
+      "message": "目前輸入框已有內容，套用後會覆蓋。",
+      "confirm": "覆蓋",
+      "cancel": "取消"
+    },
     "retry": "重新分析"
   },
   "collision": {
