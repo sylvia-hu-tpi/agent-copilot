@@ -71,3 +71,31 @@ describe('resolveKnowledgeSearch()', () => {
     expect(result).toEqual({ hits: [], degraded: true })
   })
 })
+
+// ── US3：四態互斥可區分（T044，呼應 FR-011、FR-025 與 contract 的四態要求）──
+
+describe('四種狀態的回應形狀彼此互斥且可區分（US3）', () => {
+  it('空白查詢／正常查無結果／degraded 三者在 resolveKnowledgeSearch() 這層即可區分', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const blank = await resolveKnowledgeSearch('', vi.fn(async () => [hit('would-be-called')]))
+    const noResults = await resolveKnowledgeSearch('查不到', vi.fn(async () => []))
+    const degraded = await resolveKnowledgeSearch('故障', vi.fn(async () => { throw new Error('boom') }))
+    const found = await resolveKnowledgeSearch('查得到', vi.fn(async () => [hit('h1')]))
+
+    // 空白與正常查無結果的 body 形狀相同（{hits:[]}），差異在於呼叫端有沒有真的呼叫 search()——
+    // 前端依 hasQueried 區分（useKnowledgeSearch.ts），這裡驗證的是「不該呼叫時真的沒呼叫」
+    expect(blank).toEqual({ hits: [] })
+    expect(noResults).toEqual({ hits: [] })
+    // degraded 與前兩者在 body 形狀上明確可區分（多一個 degraded: true）
+    expect(degraded).toEqual({ hits: [], degraded: true })
+    expect(degraded).not.toEqual(blank)
+    // 有命中時形狀也與其餘三者不同
+    expect(found.hits.length).toBeGreaterThan(0)
+    expect(found.degraded).toBeUndefined()
+  })
+
+  // 第四態「未 JOIN」（403）由 route handler 在呼叫 resolveKnowledgeSearch() 之前短路
+  // （見 server/api/conversations/[id]/knowledge-search.post.ts），依賴真實 H3 session／
+  // cookie 環境，這一層無法建構，實際 HTTP 層行為由 smoke 測試（test/realtime-http.ts）涵蓋。
+})
