@@ -85,7 +85,7 @@ description: "Task list template for feature implementation"
   呼叫知識庫 agent 的 `streamChat()`、過濾 `tool-output-available` 且 `toolName === 'RAGknowledge'` 的事件，
   以正則 `/\[Source: ([^\]]+)\]\n([\s\S]*?)(?=\n\[Source: |$)/g` 切出 chunk、對檔名做兩次 `decodeURIComponent()`、
   比對 `folder_info.folders[].files[].name` 取得 `id`（比對不到時退回檔名雜湊）、以正則
-  `/_V\d+_(\d{4})(\d{2})(\d{2})_/` 嘗試擷取 `updatedAt`（擷取不到為 `null`）、清理檔名版本/日期/可見範圍後綴
+  `/_V\d+_(\d{4})(\d{2})(\d{2})_/i`（**不分大小寫**，理由見 T067 ②）嘗試擷取 `updatedAt`（擷取不到為 `null`）、清理檔名版本/日期/可見範圍後綴
   作為 `title`、`score` 恆為 `null`（research.md #1、#2）；**`search()` MUST 套用逾時**——
   匯出常數 `KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000`（plan.md Constraints：短於 SC-002 的 10 秒門檻），
   `opts.timeoutMs` 可覆寫，逾時即拋錯交由呼叫端降級（**不重試**：檢索失敗時 FR-004 允許以空集合續行，
@@ -399,9 +399,12 @@ description: "Task list template for feature implementation"
 - [X] T058 [P] [US4] 新增 `test/presence-away-joined.test.ts`：`state:'away', joined:true` → 送出
   `watch(background)` 控制訊息、`clearViewing()` 仍被呼叫；`joined:false` → 送出 `unwatch`
   （contracts/presence-watch-control.md「測試對照」）
-- [ ] T059 [P] [US4] 新增 `test/stream-reconnect-background.test.ts`：模擬 `listJoinedConversations` 回傳多筆
+- [X] T059 [P] [US4] 新增 `test/stream-reconnect-background.test.ts`：模擬 `listJoinedConversations` 回傳多筆
   conversationId，驗證每筆皆以 `background` 呼叫 `attach()`；稍後對其中一筆送出 `foreground` watch 時能成功
   升級（不被 `watched.has()` 擋下）
+  ✅ 2026-08-27：`stream.get.ts` 用了 Nitro auto-import、vitest／tsx 無法直接 import，因此比照
+  `resolvePresenceControl()`（T058）的既有慣例，把「監看註冊表」抽成 `createWatchRegistry()`
+  放進 `server/utils/stream-control.ts`，由 `stream.get.ts` 改用之，測試直接測該純邏輯（6 個案例）。
 - [X] T060 [US4] 修改 `test/copilot-analysis.test.ts`：新增 US4 案例——`priority:'background'` 時
   `runIncremental()` 跳過 `analyzeSummary()` 但仍執行情緒與建議卡分析；`BACKGROUND_CONCURRENCY_LIMIT` 滿載時
   超額對話僅重排 debounce、不執行、`pending` 不清空；背景 debounce 使用 `BACKGROUND_DEBOUNCE_MS`
@@ -444,11 +447,15 @@ description: "Task list template for feature implementation"
 
 ## Phase 7: Polish & Cross-Cutting Concerns
 
-- [ ] T064 [P] 修改 `docs/ARCHITECTURE.md`：同步 §18 M2/M3「內容」與 M2「驗收」清單（知識庫快查移入 M2，
+- [X] T064 [P] 修改 `docs/ARCHITECTURE.md`：同步 §18 M2/M3「內容」與 M2「驗收」清單（知識庫快查移入 M2，
   research.md #12）；新增 §12.4「知識庫快查已知限制」（展開全文不保證涵蓋整份文件，research.md #3）
-- [ ] T065 [P] 修改 `docs/IMBRACE_QUESTIONS.md`：新增一題，詢問知識庫檔案是否有可查詢的「最後修改時間」中繼資料
+  ✅ 2026-08-27 複查：§18 M2「內容」已含知識庫快查並註明由 M3 併入、M2「驗收」已加該功能項、
+  M3「內容」／「驗收」已縮限為「只換 provider」；§12.4 三項限制齊備。本次另補 §12.4 ②-1
+  （重新取樣發現的檔名大小寫與 `folderContentsTool` 先行呼叫，見 T067 說明）。
+- [X] T065 [P] 修改 `docs/IMBRACE_QUESTIONS.md`：新增一題，詢問知識庫檔案是否有可查詢的「最後修改時間」中繼資料
   API、以及是否有正式 SOP 編號制度（research.md #2 待辦）
-- [ ] T066 依 CLAUDE.md「正典文件修改後必須 grep 舊說法」——`grep -rn "SOP #" docs/`、
+  ✅ 2026-08-27 複查：已列為 0-3g（🟡 P2），題號與既有 0-3a～0-3f 不衝突。
+- [X] T066 依 CLAUDE.md「正典文件修改後必須 grep 舊說法」——`grep -rn "SOP #" docs/`、
   `grep -rn "重新產生建議" docs/`、`grep -rn "串流" docs/`（確認 §19.1 #20 的「建議卡串流顯示」已撤銷，
   spec.md Clarifications 第 4 題；`docs/DESIGN_TOKENS.md:256` 的「↻ 重新產生」是 M3 結案摘要按鈕，
   屬**預期命中**，不是漏改）、`grep -rn "knowledgeHitCount" specs/ shared/ server/ app/ test/`
@@ -456,8 +463,25 @@ description: "Task list template for feature implementation"
   `grep -rn "mode === 'hybrid'" server/ app/`（確認 `aiReplies` 一律走 `controlFromMode()`，FR-016）、
   `grep -rln "知識庫快查" docs/ARCHITECTURE.md`（確認 M3 清單已同步移除，T064）、
   `grep -n "0-3f\|0-3g" docs/IMBRACE_QUESTIONS.md`（確認新題號與既有題號不衝突），逐一確認無殘留舊說法
-- [ ] T067 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認全部通過（quickstart.md
+  ✅ 2026-08-27 逐項執行完畢，無殘留舊說法。命中者全為**預期命中**：`SOP #` 只出現在
+  §8.2／§12.3／`DESIGN_TOKENS.md` 的「已撤銷」訂正說明裡；`串流` 只命中 §19.1 #20 記錄撤銷理由的那一列；
+  `重新產生` 命中的是「不得重新產生」的約束本文與 `DESIGN_TOKENS.md:256` 的 M3 結案摘要按鈕；
+  `knowledgeHitCount` 已無程式碼命中，只剩 `data-model.md` 記述「早期版本」的歷史說明與本任務自身的敘述；
+  `mode === 'hybrid'` 在 `server/` 只命中 `session-manager.ts:213`「MUST NOT 這樣寫」的註解本身，
+  `app/` 只命中 `ModeSelect.vue` 的色票對映（與 `aiReplies` 無關）。
+- [X] T067 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認全部通過（quickstart.md
   前置準備／CLAUDE.md 驗證指令，動到 `server/api/**`／`server/state/**`／`server/sources/**` 因此須含 smoke）
+  ✅ 2026-08-27 四項全綠（typecheck 通過、vitest 22 檔 218 tests、build 完成、smoke 兩支皆通過）。
+  過程中修掉三個**擋住這條驗證、且都不是本次新寫的程式碼造成**的既有缺陷：
+  ① `test/agent-knowledge-provider.test.ts` 讀 `scripts/spike/out/11-*.json` 這個 **gitignore 的檔案**，
+     一旦 clone 或清掉 out/ 就必紅。依使用者裁示先重跑 `npm run spike:contract` 重新取樣，
+     再把樣本**形狀**內嵌進測試檔（正文與檔名改寫為虛構內容，客戶文件不進 repo），不再依賴外部檔案。
+  ② 重新取樣發現 `AgentKnowledgeProvider` 的版本日期／標題正則**大小寫敏感**——實測資料夾 9 個檔案
+     有 2 個是小寫 `_v1_`，會靜默得到 `updatedAt: null` 與沒清乾淨的標題。已加 `i` 旗標並補測試。
+  ③ `test/realtime-http.ts` 場景⑤的前置條件錯誤：B 在場景③重連後仍以 foreground 看著同一個對話，
+     而優先度是**整個對話**聚合的（任一訂閱者為 foreground 即為 foreground），因此「A 切走後仍會重算摘要」
+     是正確行為、不是 FR-020 違反。該斷言在 HEAD 上實測連 4 次全紅。已在場景⑤開頭先關掉 B 的連線，
+     修正後連 4 次全綠。⚠️ **未放寬任何門檻**——動的是前置條件，不是斷言。
 - [x] T068 [P] 新增 `scripts/spike/17-message-templates.ts` 與 `npm run spike:templates`：實測
   `GET /api/channel-service/v2/message_templates?business_unit_id={pub_id}&limit=15&skip=0&sort=-updated_at`
   的回應形狀（內容本體欄位、分頁行為、`business_unit_id` 與我方 `orgId`／`pub_id` 的對映、
@@ -486,6 +510,11 @@ description: "Task list template for feature implementation"
   ✅ **2026-08-27 已確認**：`.env.local` 已存在 `IMBRACE_KNOWLEDGE_AGENT_ID`／
   `IMBRACE_SUGGESTION_AGENT_ID` 兩把值，皆非空。尚未實際對真實環境跑過 quickstart.md
   US1 場景第 2 步的人工計時驗收（SC-001）——那一步仍待人工執行，本項只確認「前置憑證已備妥」。
+  ⚠️ 2026-08-27 稍晚複查時，`.env.local` 一度**沒有**這兩個 key（同一時間 `scripts/spike/out/`
+  的 11／12／14／17 產出也不見了，像是同一次本機清理造成）。使用者當場補回後重新確認：
+  兩把 id 皆存在、非空、皆為 36 字元的 UUID 形狀。⚠️ 這兩者都是 **gitignore 的本機檔案**，
+  換機器或清過本機就會消失——**不要把「上一個 session 勾過了」當成現在還成立**，動到需要它們的
+  任務前一律重驗（T067 ① 記錄的測試依賴 gitignore 檔案問題，就是這件事的另一個受害者）。
 
 > **SC-001（3 秒／10 秒延遲門檻）刻意不列自動化任務**：`smoke` 跑的是假 gateway ＋ Mock provider，
 > 對它斷言延遲量到的是 `suggestDelayMs` 這個自己設的數字，不是真實 AI 呼叫（實測中位數 5.0 秒、
