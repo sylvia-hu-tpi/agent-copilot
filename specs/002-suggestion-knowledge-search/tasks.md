@@ -345,19 +345,19 @@ description: "Task list template for feature implementation"
 
 ### 背景並行與 debounce
 
-- [ ] T046 [US4] 修改 `server/services/copilot-analysis.ts`：新增 globalThis-keyed 模組狀態
+- [X] T046 [US4] 修改 `server/services/copilot-analysis.ts`：新增 globalThis-keyed 模組狀態
   `backgroundInFlight: Set<string>`（conversationId）與常數 `BACKGROUND_CONCURRENCY_LIMIT = 10`、
   `BACKGROUND_DEBOUNCE_MS = 8_000`（data-model.md §8、research.md #9）
-- [ ] T047 [US4] 修改 `server/services/copilot-analysis.ts`：`scheduleIncremental(conversationId, customerMessages, priority, aiReplies)`——
+- [X] T047 [US4] 修改 `server/services/copilot-analysis.ts`：`scheduleIncremental(conversationId, customerMessages, priority, aiReplies)`——
   `priority === 'foreground'` 沿用既有 `DEBOUNCE_MS = 1_000`，`'background'` 改用 `BACKGROUND_DEBOUNCE_MS`；
   `debounceTimers` 的 entry 一併保存 `priority`/`aiReplies`（依賴 T046）
-- [ ] T048 [US4] 修改 `server/services/copilot-analysis.ts`：`runIncremental(conversationId, newCustomerMessages, priority, aiReplies)`——
+- [X] T048 [US4] 修改 `server/services/copilot-analysis.ts`：`runIncremental(conversationId, newCustomerMessages, priority, aiReplies)`——
   `priority === 'background'` 時，若 `backgroundInFlight.size >= BACKGROUND_CONCURRENCY_LIMIT` 且本對話不在
   集合中，**不執行**，改為以相同長度重新排一次 debounce（保留 pending，不清空，不顯示為錯誤，spec.md Edge
   Cases）；否則執行前加入 `backgroundInFlight`、`finally` 移出；`priority === 'background'` 時**跳過**
   `analyzeSummary()` 呼叫（FR-020），僅執行 `analyzeSentimentBatch()` 與 `analyzeSuggestions()`（FR-019）
   （依賴 T046、T047）
-- [ ] T049 [US4] 修改 `server/services/copilot-analysis.ts`：新增
+- [X] T049 [US4] 修改 `server/services/copilot-analysis.ts`：新增
   `catchUpSummaryIfStale(conversationId: string, history: Message[]): Promise<void>`（research.md #10）——
   比對 `state.summaryBlock.summary?.basedOnMessageId` 與 `history` 中尚未涵蓋的客戶發言，無新發言時 no-op；
   有新發言時先發布 `summaryBlock.status = 'analyzing'`（保留舊內容），再呼叫既有 `analyzeSummary()`
@@ -370,18 +370,18 @@ description: "Task list template for feature implementation"
 > 唯一寫入端，而 US2 的知識庫快查（T035，Phase 4）就靠它判定 JOIN 門檻。留在本 Phase 會讓
 > US2 在自己的 checkpoint 上恆回 403，「US2 可獨立驗收」的宣稱不成立。
 
-- [ ] T053 [US4] 修改 `app/composables/useConversationView.ts`：`watch(conversationId, ...)` 處理器（約第
+- [X] T053 [US4] 修改 `app/composables/useConversationView.ts`：`watch(conversationId, ...)` 處理器（約第
   356-374 行）中，切換對話時對**前一個**對話送出的 presence body，把寫死的 `joined: false` 改為切換前讀取的
   `detail.value?.viewerJoined`（**必須在 `loadAll()` 覆蓋 `detail` 之前讀取**，
   contracts/presence-watch-control.md「呼叫端契約」）
-- [ ] T054 [US4] 修改 `server/api/presence.post.ts`：`state === 'away'` 時不再無條件送出 `{kind:'unwatch'}`，
+- [X] T054 [US4] 修改 `server/api/presence.post.ts`：`state === 'away'` 時不再無條件送出 `{kind:'unwatch'}`，
   改依 `joined` 分流——`joined === true` → `{ kind: 'watch', priority: 'background' }`；`joined === false` →
   `{ kind: 'unwatch' }`；`clearViewing()`（第 57 行）維持無條件執行不變（contracts/presence-watch-control.md
   「修正後」表格）
-- [ ] T055 [US4] 修改 `server/api/stream.get.ts`：控制通道 handler（約第 79-94 行）中，`watched.has(convId)`
+- [X] T055 [US4] 修改 `server/api/stream.get.ts`：控制通道 handler（約第 79-94 行）中，`watched.has(convId)`
   為真時不再直接 `return`——改為先呼叫既有的 `Unsubscribe`，再以新 `priority` 重新 `attach()`（research.md #8
   決策 3）
-- [ ] T056 [US4] 修改 `server/api/stream.get.ts`：連線建立時（① 訂閱組織事件之前）新增第零步——呼叫
+- [X] T056 [US4] 修改 `server/api/stream.get.ts`：連線建立時（① 訂閱組織事件之前）新增第零步——呼叫
   `store.listJoinedConversations(session.operatorId)`，對每筆 `attach(convId, 'background', true)`
   （research.md #8 決策 4）；`attach()` 內以 `priority === 'foreground'` 時額外呼叫
   `catchUpSummaryIfStale(conversationId, history)`（T049，history 取自 `runtime.messageSource.fetchSince()`，
@@ -389,33 +389,54 @@ description: "Task list template for feature implementation"
 
 ### 建議卡重複判定（FR-015）
 
-- [ ] T057 [US4] 修改 `server/services/copilot-analysis.ts`：新增重複判定邏輯（判定方式留待實作決定，spec.md
+- [X] T057 [US4] 修改 `server/services/copilot-analysis.ts`：新增重複判定邏輯（判定方式留待實作決定，spec.md
   Assumptions 允許簡單的關鍵詞重疊/相似度比對）——新客戶發言、同事回覆、或 Hybrid 模式下 AI 自動回覆抵達時，
   對 `suggestionBlock.cards` 中與該次回覆內容明顯重複者，寫入
   `card.supersededBy = { kind: 'agent' | 'ai', messageId }` 並整塊覆蓋發布（FR-015、US4 AC#2）
 
 ### 測試
 
-- [ ] T058 [P] [US4] 新增 `test/presence-away-joined.test.ts`：`state:'away', joined:true` → 送出
+- [X] T058 [P] [US4] 新增 `test/presence-away-joined.test.ts`：`state:'away', joined:true` → 送出
   `watch(background)` 控制訊息、`clearViewing()` 仍被呼叫；`joined:false` → 送出 `unwatch`
   （contracts/presence-watch-control.md「測試對照」）
 - [ ] T059 [P] [US4] 新增 `test/stream-reconnect-background.test.ts`：模擬 `listJoinedConversations` 回傳多筆
   conversationId，驗證每筆皆以 `background` 呼叫 `attach()`；稍後對其中一筆送出 `foreground` watch 時能成功
   升級（不被 `watched.has()` 擋下）
-- [ ] T060 [US4] 修改 `test/copilot-analysis.test.ts`：新增 US4 案例——`priority:'background'` 時
+- [X] T060 [US4] 修改 `test/copilot-analysis.test.ts`：新增 US4 案例——`priority:'background'` 時
   `runIncremental()` 跳過 `analyzeSummary()` 但仍執行情緒與建議卡分析；`BACKGROUND_CONCURRENCY_LIMIT` 滿載時
   超額對話僅重排 debounce、不執行、`pending` 不清空；背景 debounce 使用 `BACKGROUND_DEBOUNCE_MS`
-- [ ] T061 [P] [US4] 新增 `test/catch-up-summary.test.ts`：`catchUpSummaryIfStale()`——無新客戶發言時 no-op；
+- [X] T061 [P] [US4] 新增 `test/catch-up-summary.test.ts`：`catchUpSummaryIfStale()`——無新客戶發言時 no-op；
   有新發言時先發布 `analyzing` 再更新為含新內容的 `ready`
 
 ### App
 
-- [ ] T062 [US4] 修改 `app/components/copilot/SuggestionCard.vue`：`card.supersededBy` 非 null 時顯示搶答標示
+- [X] T062 [US4] 修改 `app/components/copilot/SuggestionCard.vue`：`card.supersededBy` 非 null 時顯示搶答標示
   （「AI 已回覆類似內容」／「同事已回覆類似內容」）並降級呈現（依 US4 AC#2，樣式選擇：淡化或摺疊，不自列表移除
   亦可，只要視覺上明顯降級）（依賴 T028）
-- [ ] T063 [US4] 修改 `test/realtime-http.ts`：擴充 quickstart.md US4 場景——JOIN A、JOIN B（A 成為背景）、
+- [X] T063 [US4] 修改 `test/realtime-http.ts`：擴充 quickstart.md US4 場景——JOIN A、JOIN B（A 成為背景）、
   對 A 注入新客戶發言、斷言 A 的情緒與建議卡於背景重新計算且摘要未重算、切回 A 斷言立即顯示已更新結果
   （不重新產生等待）、摘要短暫顯示「更新中」後補上涵蓋新發言的內容
+  ✅ 2026-08-27：commit 646a3cb 已新增「⑤ 多對話背景更新」場景（第 366-434 行），涵蓋上述全部斷言
+  ——含斷線重連後立即以背景優先度復原（T059 的重連情境因此也已被這支 smoke 場景間接驗證，
+  但 T059 明文要求的「多筆 conversationId 各自以 background attach()」多對話案例仍只有單一對話，
+  T059 本身保持未勾選）。
+
+> **2026-08-27 交接筆記（本次 session 的主要產出）**：`test/realtime-http.ts` 既有的 FR-010
+> 重連快照斷言（「重新連線並 watch 後 MUST 於 2 秒內收到已保留的 summary.updated／sentiment.updated」）
+> 曾在啟用 T056（SSE 重連復原背景 watch）後穩定失敗，事件延遲到剛好 `STREAM_HEARTBEAT_MS`（25 秒）
+> 才送達。逐行加時間戳記追蹤後定位到**與 T056 邏輯無關的既有缺陷**：h3 的 `EventStream` 從不呼叫
+> `res.flushHeaders()`，Node 預設「回應標頭與第一個 write() 一起 flush」，導致一條「目前沒有任何
+> 已 JOIN 對話」的全新連線（例如客服只是 viewing、從未 JOIN——即 `test/realtime-http.ts` 的
+> browser-b）在建立當下沒有事件可送，於是連 HTTP 標頭都卡住不送出，直到下一次心跳。T056 只是
+> ***意外治好*** 了已 JOIN 客服（A）的連線（因為復原迴圈讓它一開始就有東西可送），因而讓從未
+> JOIN 的 B 成為第一個踩到這個既有缺陷的案例。**修法**：`server/api/stream.get.ts` 在連線建立時
+> 無條件送一次 `stream.heartbeat`，強制立即 flush，不必等待任何對話相關事件——已驗證 FR-010
+> 斷言恢復通過（9ms，遠低於 2 秒門檻），**斷言本身的 2 秒門檻不需要放寬**，那個數字本來就是對的，
+> 卡住的是實作而不是測試。`npm run typecheck && npm test`（210 tests）與 `npm run smoke`（含
+> `smoke:flow`／`smoke:realtime`）均已在本次 session 內重新跑過並全數通過。
+>
+> 尚未完成：T059（見上）、T064-T067（文件同步／grep 舊說法／全量驗證指令的最終確認—— T067
+> 本次已跑過驗證指令但尚未在 tasks.md 正式勾選，留給下一個 session 依 Phase 7 清單逐項確認）。
 
 **Checkpoint**：全部四個 User Story 皆可獨立驗收，本功能主要風險（多對話背景運算）已覆蓋。
 
@@ -454,6 +475,17 @@ description: "Task list template for feature implementation"
   挑選的現成文字，兩者情境不同；改列為輸入框旁獨立「常用回覆」功能的候選方向（與
   `docs/wireframe/03-workspace_lightTheme.png` 已畫出的按鈕吻合），未排入任何里程碑，
   實測結論留存供屆時沿用（spec.md Assumptions）
+
+- [x] T069 [P] **前置條件追蹤（非程式碼任務）**：`IMBRACE_KNOWLEDGE_AGENT_ID`／`IMBRACE_SUGGESTION_AGENT_ID`
+  兩把 agent id 於本次實作期間 `.env.local` 尚未建立（缺憑證時已如預期退回 Mock，不阻塞開發，
+  見 research.md #4）。**但 quickstart.md US1 場景第 2 步（SC-001 手動計時）與 T067 的
+  `npm run smoke` 之外、對真實環境的人工驗收都需要這兩把 id 才能跑出非 Mock 的結果。**
+  待使用者於 iMBrace 後台建立 `AgentCopilot_知識庫檢索_agent`（掛 Knowledge Hub）與
+  `AgentCopilot_建議回覆_agent`（不掛）後填入 `.env.local`，即可移除本項——與 T068 同性質的
+  「留一筆待辦，避免真的要手動驗收時才發現漏了」，不影響本 Phase 其餘任務的完成判定。
+  ✅ **2026-08-27 已確認**：`.env.local` 已存在 `IMBRACE_KNOWLEDGE_AGENT_ID`／
+  `IMBRACE_SUGGESTION_AGENT_ID` 兩把值，皆非空。尚未實際對真實環境跑過 quickstart.md
+  US1 場景第 2 步的人工計時驗收（SC-001）——那一步仍待人工執行，本項只確認「前置憑證已備妥」。
 
 > **SC-001（3 秒／10 秒延遲門檻）刻意不列自動化任務**：`smoke` 跑的是假 gateway ＋ Mock provider，
 > 對它斷言延遲量到的是 `suggestDelayMs` 這個自己設的數字，不是真實 AI 呼叫（實測中位數 5.0 秒、
