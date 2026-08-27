@@ -317,7 +317,7 @@ description: "Task list template for feature implementation"
 - [x] ~~T041／T042「確認故障開關可獨立運作」~~ —— **已併入 T043**
   （兩者沒有產出物、只是複述 T013／T010 的驗收條件；「開關互不影響」是可斷言的行為，
   應該是測試而不是一個待辦。T043 的兩個案例本身就會證明它）
-- [ ] T043 [US3] 修改 `test/copilot-analysis.test.ts`：新增 US3 案例——`analyzeSuggestions()` 的
+- [X] T043 [US3] 修改 `test/copilot-analysis.test.ts`：新增 US3 案例——`analyzeSuggestions()` 的
   `AIProvider.suggest()` 失敗時僅 `suggestionBlock.status` 轉 `'error'`，`summaryBlock`/`sentimentBlock`
   不受影響（反之亦然）；`KnowledgeProvider.search()` 失敗（拋錯）時 `analyzeSuggestions()` **不**整塊轉
   `error`，改為以空 `knowledgeHits` 繼續呼叫 `AIProvider.suggest()`、產生不含引用的通用建議
@@ -326,9 +326,9 @@ description: "Task list template for feature implementation"
   併入原 T041／T042 的驗收：斷言 `suggestDelayMs`／`suggestFailure`／`invalidSuggestOutput` 與
   `summarizeFailure`／`sentimentFailure`／`searchFailure` **彼此獨立**——只開 `searchFailure` 時
   `MockAIProvider.suggest()` 本身仍成功（這正是上述「檢索失敗但生成可用」情境的前提）
-- [ ] T044 [US3] 修改 `test/knowledge-search-api.test.ts`（T036）：新增斷言——空白查詢／未 JOIN／`degraded`／
+- [X] T044 [US3] 修改 `test/knowledge-search-api.test.ts`（T036）：新增斷言——空白查詢／未 JOIN／`degraded`／
   正常查無結果四種狀態的回應形狀彼此互斥且可區分（呼應 FR-011、FR-025 與 contracts 的四態要求）
-- [ ] T045 [US3] 修改 `test/realtime-http.ts`：擴充 smoke:realtime 場景，注入建議卡生成與知識庫檢索故障，
+- [X] T045 [US3] 修改 `test/realtime-http.ts`：擴充 smoke:realtime 場景，注入建議卡生成與知識庫檢索故障，
   斷言訊息流仍可讀、`POST /api/messages` 送出不被阻擋或延遲（SC-003），僅對應 SSE 事件／HTTP 回應顯示錯誤狀態
 
 **Checkpoint**：User Story 1、2、3 皆可獨立運作，故障情境下主線不受影響。
