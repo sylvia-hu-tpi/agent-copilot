@@ -7,6 +7,13 @@
  *
  * bu id 由 `channel.list()` 的 `bu_id` 取得。此值在一個組織內近乎不變，
  * 但每次列對話都多打一次 API 太浪費 —— 故以組織為鍵快取。
+ *
+ * ⚠️ **本函式回傳的 `bu_…` 只適用於 SDK 的 `conversations.*`，MUST NOT 拿去打
+ * `cloud.imbrace.co/api/channel-service/**`。** 後者的 `business_unit_id` 參數吃的是
+ * **`pub_` 開頭的另一種識別碼**——而且它在回應裡的欄位名也叫 `bu_id`，裝的卻是 `pub_` 值。
+ * 兩者形狀都是「前綴＋UUID」，傳錯**不會報錯，只會安靜回 `{data:[],total:0}`**。
+ * 2026-08-27 實測（`npm run spike:templates`）已踩過一次，詳見
+ * `docs/PLATFORM_CAPABILITY.md` §4.1。這是 §9.3「三種識別碼」的第四種。
  */
 
 import type { ImbraceClient } from '@imbrace/sdk'
