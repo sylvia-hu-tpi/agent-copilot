@@ -204,6 +204,19 @@ export default defineEventHandler(async (event) => {
     return send({ type: 'presence.updated', conversationId, presence: personal })
   }
 
+  // ⚠️ **根因已定位（2026-08-27）**：h3 的 `EventStream` 從不呼叫 `res.flushHeaders()`——
+  // Node 的預設行為是「回應標頭與第一個 write() 一起送上線路」，在那之前 client 端的
+  // `fetch()` 連 headers 都收不到。一條「目前沒有任何已 JOIN 對話」的全新連線
+  // （例如客服只是 viewing、從未 JOIN）在建立當下沒有任何事件要送，於是完全卡住，
+  // 直到下一次 `STREAM_HEARTBEAT_MS`（25 秒）心跳送出第一個位元組才解凍——
+  // 曾誤判是下面這段 T056 背景 watch 復原迴圈的邏輯競態（見 git 歷史 646a3cb 的長篇排查
+  // 記錄），但逐行加時間戳記追蹤後證實無關：停用這段迴圈、單純開一條未 JOIN 任何對話的
+  // 連線一樣會卡住。T056 只是「意外治好」了已 JOIN 客服的這條連線（因為它讓連線一開始
+  // 就有東西可送），因而讓從未 JOIN、只是 viewing 的另一位客服（`test/realtime-http.ts`
+  // 的 browser-b）成為第一個踩到既有缺陷的案例。修法：連線建立時無條件送一次心跳，
+  // 強制立即 flush，不必等待任何對話相關事件。
+  enqueue(() => send({ type: 'stream.heartbeat', at: new Date().toISOString() }))
+
   // 第零步：連線建立（含重連、含瀏覽器重新整理後的全新連線）時，復原此客服所有已 JOIN
   // 對話的背景 watch（research.md #8 決策 4）——沒有這一步，只有「當下正在看」的那個對話
   // 會在新連線建立後被重新 attach()，其餘已 JOIN 但背景的對話會在斷線的當下悄悄停止分析。
@@ -218,22 +231,6 @@ export default defineEventHandler(async (event) => {
   //      各自建立一份訂閱，其中一份會變成孤兒（`watched` 只留得住最後寫入的那份 cleanup）。
   //      經 `enqueue()` 排進同一條佇列，可確保這裡永遠先跑完，客服的第一次心跳（foreground
   //      升級，見 attach() 的 watched.get(convId)?.() 一律先解舊再建新）才不會撞期。
-  //
-  // ⚠️⚠️ **已知未解問題（2026-08-27，尚未定位根因）**：啟用這段程式碼後，
-  // `test/realtime-http.ts` 既有的「重新連線並 watch 後，MUST 立即收到已保留的
-  // summary.updated／sentiment.updated（FR-010）」一項會穩定失敗——事件延遲到剛好
-  // `STREAM_HEARTBEAT_MS`（25 秒）才送達，高度重現、非偶發。已排除的可能成因：
-  //   - `catchUpSummaryIfStale()` 本身（停用它問題依舊存在）。
-  //   - `ensurePipeline`/`releasePipeline` 的 refcount 不平衡（實測記錄顯示全程配平）。
-  //   - 這段迴圈與控制通道 attach() 之間的競態（改用 `setTimeout(fn, 0)` 額外排到巨任務、
-  //     確定晚於 `stream.send()` 之後仍然重現，已排除）。
-  // 只有**完全移除**這個迴圈（連同下面的 for 迴圈本體）才會讓該項恢復通過——但這正是
-  // T056（research.md #8 決策 4：SSE 重連時復原背景 watch）唯一的實作路徑，本檔自己新增的
-  // US4 場景（test/realtime-http.ts「⑤」）需要它才能驗證背景對話復原，兩者互相矛盾。
-  // **下一步除錯方向**：懷疑與 h3 `EventStream`／`TransformStream` 的 backpressure
-  // 有關（見 node_modules/h3/dist/index.mjs 的 `_sendEvent`/`push`/`send`），但尚未證實；
-  // 也可能與測試哈奈斯反覆用同一個 clientId（`browser-b`）快速重連、舊連線的
-  // `stream.onClosed()` 清理是否確實在 300ms 內完成有關，尚待用更長的等待時間驗證。
   enqueue(async () => {
     for (const convId of await store.listJoinedConversations(session.operatorId)) {
       if (!watched.has(convId)) watched.set(convId, await attach(convId, 'background', true))
