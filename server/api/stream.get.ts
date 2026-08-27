@@ -33,7 +33,7 @@ import { conversationTopic, organizationTopic } from '../state/types.js'
 import type { Unsubscribe } from '../state/types.js'
 import { assertConversationId } from '../utils/conversation-param.js'
 import { requireActiveBffSession } from '../utils/session.js'
-import { isStreamControl, streamControlTopic } from '../utils/stream-control.js'
+import { createWatchRegistry, isStreamControl, streamControlTopic } from '../utils/stream-control.js'
 
 export default defineEventHandler(async (event) => {
   const session = await requireActiveBffSession(event)
@@ -65,8 +65,12 @@ export default defineEventHandler(async (event) => {
   }
 
   const cleanups: Unsubscribe[] = []
-  /** conversationId → 該對話的清理（退訂 topic + 解除 watcher） */
-  const watched = new Map<string, Unsubscribe>()
+  /**
+   * 這條連線目前監看中的對話。
+   * ⚠️ 註冊表本身抽在 `utils/stream-control.ts`，那裡才有單元測試守著
+   *    「重連復原」與「優先度升級」兩條規則（test/stream-reconnect-background.test.ts）。
+   */
+  const watchers = createWatchRegistry(attach)
 
   // ── ③ 借憑證給背景輪詢（唯讀）─────────────────────────────────
   cleanups.push(registerCredential({
@@ -88,15 +92,14 @@ export default defineEventHandler(async (event) => {
       enqueue(async () => {
         const convId = assertConversationId(payload.conversationId)
         if (payload.kind === 'unwatch') {
-          watched.get(convId)?.()
-          watched.delete(convId)
+          watchers.unwatch(convId)
           return
         }
-        // ⚠️ research.md #8 決策 3：即使已在 watched 裡，優先度可能改變（例如客服切回
-        //    這個背景對話變成前景）——不可因為 watched.has(convId) 就直接略過，
-        //    否則第二次 watch 訊息永遠更新不到優先度。先解除舊訂閱再以新優先度重新 attach()。
-        watched.get(convId)?.()
-        watched.set(convId, await attach(convId, payload.priority, payload.joined))
+        // ⚠️ research.md #8 決策 3：即使已在監看中，優先度可能改變（例如客服切回
+        //    這個背景對話變成前景）——不可因為「已經在監看中」就直接略過，
+        //    否則第二次 watch 訊息永遠更新不到優先度。`watchers.watch()` 一律先解除
+        //    舊訂閱再以新優先度重新 attach()。
+        await watchers.watch(convId, payload.priority, payload.joined)
       })
     },
   ))
@@ -231,11 +234,7 @@ export default defineEventHandler(async (event) => {
   //      各自建立一份訂閱，其中一份會變成孤兒（`watched` 只留得住最後寫入的那份 cleanup）。
   //      經 `enqueue()` 排進同一條佇列，可確保這裡永遠先跑完，客服的第一次心跳（foreground
   //      升級，見 attach() 的 watched.get(convId)?.() 一律先解舊再建新）才不會撞期。
-  enqueue(async () => {
-    for (const convId of await store.listJoinedConversations(session.operatorId)) {
-      if (!watched.has(convId)) watched.set(convId, await attach(convId, 'background', true))
-    }
-  })
+  enqueue(() => watchers.restoreJoined(() => store.listJoinedConversations(session.operatorId)))
 
   const heartbeat = setInterval(() => {
     enqueue(() => send({ type: 'stream.heartbeat', at: new Date().toISOString() }))
@@ -244,8 +243,7 @@ export default defineEventHandler(async (event) => {
 
   stream.onClosed(async () => {
     clearInterval(heartbeat)
-    for (const off of watched.values()) off()
-    watched.clear()
+    watchers.closeAll()
     for (const off of cleanups) off()
     await stream.close()
   })

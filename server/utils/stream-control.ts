@@ -57,3 +57,72 @@ export function resolvePresenceControl(
   const priority = state === 'away' ? 'background' : (visible ? 'foreground' : 'background')
   return { kind, priority }
 }
+
+/** `attach()` 的形狀 —— 回傳「解除這次監看」的清理函式（訂閱 topic ＋ watcher） */
+export type AttachConversation = (
+  conversationId: string,
+  priority: 'foreground' | 'background',
+  joined: boolean,
+) => Promise<() => void>
+
+/**
+ * 一條 SSE 連線的「目前正在監看哪些對話」註冊表 ——
+ * specs/002-suggestion-knowledge-search research.md #8 決策 3／4。
+ *
+ * ⚠️ 抽出來的理由與 `resolvePresenceControl()` 相同：`stream.get.ts` 用了 Nitro
+ *    auto-import（`defineEventHandler`／`createEventStream`），vitest／tsx 無法直接
+ *    import 它，於是這兩條「靜默失效」的規則過去沒有單元測試能守：
+ *
+ *    ① **重連復原**：連線建立時把此客服所有已 JOIN 的對話一律以 `background` 掛回去。
+ *       漏掉的話，背景對話會在斷線的當下悄悄停止分析——不報錯、畫面也不會有異狀，
+ *       只有「切回去才發現什麼都沒算」。
+ *    ② **優先度升級**：已在監看中的對話再次收到 `watch` 時 **MUST NOT** 直接略過。
+ *       客服切回背景對話時送的正是這種第二次 watch；若因為「已經在 watched 裡」
+ *       就 return，優先度永遠停在 background，摘要永遠不會補跑。
+ *
+ *    ①②，也正是 T059 要驗的東西。
+ */
+export function createWatchRegistry(attach: AttachConversation) {
+  /** conversationId → 該對話的清理（退訂 topic + 解除 watcher） */
+  const watched = new Map<string, () => void>()
+
+  return {
+    /**
+     * 第零步：連線建立（含重連、含重新整理後的全新連線）時復原背景 watch。
+     * 已在監看中的對話跳過——此時客服自己的 presence 心跳可能已經先把它升級成前景了。
+     */
+    async restoreJoined(load: () => Promise<string[]>): Promise<void> {
+      for (const conversationId of await load()) {
+        if (watched.has(conversationId)) continue
+        watched.set(conversationId, await attach(conversationId, 'background', true))
+      }
+    },
+
+    /** 控制通道的 `watch` —— 一律先解除舊訂閱再以新優先度重新 attach()（決策 3） */
+    async watch(
+      conversationId: string,
+      priority: 'foreground' | 'background',
+      joined: boolean,
+    ): Promise<void> {
+      watched.get(conversationId)?.()
+      watched.set(conversationId, await attach(conversationId, priority, joined))
+    },
+
+    /** 控制通道的 `unwatch` */
+    unwatch(conversationId: string): void {
+      watched.get(conversationId)?.()
+      watched.delete(conversationId)
+    },
+
+    /** 連線關閉時解除全部監看（憲法 6.1：訂閱數歸零即停止輪詢） */
+    closeAll(): void {
+      for (const off of watched.values()) off()
+      watched.clear()
+    },
+
+    has: (conversationId: string): boolean => watched.has(conversationId),
+    get size(): number {
+      return watched.size
+    },
+  }
+}
