@@ -95,16 +95,27 @@ npm run smoke:realtime  # 兩位客服、兩條 SSE：M1 的「4 秒內看到」
 機器負載很重時它可能是唯一會浮動的檢查 —— 但失敗是真的訊號，
 不要因為「偶爾紅」就放寬門檻，那個數字是驗收標準本身。
 
+## Commit 規範
+
+- 沿用 Conventional Commits 前綴（`feat`／`fix`／`build`／`ci`／`chore`／`docs`／`test`／`refactor`…），
+  **前綴後的描述一律用繁體中文**；可帶 scope，例如 spec 編號：`feat(002): ...`。
+- **type 選用**：`feat` 交付能力增量；`fix` 修正錯誤行為；`build` 建置／工具／相依設定
+  （`package.json`、`tsconfig`、`nuxt.config.ts`…）；`ci` CI 設定；`chore` 其餘雜項與純鷹架；
+  `docs`／`test`／`refactor` 依字面。
+- 內文說明**為什麼**，不只是改了什麼 —— 這個專案的多數 commit 是在記錄「某個假設被實測推翻」，
+  那個推翻的理由才是價值所在（見上方「正典文件修改後」一節）。
+- **預設只在使用者要求時才 commit**；分類與建立交給 `/commit-split`（可用 `--exclude` 讓指定檔案留在 worktree）。
+- 跑 `/speckit-implement` 或 `/speckit-analyze` 時例外：**邊實作邊在 `tasks.md` 或 checklist 逐一勾選完成項目**
+  （例如完成 T010 就打勾 `[x]`），每個 Phase 結束後用 `/commit-split` 分類並建立 commit，不需逐次徵詢；
+  勾選變更併入該 phase 收尾的 commit，讓 tasks.md 與 git 歷史對齊。範圍夠大的 phase 可依開發大項拆成
+  多個 commit，但避免拆得過度零碎。
+
 ## 協作注意
 
 - **可能有另一個 Claude session 正在編輯同一份文件** —— 不限於 `docs/DESIGN_TOKENS.md`，
   `docs/ARCHITECTURE.md` 同樣會被跨 session 修正（例如發現文件內部不同步、
   或畫布內容有更新時）。`git add -A` 前先 `git status` 看一眼，
   避免把對方進行中的修改掃進自己的 commit。
-- commit 訊息用 Conventional Commits，內文說明**為什麼**，不只是改了什麼 ——
-  這個專案的多數 commit 是在記錄「某個假設被實測推翻」，那個推翻的理由才是價值所在。
-- 跑 `/speckit-implement` 或 `/speckit-analyze` 時，**邊實作邊逐一勾選 `tasks.md` 或 checklist 中的完成項目**
-  （例如完成 T010 就打勾 `[x]`），每個 Phase 結束時用 `/commit-split` 分類並建立 commit。
 - 里程碑完成打 tag（`m0-done`、`m1-done`）。**tag 一旦建立就不移動。**
 
   ⚠️ **「tag 落後 HEAD」不是需要修正的錯誤，那是它的正常狀態，也正是它的用途** ——
