@@ -1253,6 +1253,15 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 若有可再評估恢復顯示）。詳見 `specs/002-suggestion-knowledge-search/research.md` #2、
 `spec.md` Assumptions。
 
+**②-1 檔名的版本片段大小寫混用，且 agent 可能先呼叫別的工具**（2026-08-27 重跑
+`npm run spike:contract` 取樣時發現的兩件事，均已修正並補上測試）：同一個知識庫資料夾的
+9 個檔案裡有 **2 個寫成小寫 `_v1_20200926_`**（分隔符也從 `-` 改成 `_`），大小寫敏感的
+擷取正則會讓這兩個檔案靜默拿到 `updatedAt: null`、標題還留著版本後綴 —— 擷取規則因此
+一律不分大小寫。另外，agent 可能**先呼叫 `folderContentsTool` 再呼叫 `RAGknowledge`**，
+於是同一條 SSE 會出現**兩個 `tool-output-available`**，第一個沒有 `result`／`folder_info`；
+必須靠 `toolCallId → toolName` 對照表反查（`tool-output-available` 事件本身不帶 `toolName`），
+取「第一個」會靜默解析出空結果。
+
 **③「展開全文」無法保證涵蓋整份文件。** 平台沒有獨立的「取得檔案完整內容」端點，`RAGknowledge`
 即使把 `document_file_ids` 限定為單一檔案，回傳的仍可能只是該檔案內 top-K 相關片段，不是全文。
 MVP 做法是把限定檔案後拿到的所有片段依序串接顯示，並誠實標示「本次可取得的相關內容，可能未涵蓋

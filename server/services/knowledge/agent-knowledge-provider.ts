@@ -31,8 +31,16 @@ interface RagKnowledgeOutput {
 /** 每個 chunk 出現即為一筆命中，同一檔名重複出現也各自成一筆（research.md #1 決策 2） */
 const SOURCE_CHUNK_RE = /\[Source: ([^\]]+)\]\n([\s\S]*?)(?=\n\[Source: |$)/g
 
-/** 檔名裡的版本／日期片段，例：`…SOP_V1_20250925_部門可見.pdf` */
-const VERSION_DATE_RE = /_V\d+_(\d{4})(\d{2})(\d{2})_/
+/**
+ * 檔名裡的版本／日期片段，例：`…SOP_V1_20250925_部門可見.pdf`。
+ *
+ * ⚠️ **必須不分大小寫**（2026-08-27 重跑 `npm run spike:contract` 取樣時發現）：
+ *    同一個知識庫資料夾裡 9 個檔案就有 2 個寫成小寫 `_v1_20200926_`。
+ *    大小寫敏感的版本會讓這兩個檔案靜默拿到 `updatedAt: null`（前端顯示
+ *    「更新日期未知」）、標題還留著 `_v1_20200926_部門可見` 後綴 ——
+ *    不報錯、型別也對，只是安靜地說錯話。
+ */
+const VERSION_DATE_RE = /_V\d+_(\d{4})(\d{2})(\d{2})_/i
 
 function decodeFilename(raw: string): string {
   try {
@@ -82,7 +90,8 @@ function deriveUpdatedAt(filename: string): string | null {
 function deriveTitle(filename: string): string {
   return filename
     .replace(/\.[a-z0-9]+$/i, '')
-    .replace(/_V\d+_\d{8}_[^_]*$/, '')
+    // ⚠️ 與 VERSION_DATE_RE 同樣不分大小寫，理由見該常數的說明
+    .replace(/_V\d+_\d{8}_[^_]*$/i, '')
 }
 
 function parseRagOutput(output: RagKnowledgeOutput): KnowledgeHit[] {
