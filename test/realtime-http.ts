@@ -365,6 +365,15 @@ async function main(): Promise<void> {
 
     console.log('\n── ⑤ 多對話背景更新：切走仍 JOIN 時繼續背景分析、切回補跑摘要（specs/002-suggestion-knowledge-search US4）──')
 
+    // ⚠️ **前置條件：B 必須先離開這個對話。**
+    //    優先度是**整個對話**聚合出來的（`PollingMessageSource.aggregateState()`：任一訂閱者為
+    //    foreground 則整體為 foreground，§9.2 同一份規則）。B 在 ③ 重連後仍以 `viewing`＝foreground
+    //    看著同一個對話，此時就算 A 切走，這個對話對系統而言**仍然是前景**——摘要照重算是正確行為，
+    //    不是 FR-020 的違反。不先關掉 B 的話，下面「背景期間 MUST NOT 重算摘要」驗的是一個
+    //    根本不成立的前提，且會隨機因負載時序而紅／綠（2026-08-27：實測 HEAD 上連 4 次全紅）。
+    resumedStream.close()
+    await new Promise(r => setTimeout(r, 300))
+
     // A 切走但仍 JOIN 著（research.md #8：presence 語意修正後 MUST 變成 background watch，不是 unwatch）
     const awayRes = await a.call('/api/presence', {
       method: 'POST',
