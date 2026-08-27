@@ -347,6 +347,10 @@ const title = computed(() =>
         @retry="copilot.retry('suggestions')"
         @insert="overwriteConfirm.request($event)"
       />
+      <CopilotKnowledgeSearch
+        :conversation-id="conversationId"
+        @insert="overwriteConfirm.request($event)"
+      />
     </div>
   </div>
 </template>

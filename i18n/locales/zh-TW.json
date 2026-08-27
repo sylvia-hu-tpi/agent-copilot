@@ -156,6 +156,18 @@
         "ai": "AI 已回覆類似內容"
       }
     },
+    "knowledgeSearch": {
+      "title": "知識庫快查",
+      "placeholder": "輸入問題查詢知識庫…",
+      "empty": "尚未輸入查詢",
+      "noResults": "查無相關結果",
+      "notJoined": "需先加入對話才能使用",
+      "degraded": "知識庫服務暫時無法使用",
+      "updatedAtUnknown": "更新日期未知",
+      "insert": "插入為回覆",
+      "expand": "展開全文",
+      "expandDisclaimer": "本次可取得的相關內容，可能未涵蓋完整文件"
+    },
     "draftOverwrite": {
       "message": "目前輸入框已有內容，套用後會覆蓋。",
       "confirm": "覆蓋",
