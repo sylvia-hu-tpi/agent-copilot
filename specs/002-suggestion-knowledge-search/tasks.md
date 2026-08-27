@@ -264,9 +264,9 @@ description: "Task list template for feature implementation"
   （同一個檔案在同一個功能內建立後隔 31 個任務又自我翻修，沒有理由；T002 直接寫入最終形狀，
   含 `fileId`／`timeoutMs`／`expandRef`／`degraded`）。**ID 保留不重編**，避免其餘 60 餘個任務與
   依賴關係全部位移
-- [ ] T034 修改 `server/services/knowledge/agent-knowledge-provider.ts`：`search()` 支援 `opts.fileId`——
+- [X] T034 修改 `server/services/knowledge/agent-knowledge-provider.ts`：`search()` 支援 `opts.fileId`——
   有值時將其作為 `RAGknowledge` 工具呼叫的 `document_file_ids` 輸入參數（research.md #3）（依賴 T002、T009）
-- [ ] T035 新增 `server/api/conversations/[id]/knowledge-search.post.ts`：Zod body
+- [X] T035 新增 `server/api/conversations/[id]/knowledge-search.post.ts`：Zod body
   `{ query: z.string(), expandRef: z.string().optional() }`；`query` 空白或僅空白字元 → 直接回傳
   **200** `{ hits: [] }`（**不是 400**——那是「尚未查詢」，不是用戶端錯誤），**不呼叫** `KnowledgeProvider`（FR-008）；以
   `(await store.listJoinedConversations(session.operatorId)).includes(conversationId)` 判斷 JOIN，未 JOIN →
@@ -278,7 +278,7 @@ description: "Task list template for feature implementation"
 
 ### Server 測試
 
-- [ ] T036 [P] [US2] 新增 `test/knowledge-search-api.test.ts`：空白查詢不呼叫 provider 且回傳 200 `{hits:[]}`；
+- [X] T036 [P] [US2] 新增 `test/knowledge-search-api.test.ts`：空白查詢不呼叫 provider 且回傳 200 `{hits:[]}`；
   未 JOIN 回 403；provider 拋錯回 200 `{hits:[],degraded:true}`；**provider 逾時（超過
   `KNOWLEDGE_SEARCH_TIMEOUT_MS`）同樣回 200 `{hits:[],degraded:true}` 而非無限等待**（SC-002 的
   10 秒門檻靠這個上限成立）；`expandRef` 有值時 provider 收到對應 `fileId`
@@ -286,19 +286,19 @@ description: "Task list template for feature implementation"
 
 ### App
 
-- [ ] T037 [P] [US2] 新增 `app/composables/useKnowledgeSearch.ts`：輸入 debounce 300ms；到期時輸入為空白 →
+- [X] T037 [P] [US2] 新增 `app/composables/useKnowledgeSearch.ts`：輸入 debounce 300ms；到期時輸入為空白 →
   不送請求並清空既有結果、回到「尚未輸入查詢」狀態（非「查無結果」）；以遞增請求序號比對避免競態下舊回應覆蓋新查詢
   （contracts「前端契約」）；暴露 `query`、`hits`、`loading`、`error`、`degraded`、`hasQueried`（是否曾送出過非空白查詢，
   供 UI 區分「尚未輸入查詢」vs「查無相關結果」）、`search()`、`expand(sourceRef: string)`（呼叫同一端點並帶
   `expandRef`）
-- [ ] T038 [US2] 新增 `app/components/copilot/KnowledgeSearch.vue`：輸入框 + 結果列表（`title`、`updatedAt`
+- [X] T038 [US2] 新增 `app/components/copilot/KnowledgeSearch.vue`：輸入框 + 結果列表（`title`、`updatedAt`
   或「更新日期未知」、超過 12 個月標示過舊提醒，FR-009；**不顯示** `score` 或任何編號）；每筆結果「插入為回覆」
   （`hit.snippet` 原文，經 T030 的 `useOverwriteConfirm()`，不經 AI 改寫，FR-022）／「展開全文」（呼叫
   `expand()`，inline 顯示於目前對話視窗內、不使用彈出視窗，附註「本次可取得的相關內容，可能未涵蓋完整文件」，
   research.md #3）；四種可互相區分的狀態：尚未輸入查詢／查無相關結果（FR-011）／錯誤(`degraded`)+重試／
   需先 JOIN（依賴 T030、T037）
-- [ ] T039 [US2] 修改 `app/pages/c/[conversationId].vue`：在右欄掛載 `<CopilotKnowledgeSearch>`（依賴 T038）
-- [ ] T040 [US2] 修改 `i18n/locales/zh-TW.json`：新增 `copilot.knowledgeSearch.*`（placeholder/empty/noResults/
+- [X] T039 [US2] 修改 `app/pages/c/[conversationId].vue`：在右欄掛載 `<CopilotKnowledgeSearch>`（依賴 T038）
+- [X] T040 [US2] 修改 `i18n/locales/zh-TW.json`：新增 `copilot.knowledgeSearch.*`（placeholder/empty/noResults/
   notJoined/degraded/insert/expand/expandDisclaimer/staleWarning/updatedAtUnknown 等）鍵值
 
 **Checkpoint**：User Story 1、2 皆可獨立運作。
