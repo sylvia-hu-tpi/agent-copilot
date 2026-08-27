@@ -40,6 +40,7 @@ import {
   withRetry,
 } from './ai/retry-policy.js'
 import { parseConversationSummary, parseSentimentPoints, parseSuggestionCards } from './ai/schemas.js'
+import { SUGGESTION_RETRIEVAL_TIMEOUT_MS } from './knowledge/agent-knowledge-provider.js'
 import { useKnowledgeProvider } from './knowledge/index.js'
 
 export type AnalysisBlock = 'summary' | 'sentiment' | 'suggestions'
@@ -525,7 +526,13 @@ async function analyzeSuggestions(
 
   let knowledgeHits: KnowledgeHit[] = []
   try {
-    knowledgeHits = await useKnowledgeProvider().search(query, { topK: 5 })
+    // ⚠️ 明確帶上 SUGGESTION_RETRIEVAL_TIMEOUT_MS，**不可**沿用 provider 的預設值——
+    //    那個預設是快查（US2）的 30 秒，套到這條串行路徑上會讓建議卡 30 秒才出現，
+    //    直接違反 SC-001 的 10 秒。兩個常數的完整理由見 agent-knowledge-provider.ts。
+    knowledgeHits = await useKnowledgeProvider().search(query, {
+      topK: 5,
+      timeoutMs: SUGGESTION_RETRIEVAL_TIMEOUT_MS,
+    })
   }
   catch (err) {
     // FR-004：檢索失敗時以空集合續行（誠實降級，非整塊轉 error）——

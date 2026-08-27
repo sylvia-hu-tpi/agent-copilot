@@ -16,8 +16,42 @@ import type { ImbraceClient } from '@imbrace/sdk'
 import type { KnowledgeHit, KnowledgeProvider } from '../../../shared/types/knowledge.js'
 import { AIProviderHttpError } from '../ai/retry-policy.js'
 
-/** plan.md Constraints：短於 SC-002 的 10 秒門檻，留 2 秒給 BFF 往返與前端渲染 */
-export const KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000
+/**
+ * 知識庫快查（US2）的逾時上限 —— 客服**自己輸入查詢、盯著骨架等**的那條路徑。
+ *
+ * ⚠️ **這個數字是實測校準的，不是拍板的。** 原本是 8 秒（推導自 SC-002 的 10 秒門檻，
+ * 留 2 秒給 BFF 往返與渲染），但 2026-08-27 對真實知識庫實測，三個會正確呼叫工具的模型
+ * 共九次取樣，**最快 13.0 秒、最慢 24.9 秒，沒有任何一次低於 13 秒**：
+ *
+ *   us.amazon.nova-pro-v1:0   13.1／16.7／17.1／23.8 秒
+ *   qwen.qwen3-32b-v1:0       20.5／13.0／18.6 秒
+ *   qwen.qwen3-vl-235b-a22b   24.9 秒（之後連續呼叫全面逾時，已排除）
+ *   （獨立對照：spike 11 的另一支 nova-pro agent 14.9 秒）
+ *
+ * 也就是說 8 秒在生產路徑上會 **100% 逾時**，快查恆顯示「知識庫服務暫時無法使用」。
+ * 這不是選錯模型 —— iMBrace 的知識庫檢索延遲就是這個量級（已列入
+ * `docs/IMBRACE_QUESTIONS.md` 詢問是否可調校）。SC-002 的門檻已同步改寫為實測值。
+ */
+export const KNOWLEDGE_SEARCH_TIMEOUT_MS = 30_000
+
+/**
+ * 建議卡生成前的知識庫檢索（US1）逾時上限 —— **刻意遠短於快查**。
+ *
+ * ⚠️ 兩者不能共用同一個數字，理由是它們受不同的門檻約束：
+ *
+ *   - 快查是客服主動發起的同步查詢，畫面上有骨架，等 20 秒是可接受的
+ *   - 建議卡走的是「先檢索、再生成」的**串行**流程，而 SC-001 要求 10 秒內完整呈現。
+ *     若這裡也用 30 秒，建議卡會變成 30 秒後才出現 —— 直接違反 SC-001
+ *
+ * 因此這條路徑維持短逾時、逾時即以空集合續行（FR-004：誠實標示「未引用知識庫」，
+ * MUST NOT 因此把整個建議卡區塊轉為 error）。
+ *
+ * ⚠️ **已知後果**：既然實測檢索最快也要 13 秒，這個 8 秒上限等於**建議卡目前拿不到引用**。
+ * 正解是把建議卡改成漸進式（先出無引用版本、檢索回來再更新為有引用版本），
+ * 已另立 `specs/004-*` 承接。在那之前，這裡刻意保護 SC-001 而犧牲引用 ——
+ * 這是**明知的取捨，不是疏漏**。
+ */
+export const SUGGESTION_RETRIEVAL_TIMEOUT_MS = 8_000
 
 interface RagKnowledgeOutput {
   status: string
@@ -117,12 +151,30 @@ function parseRagOutput(output: RagKnowledgeOutput): KnowledgeHit[] {
   return hits
 }
 
+/**
+ * ⚠️ **這段措辭是實測校準過的，改動前務必重跑 `npm run spike:knowledge-prompt` 驗證。**
+ *
+ * 2026-08-27 於真實環境發現：原本寫成命令式的檢索指令
+ * （「請在知識庫中搜尋與下列內容最相關的段落（最多 N 筆）：…」）時，
+ * agent **會把工具呼叫當成文字敘述出來而不是真的呼叫** —— 回應裡看得到
+ * 「我會使用 RAGknowledge 工具來執行這個搜尋」甚至整個 ```tool_code``` 區塊，
+ * 但整條 SSE **沒有任何 `tool-input-available`／`tool-output-available` 事件**，
+ * 於是 `findRagKnowledgeOutput()` 找不到輸出、快查恆為 0 命中。
+ *
+ * 不報錯、型別也對 —— 又一個靜默失效。同一個 agent、同一個模型，只把措辭換成
+ * 「請查詢知識庫回答下列問題，並在回答最後列出參考了哪些文件」這種**自然提問**形狀，
+ * 工具就真的被呼叫了（實測回傳 3 個 `[Source: ]` 段落）。
+ *
+ * 直覺的解釋是：命令式措辭在講「工具」這件事本身，模型於是去描述它；
+ * 自然提問則是一個需要知識才答得出來的問題，模型只好去查。
+ * ⚠️ 這是**經驗結論不是理論**，換模型後不保證仍成立 —— 所以才要求改動前重測。
+ */
 function buildKnowledgePrompt(query: string, opts?: { topK?: number, fileId?: string }): string {
   const topK = opts?.topK ?? 5
-  let prompt = `請在知識庫中搜尋與下列內容最相關的段落（最多 ${topK} 筆）：\n\n${query}`
+  let prompt = `請查詢知識庫回答下列問題，並在回答最後列出你參考了哪些文件或章節（最多 ${topK} 筆）：\n\n${query}`
   if (opts?.fileId) {
     // research.md #3：「展開全文」把 RAGknowledge 的 document_file_ids 輸入參數限定為該檔案 id
-    prompt += `\n\n請將搜尋限定在檔案 id 為 "${opts.fileId}" 的文件內（document_file_ids: ["${opts.fileId}"]）。`
+    prompt += `\n\n請只參考檔案 id 為 "${opts.fileId}" 的文件（document_file_ids: ["${opts.fileId}"]）。`
   }
   return prompt
 }
