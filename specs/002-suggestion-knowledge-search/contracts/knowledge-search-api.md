@@ -36,7 +36,12 @@ FR-007）；`updatedAt` 可能為 `null`（research.md #2）。
 型別定義以 `data-model.md` 為準，本契約不另立形狀。
 
 檢索呼叫 MUST 帶逾時上限（`KNOWLEDGE_SEARCH_TIMEOUT_MS`，見 `plan.md` Constraints），
-逾時即走上表最後一列的 `degraded` 路徑——SC-002 的 10 秒門檻靠這個上限成立，不靠 provider 自律。
+逾時即走上表最後一列的 `degraded` 路徑——SC-002 的門檻靠這個上限成立，不靠 provider 自律。
+
+⚠️ **本端點（快查）與建議卡生成用的是兩個不同的逾時值**，MUST NOT 共用：快查是客服主動
+發起、畫面上有骨架的同步查詢，用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`；建議卡走「先檢索再生成」
+的串行流程且受 SC-001 的 10 秒約束，用明顯更短的 `SUGGESTION_RETRIEVAL_TIMEOUT_MS`。
+兩者的完整理由與實測數據見 `server/services/knowledge/agent-knowledge-provider.ts`。
 
 ## 前端契約（`useKnowledgeSearch.ts`）
 

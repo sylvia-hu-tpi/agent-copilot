@@ -9,6 +9,22 @@ plan.md／data-model.md 引用章節號。
 
 ## 1. `KnowledgeProvider` 的真實資料形狀（RAGknowledge 工具輸出）——與 §8.2 的介面草案有落差
 
+> ⚠️ **2026-08-27 追加實測（本節最重要的後續發現）**：能不能拿到上述那個工具輸出，
+> **同時取決於 agent 的模型與我方送出的 prompt 措辭**，兩個條件都要滿足：
+>
+> | 模型 | prompt 形狀 | 有無 `tool-output-available` | 延遲 |
+> |---|---|---|---|
+> | `google.gemma-3-27b-it` | 命令式／自然提問 **皆無效** | ❌ 只印出 ```` ```tool_code ```` 文字 | 7.3～14.4s |
+> | `qwen.qwen3-vl-235b-a22b` | 命令式 | ✅ | 24.9s，之後連續呼叫全面逾時（已排除） |
+> | `us.amazon.nova-pro-v1:0` | 命令式 | ❌ 印出 `<thinking>` 敘述 | 18～20s |
+> | `us.amazon.nova-pro-v1:0` | **自然提問** | ✅ 3 筆命中 | 13.1／16.7／17.1s |
+> | `qwen.qwen3-32b-v1:0` | **自然提問** | ✅ 3 筆命中 | 20.5／13.0／18.6s |
+>
+> 也就是說：gemma 這類沒有原生 function calling 的模型**不論措辭怎麼寫都不會真的呼叫工具**，
+> 只會用文字模擬；而即使換上支援的模型，**原本命令式的 prompt（「請在知識庫中搜尋…段落」）
+> 仍會讓模型去「描述」工具呼叫而不是執行它** —— 那是我方的缺陷，已改為自然提問形狀
+> （見 `buildKnowledgePrompt()` 的註解）。兩者都不會報錯、型別也正確，只是安靜地回 0 命中。
+
 **證據**：`scripts/spike/out/11-宏宏企業-knowledge-raw.json` 是一次真實的 `RAGknowledge` 工具呼叫，
 `tool-output-available` 事件的 `output` 形狀為：
 

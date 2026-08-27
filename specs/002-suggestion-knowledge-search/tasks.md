@@ -88,6 +88,9 @@ description: "Task list template for feature implementation"
   `/_V\d+_(\d{4})(\d{2})(\d{2})_/i`（**不分大小寫**，理由見 T067 ②）嘗試擷取 `updatedAt`（擷取不到為 `null`）、清理檔名版本/日期/可見範圍後綴
   作為 `title`、`score` 恆為 `null`（research.md #1、#2）；**`search()` MUST 套用逾時**——
   匯出常數 `KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000`（plan.md Constraints：短於 SC-002 的 10 秒門檻），
+  ⚠️ **2026-08-27 已依實測修訂為 30_000，並另立 `SUGGESTION_RETRIEVAL_TIMEOUT_MS = 8_000`
+  給建議卡那條路徑**——實測真實檢索最快 13.0 秒、最慢 24.9 秒，8 秒在生產路徑上 100% 逾時。
+  SC-002 的門檻同步由 10 秒改寫為 25 秒。理由與九次取樣數據見該常數的註解與 plan.md Constraints；
   `opts.timeoutMs` 可覆寫，逾時即拋錯交由呼叫端降級（**不重試**：檢索失敗時 FR-004 允許以空集合續行，
   重試只是再等一次）（依賴 T002）
 - [X] T010 [P] 新增 `server/services/knowledge/mock-knowledge-provider.ts`：`MockKnowledgeProvider implements KnowledgeProvider`，
@@ -145,7 +148,9 @@ description: "Task list template for feature implementation"
 - [X] T018 [US1] 修改 `server/services/copilot-analysis.ts`：新增
   `analyzeSuggestions(conversationId, input: { history: Message[], aiReplies: boolean })`——以 `history` 中
   `sender.type === 'customer'` 的最近幾則 `.text`（**不得使用 `caption`**，FR-017）串接為查詢字串，呼叫
-  `useKnowledgeProvider().search(query, { topK: 5 })`（research.md #5；逾時 8 秒由 provider 內建，T009）
+  `useKnowledgeProvider().search(query, { topK: 5, timeoutMs: SUGGESTION_RETRIEVAL_TIMEOUT_MS })`
+  （research.md #5；⚠️ 2026-08-27 起 **MUST 明確傳入**，不得沿用 provider 預設——那個預設已改為
+  快查用的 30 秒，沿用會讓建議卡遲到 30 秒而撞破 SC-001，見 T009 的修訂註記）
   → 經 `withRetry()` 呼叫 `useAIProvider().suggest({ history, knowledgeHits, aiReplies })` →
   `parseSuggestionCards()`（T012）→ `whitelistFilter()`（T017）→ **`forceNullConfidence()`** →
   寫入 `suggestionBlock` 並 publish；套用與 `analyzeSummary()` 相同的 `beginAnalyzing`/失敗處理模式。
@@ -271,7 +276,8 @@ description: "Task list template for feature implementation"
   **200** `{ hits: [] }`（**不是 400**——那是「尚未查詢」，不是用戶端錯誤），**不呼叫** `KnowledgeProvider`（FR-008）；以
   `(await store.listJoinedConversations(session.operatorId)).includes(conversationId)` 判斷 JOIN，未 JOIN →
   403 `{ message: '需先加入對話' }`（FR-025）；呼叫 `useKnowledgeProvider().search(query, { topK: 5, fileId: expandRef })`，
-  逾時（8 秒，T009）或拋錯時捕捉並回傳 200 `{ hits: [], degraded: true }`（**不得回 5xx**，
+  逾時（`KNOWLEDGE_SEARCH_TIMEOUT_MS`，2026-08-27 起為 30 秒，見 T009）或拋錯時捕捉並回傳
+  200 `{ hits: [], degraded: true }`（**不得回 5xx**，
   contracts/knowledge-search-api.md）
   （依賴 T011、T034、**T051**——JOIN 門檻查的是 `listJoinedConversations()`，
   若寫入端 T051 尚未完成，本端點會恆回 403；T051／T052 已因此前移至 Phase 2）
@@ -281,7 +287,7 @@ description: "Task list template for feature implementation"
 - [X] T036 [P] [US2] 新增 `test/knowledge-search-api.test.ts`：空白查詢不呼叫 provider 且回傳 200 `{hits:[]}`；
   未 JOIN 回 403；provider 拋錯回 200 `{hits:[],degraded:true}`；**provider 逾時（超過
   `KNOWLEDGE_SEARCH_TIMEOUT_MS`）同樣回 200 `{hits:[],degraded:true}` 而非無限等待**（SC-002 的
-  10 秒門檻靠這個上限成立）；`expandRef` 有值時 provider 收到對應 `fileId`
+  門檻靠這個上限成立；該門檻 2026-08-27 已依實測由 10 秒改寫為 25 秒，見 T009）；`expandRef` 有值時 provider 收到對應 `fileId`
   （contracts/knowledge-search-api.md）
 
 ### App
@@ -519,8 +525,9 @@ description: "Task list template for feature implementation"
 > **SC-001（3 秒／10 秒延遲門檻）刻意不列自動化任務**：`smoke` 跑的是假 gateway ＋ Mock provider，
 > 對它斷言延遲量到的是 `suggestDelayMs` 這個自己設的數字，不是真實 AI 呼叫（實測中位數 5.0 秒、
 > 最慢 12.2 秒）。改以 quickstart.md 的手動／staging 場景驗收。**這是刻意取捨，不是漏做**——
-> 日後要補自動化，前提是先有一條打真實 agent 的驗收路徑。（SC-002 不同：它的 10 秒門檻由
-> `KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000` 這個實際生效的上限保障，可在 T036 斷言。）
+> 日後要補自動化，前提是先有一條打真實 agent 的驗收路徑。（SC-002 不同：它的門檻由
+> `KNOWLEDGE_SEARCH_TIMEOUT_MS` 這個實際生效的上限保障，可在 T036 斷言。⚠️ 2026-08-27：
+> 該常數已由 8_000 改為 30_000、SC-002 門檻由 10 秒改為 25 秒，見 T009 的修訂註記。）
 
 ---
 

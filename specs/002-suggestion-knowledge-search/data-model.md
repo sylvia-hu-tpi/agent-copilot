@@ -91,8 +91,10 @@ export interface KnowledgeHit {
 export interface KnowledgeProvider {
   /**
    * @param opts.fileId 限定在單一檔案內檢索（「展開全文」用，research.md #3）
-   * @param opts.timeoutMs 逾時上限；預設 KNOWLEDGE_SEARCH_TIMEOUT_MS（見 plan.md Constraints）。
-   *                       MUST 短於 SC-002 的 10 秒門檻，逾時後依 FR-012 降級而非無限等待。
+   * @param opts.timeoutMs 逾時上限；預設 KNOWLEDGE_SEARCH_TIMEOUT_MS（快查用，見 plan.md Constraints）。
+   *                       ⚠️ 建議卡生成的檢索 MUST 明確傳入 SUGGESTION_RETRIEVAL_TIMEOUT_MS，
+   *                       MUST NOT 沿用這個預設 —— 那條路徑受 SC-001 的 10 秒約束，
+   *                       沿用快查的長逾時會讓建議卡遲到（見該常數註解）。
    */
   search(query: string, opts?: { topK?: number, fileId?: string, timeoutMs?: number }): Promise<KnowledgeHit[]>
 }
