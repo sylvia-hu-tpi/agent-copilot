@@ -180,7 +180,43 @@ export function useConversationView(conversationId: Ref<string>) {
       case 'control.updated':
         // ⚠️ 以 server 為準，不用本地推測覆蓋（§10.6：mode 是共用狀態）
         control.value = evt.control
+        // specs/003-analysis-trigger-policy T032a：順手重讀一次對話詳情，讓 viewerJoined 跟著翻轉
+        void refreshViewerJoined()
         break
+    }
+  }
+
+  /**
+   * 重讀對話詳情，只為了把 `viewerJoined` 對齊伺服器 —— specs/003-analysis-trigger-policy T032a。
+   *
+   * ⚠️ **這是「同一位客服開兩個分頁、在其中一個按下離開」唯一會生效的路徑。**
+   *    `leave` 只廣播 `control.updated`（服務模式），**不帶「你已退出」的資訊**；
+   *    另一個分頁的 `viewerJoined` 因此永遠停在 `true`，它的心跳會持續回報「仍在 JOIN」
+   *    → 對話層級的聚合永遠為真 → **分析根本不會停、面板也不會消失**，
+   *    SC-002 與 SC-006 在此情境下失效（spec.md Edge Cases）。
+   *
+   * ⚠️ MUST NOT 為此新增推播事件欄位（Assumptions「不改對外契約」）——
+   *    重讀一次既有的詳情端點就夠了，而 `control.updated` 本來就不是高頻事件。
+   *
+   * ⚠️ 失敗時靜默：這只是對齊，下一次事件或心跳還有機會（憲法 3.2）。
+   */
+  let refreshingJoined = false
+  async function refreshViewerJoined(): Promise<void> {
+    if (refreshingJoined || !conversationId.value) return
+    refreshingJoined = true
+    const target = conversationId.value
+    try {
+      const d = await $fetch<ConversationDetailResponse>(`/api/conversations/${target}`)
+      // 期間可能已經切換對話 —— 別把舊對話的詳情蓋到新的上面
+      if (target !== conversationId.value) return
+      detail.value = d.conversation
+      presence.value = d.presence
+    }
+    catch {
+      // 靜默降級
+    }
+    finally {
+      refreshingJoined = false
     }
   }
 
@@ -223,6 +259,16 @@ export function useConversationView(conversationId: Ref<string>) {
     })
   }
 
+  /**
+   * 「離開對話」—— 單純退出，不留下任何紀錄（FR-020、FR-021）。
+   *
+   * ⚠️ `beat('viewing')` **MUST 保留且 MUST 在 viewerJoined 翻成 false 之後送**：
+   *    這一次心跳會帶著 `joined: false` 抵達控制通道 → `watch()` 判定為真實變化 → 重新
+   *    attach → 該連線的訂閱者 `joined` 翻轉 → 對話層級聚合隨之翻轉 → 分析停止。
+   *    全程一次往返，遠低於 SC-002 的 5 秒。**這就是 LEAVE 停止分析的整條路徑**
+   *    （specs/003-analysis-trigger-policy 決策 4：不另開一條「LEAVE 專用的停止通道」，
+   *    否則「分析要不要跑」會有兩個真相來源，而那正是本規格在修的根因形狀）。
+   */
   async function leave(): Promise<void> {
     await act(async () => {
       const res = await $fetch<{ control: ConversationControl }>(
@@ -230,6 +276,43 @@ export function useConversationView(conversationId: Ref<string>) {
         { method: 'POST' },
       )
       control.value = res.control
+      if (detail.value) detail.value.viewerJoined = false
+      await beat('viewing')
+    })
+  }
+
+  /**
+   * 「結案」—— specs/003-analysis-trigger-policy FR-022、FR-022a。
+   *
+   * ⚠️ **這是刻意獨立的程式碼路徑，MUST NOT 改寫成 `leave()` 的別名或某個參數值。**
+   *    目前它的行為恰好等同「離開對話 → 停止分析 → 隱藏面板」，但那是**階段性行為**，
+   *    不是要保留的語意。整段結案流程屬 M3；寫成別名的話，M3 要插入流程時得先把它拆開，
+   *    而拆的過程中很容易把兩個出口的差異弄丟。
+   *
+   * ── 留給 M3 的銜接（完整定案只在 spec.md「Session 2026-08-28 補充」，此處不重述）──
+   *
+   *   ① **插入點在「停止分析」與「隱藏面板」之間** —— 也就是下面那行 `leave` 呼叫之後、
+   *      `beat('viewing')` 讓面板消失之前。
+   *
+   *   ② **結案摘要 MUST 經客服編輯確認才寫入（憲法 5.1）。** MUST NOT 做成「按下結案就
+   *      自動產生並寫入」，也 MUST NOT 做成「閒置逾時自動寫入」—— 沒有操作就是沒有確認。
+   *      ⚠️ 不得因為「反正已經有一個結案按鈕」就直接在其後串上自動寫入：
+   *      中間那道人審是規則本身，不是流程裝飾。
+   *
+   *   ③ **M3 落地後結案期間分析照常執行（FR-023）**，門檻維持 FR-012 的單一條件。
+   *      現在這裡的「停止分析」是階段性的，M3 接手時 MUST NOT 把那個差異當成 regression
+   *      而回頭「修正」。
+   */
+  async function closeConversation(): Promise<void> {
+    await act(async () => {
+      const res = await $fetch<{ control: ConversationControl }>(
+        `/api/conversations/${conversationId.value}/leave`,
+        { method: 'POST' },
+      )
+      control.value = res.control
+
+      // ── M3：整段結案流程（產生摘要 → 客服編輯確認 → 寫入 Data Board）插在這裡 ──
+
       if (detail.value) detail.value.viewerJoined = false
       await beat('viewing')
     })
@@ -397,6 +480,8 @@ export function useConversationView(conversationId: Ref<string>) {
     reload: loadAll,
     join,
     leave,
+    /** ⚠️ 獨立於 `leave()` 的出口 —— 兩者的差異是 M3 的插入點，MUST NOT 合併 */
+    closeConversation,
     setMode,
     send,
     beat,

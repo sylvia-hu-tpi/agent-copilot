@@ -39,8 +39,20 @@ const COLLAPSED_KEY = 'ac.sidebarCollapsed'
 
 // ── 右欄 Copilot 面板（可拖曳調寬，範圍依 docs/DESIGN_TOKENS.md §7.1：320–520px）───
 
-const copilotWidth = ref(380)
+/**
+ * ⚠️ 預設 420px，不是 380 —— 畫布已於 2026-08-28 統一為 420px 為所有狀態共用的展開寬度
+ * （`docs/DESIGN_TOKENS.md` §7.1；先前的 380/420 差異來自畫布尚未統一，不是設計區分）。
+ * 拖曳範圍 320–520 不變，此值只影響首次開啟。
+ */
+const copilotWidth = ref(420)
 const COPILOT_WIDTH_KEY = 'ac.copilotWidth'
+
+/**
+ * 面板的可見性與收合（specs/003-analysis-trigger-policy FR-016、FR-017）。
+ * ⚠️ `visible` 直接由 `viewerJoined` 推出，MUST NOT 由 Block 是否 empty 推出 ——
+ *    理由見 `useCopilotPanel()` 的檔頭。
+ */
+const panel = useCopilotPanel(conversationId, view.viewerJoined)
 
 onMounted(() => {
   try {
@@ -154,6 +166,19 @@ async function switchMode(mode: ConversationMode): Promise<void> {
   await view.setMode(mode)
 }
 
+// ── 接手／離開／結案（FR-020、FR-022，對照 docs/wireframe/03-workspace_assignment02.png）──
+
+/**
+ * 未 JOIN 時的「接手對話」下拉。⚠️ 憲法 8.1：兩個選項的差別 MUST 由**文案的後果**讀得出來
+ * （「AI 不再自動發話」／「AI 繼續自動回覆」），MUST NOT 只寫模式名稱。
+ */
+const joinMenuOpen = ref(false)
+
+async function joinAs(mode: 'manual' | 'hybrid'): Promise<void> {
+  joinMenuOpen.value = false
+  await view.join(mode)
+}
+
 const title = computed(() =>
   view.detail.value?.name || view.detail.value?.contactId || conversationId.value,
 )
@@ -208,28 +233,91 @@ const title = computed(() =>
 
           <h1 class="ac-mono min-w-0 truncate text-[1.03125rem] font-semibold">{{ title }}</h1>
 
+          <!--
+            兩個並列出口（FR-020、FR-022、SC-007）。
+            ⚠️ 憲法 8.1：「離開對話」與「結案」的差別 MUST 由**文案**讀得出來（下方輔助說明），
+               MUST NOT 只靠主／次按鈕的視覺層級表達 —— 視覺層級是強化，不是資訊本身。
+          -->
           <div class="ml-auto flex shrink-0 items-center gap-2">
-            <button
-              v-if="!view.viewerJoined.value"
-              type="button"
-              class="ac-btn-primary h-8 px-3 text-[0.9375rem]"
-              :disabled="view.busy.value"
-              @click="view.join()"
-            >
-              {{ view.busy.value ? $t('conversation.joining') : $t('conversation.join') }}
-            </button>
-            <button
-              v-else
-              type="button"
-              class="h-8 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
-              :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
-              :disabled="view.busy.value"
-              @click="view.leave()"
-            >
-              {{ view.busy.value ? $t('conversation.leaving') : $t('conversation.leave') }}
-            </button>
+            <template v-if="!view.viewerJoined.value">
+              <div class="relative flex">
+                <button
+                  type="button"
+                  class="ac-btn-primary h-8 rounded-r-none px-3 text-[0.9375rem]"
+                  :disabled="view.busy.value"
+                  @click="joinAs('manual')"
+                >
+                  {{ view.busy.value ? $t('conversation.joining') : $t('conversation.join') }}
+                </button>
+                <button
+                  type="button"
+                  class="ac-btn-primary h-8 rounded-l-none border-l border-white/20 px-1.5"
+                  :disabled="view.busy.value"
+                  :aria-label="$t('conversation.joinModeLabel')"
+                  :aria-expanded="joinMenuOpen"
+                  @click="joinMenuOpen = !joinMenuOpen"
+                >
+                  <UIcon name="i-lucide-chevron-down" class="size-4" />
+                </button>
+
+                <div
+                  v-if="joinMenuOpen"
+                  class="ac-card absolute right-0 top-9 z-20 w-72 p-1 text-left"
+                  role="menu"
+                >
+                  <button
+                    v-for="opt in ([
+                      { mode: 'manual', icon: 'i-lucide-user-round', label: $t('conversation.joinAsManual'), hint: $t('conversation.joinAsManualHint') },
+                      { mode: 'hybrid', icon: 'i-lucide-sparkles', label: $t('conversation.joinAsHybrid'), hint: $t('conversation.joinAsHybridHint') },
+                    ] as const)"
+                    :key="opt.mode"
+                    type="button"
+                    role="menuitem"
+                    class="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                    @click="joinAs(opt.mode)"
+                  >
+                    <UIcon :name="opt.icon" class="mt-0.5 size-4 shrink-0" :style="{ color: 'var(--text-3)' }" />
+                    <span class="min-w-0">
+                      <span class="block text-[0.9375rem]">{{ opt.label }}</span>
+                      <span class="block text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ opt.hint }}</span>
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </template>
+
+            <template v-else>
+              <button
+                type="button"
+                class="flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
+                :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
+                :disabled="view.busy.value"
+                @click="view.leave()"
+              >
+                <UIcon name="i-lucide-log-out" class="size-4" />
+                {{ view.busy.value ? $t('conversation.leaving') : $t('conversation.leave') }}
+              </button>
+              <button
+                type="button"
+                class="ac-btn-primary flex h-8 items-center gap-1.5 px-3 text-[0.9375rem]"
+                :disabled="view.busy.value"
+                @click="view.closeConversation()"
+              >
+                <UIcon name="i-lucide-clipboard-check" class="size-4" />
+                {{ view.busy.value ? $t('conversation.closing') : $t('conversation.close') }}
+              </button>
+            </template>
           </div>
         </div>
+
+        <!-- 兩個出口的差別（憲法 8.1：資訊在文案裡，不在視覺層級裡） -->
+        <p
+          v-if="view.viewerJoined.value"
+          class="mt-1 text-right text-[0.8125rem]"
+          :style="{ color: 'var(--text-3)' }"
+        >
+          {{ $t('conversation.exitHint') }}
+        </p>
 
         <div class="mt-1.5">
           <ConversationModeSelect
@@ -321,36 +409,78 @@ const title = computed(() =>
       />
     </section>
 
-    <!-- ── 右欄與中欄之間的拖曳把手（可拖曳調寬，320–520px）── -->
-    <div
-      v-if="conversationId"
-      class="w-1 shrink-0 cursor-col-resize transition-colors"
-      :style="{ background: copilotDragging ? 'var(--navy-2)' : 'transparent' }"
-      role="separator"
-      aria-orientation="vertical"
-      @pointerdown.prevent="startCopilotDrag"
-    />
-
     <!--
-      右欄 Copilot 面板 —— specs/001-sentiment-panel（摘要卡／情緒）與
-      specs/002-suggestion-knowledge-search（建議卡；知識庫快查見 T038）。
+      ── 右欄 Copilot 面板 —— specs/001-sentiment-panel（摘要卡／情緒）、
+         specs/002-suggestion-knowledge-search（建議卡與知識庫快查）、
+         specs/003-analysis-trigger-policy（可見性與收合）。
+
+      ⚠️ **未 JOIN 時整欄不渲染**（FR-016，含分隔拖曳把手），中欄自然延伸至可用寬度。
+         MUST NOT 用變灰／空狀態／骨架代替 —— 那些仍然佔位，骨架還會讓客服以為正在載入而空等。
+         「可見 ⟺ 已 JOIN」讓「看得到就是新的」成為恆真命題（SC-006），
+         客服不必再分辨畫面上的東西新不新。
+
+      ⚠️ 面板的 `v-if` **只包住面板子樹**，`ConversationComposer` 在上面的中欄裡 ——
+         草稿因此不受面板出現／消失影響（憲法 8.4，由 test/nuxt/copilot-panel-collapse.test.ts 守著）。
     -->
-    <div
-      v-if="conversationId"
-      class="shrink-0 space-y-3 overflow-y-auto border-l p-3"
-      :style="{ width: `${copilotWidth}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
-    >
-      <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
-      <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
-      <CopilotSuggestionList
-        :block="copilot.suggestions.value"
-        @retry="copilot.retry('suggestions')"
-        @insert="overwriteConfirm.request($event)"
+    <template v-if="conversationId && panel.visible.value">
+      <!-- 收合態沒有可調寬度，把手一併隱藏 -->
+      <div
+        v-if="!panel.collapsed.value"
+        class="w-1 shrink-0 cursor-col-resize transition-colors"
+        :style="{ background: copilotDragging ? 'var(--navy-2)' : 'transparent' }"
+        role="separator"
+        aria-orientation="vertical"
+        @pointerdown.prevent="startCopilotDrag"
       />
-      <CopilotKnowledgeSearch
-        :conversation-id="conversationId"
-        @insert="overwriteConfirm.request($event)"
-      />
-    </div>
+
+      <!-- 收合態：窄直條（對照 docs/wireframe/03-workspace_toggleCopilot.png） -->
+      <div
+        v-if="panel.collapsed.value"
+        class="flex w-11 shrink-0 flex-col items-center gap-3 border-l py-3"
+        :style="{ borderColor: 'var(--border)', background: 'var(--bg)' }"
+      >
+        <button
+          type="button"
+          class="rounded-md p-1 transition-opacity hover:opacity-70"
+          :style="{ color: 'var(--text-3)' }"
+          :aria-label="$t('copilot.expand')"
+          :aria-expanded="false"
+          :title="$t('copilot.expand')"
+          @click="panel.toggle()"
+        >
+          <UIcon name="i-lucide-panel-right-open" class="size-4" />
+        </button>
+        <span
+          class="ac-status-label [writing-mode:vertical-rl]"
+          :style="{ color: 'var(--text-3)' }"
+        >
+          {{ $t('copilot.panelTitle') }}
+        </span>
+      </div>
+
+      <div
+        v-else
+        class="shrink-0 space-y-3 overflow-y-auto border-l p-3"
+        :style="{ width: `${copilotWidth}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
+      >
+        <CopilotPanelHeader
+          :collapsed="panel.collapsed.value"
+          :has-error="copilot.hasError.value"
+          @toggle="panel.toggle()"
+          @retry-all="copilot.retryAll()"
+        />
+        <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
+        <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
+        <CopilotSuggestionList
+          :block="copilot.suggestions.value"
+          @retry="copilot.retry('suggestions')"
+          @insert="overwriteConfirm.request($event)"
+        />
+        <CopilotKnowledgeSearch
+          :conversation-id="conversationId"
+          @insert="overwriteConfirm.request($event)"
+        />
+      </div>
+    </template>
   </div>
 </template>

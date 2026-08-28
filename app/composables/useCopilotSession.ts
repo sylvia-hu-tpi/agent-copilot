@@ -81,6 +81,34 @@ export function useCopilotSession(conversationId: Ref<string>) {
     }
   }
 
+  /** 三個區塊之中有沒有處於 error 的 —— 「全部重試」的可按條件（FR-019） */
+  const hasError = computed(() =>
+    summary.value.status === 'error'
+    || sentiment.value.status === 'error'
+    || suggestions.value.status === 'error',
+  )
+
+  /**
+   * FR-018：一次重試所有失敗的區塊。
+   *
+   * ⚠️ **對每個 `error` 區塊各發一次既有的單區塊端點**（契約 1.2）——
+   *    MUST NOT 新增 `POST /copilot/retry-all`，也 MUST NOT 讓 `block` 接受陣列。
+   *    三個並行的 POST 對 BFF 是可忽略的負載，而合併端點會多一份請求形狀要維護與測試
+   *    （spec.md Assumptions 已定案：改契約的代價大於收益）。
+   *
+   * ⚠️ **已成功的區塊 MUST NOT 被重跑** —— 只挑 `status === 'error'` 的。
+   *    非 error 的區塊送過去會拿到 409，等於白打一趟。
+   */
+  async function retryAll(): Promise<void> {
+    const failed = ([
+      ['summary', summary.value.status],
+      ['sentiment', sentiment.value.status],
+      ['suggestions', suggestions.value.status],
+    ] as const).filter(([, status]) => status === 'error').map(([block]) => block)
+
+    await Promise.all(failed.map(block => retry(block)))
+  }
+
   let offStream: (() => void) | undefined
 
   onMounted(() => {
@@ -97,5 +125,5 @@ export function useCopilotSession(conversationId: Ref<string>) {
     suggestions.value = emptySuggestionBlock()
   })
 
-  return { summary, sentiment, suggestions, retry }
+  return { summary, sentiment, suggestions, hasError, retry, retryAll }
 }

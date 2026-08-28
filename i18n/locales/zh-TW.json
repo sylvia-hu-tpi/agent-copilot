@@ -54,10 +54,19 @@
     "switchFailed": "切換模式失敗"
   },
   "conversation": {
-    "join": "加入對話",
-    "joining": "加入中…",
-    "leave": "離開",
+    "join": "接手對話",
+    "joining": "接手中…",
+    "joinModeLabel": "選擇接手方式",
+    "joinAsManual": "接手並停用 AI 自動回覆",
+    "joinAsManualHint": "之後由我回覆，AI 不再自動發話",
+    "joinAsHybrid": "接手但保留 AI 自動回覆",
+    "joinAsHybridHint": "AI 繼續自動回覆，我可隨時插話",
+    "leave": "離開對話",
     "leaving": "離開中…",
+    "close": "結案",
+    "closing": "結案中…",
+    "closeFailed": "結案失敗",
+    "exitHint": "離開＝僅退出不寫入・結案＝產生摘要供確認後寫入",
     "joinFailed": "加入對話失敗",
     "leaveFailed": "離開對話失敗",
     "empty": "這個對話還沒有訊息。",
@@ -87,7 +96,7 @@
     "sendFailed": "送出失敗",
     "hint": "Enter 送出，Shift + Enter 換行",
     "draftSaved": "草稿已保存",
-    "notJoined": "你尚未加入這個對話。加入後才能送出訊息。",
+    "notJoined": "尚未接手此對話，無法輸入回覆。請先點右上角「接手對話」。",
     "readonlyAutomation": "這個對話目前是「全自動（唯讀）」模式，任何人都無法送出訊息。",
     "locked": "{name} 已強制介入此對話。",
     "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。"
@@ -173,7 +182,12 @@
       "confirm": "覆蓋",
       "cancel": "取消"
     },
-    "retry": "重新分析"
+    "retry": "重新分析",
+    "panelTitle": "COPILOT",
+    "collapse": "收合 Copilot 面板",
+    "expand": "展開 Copilot 面板",
+    "retryAll": "全部重試",
+    "retryAllNone": "目前沒有失敗的區塊"
   },
   "collision": {
     "title": "有人搶先回覆了",
