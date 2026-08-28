@@ -36,7 +36,8 @@
     "spike:files": "tsx scripts/spike/14-contact-files.ts",
     "spike:copilot-agents": "tsx scripts/spike/15-copilot-agents.ts",
     "spike:verify-provider": "tsx scripts/spike/16-verify-copilot-provider.ts",
-    "spike:templates": "tsx scripts/spike/17-message-templates.ts"
+    "spike:templates": "tsx scripts/spike/17-message-templates.ts",
+    "spike:agent-latency": "tsx scripts/spike/18-agent-model-latency.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",
