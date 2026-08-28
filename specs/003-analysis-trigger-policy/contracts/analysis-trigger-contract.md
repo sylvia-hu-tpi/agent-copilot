@@ -26,7 +26,7 @@
 
 ⚠️ **本規格新增的 `failedBatches` MUST NOT 出現在這三個事件裡。** 它放在
 `CopilotAnalysisState` 頂層（server-only），不進任何 Block —— 因為 Block 會整塊送出去。
-**寫錯時的症狀**：型別檢查全過、測試全綠，但失敗記錄悄悄流到瀏覽器，等於默默改了契約。
+**寫錯時的症狀**：型別檢查全過、測試全綠，但失敗批次記憶悄悄流到瀏覽器，等於默默改了契約。
 **驗法**：`grep -n "failedBatches" shared/` 必須**零結果**。
 
 ### 1.2 重試端點（`POST /api/conversations/:id/copilot/retry`）
@@ -82,7 +82,7 @@ Response 202 { conversationId, block }
 
 - **MUST NOT** 有任何形式的自動退避重試時鐘（FR-010）。
 - **MUST NOT** 新增「X 秒後自動重試」的倒數文案或事件欄位。
-- FR-009 的 rerun（併發合併後再跑的那一次）**MUST 重新過一次失敗記憶檢查** ——
+- FR-009 的 rerun（併發合併後再跑的那一次）**MUST 重新過一次失敗批次記憶檢查** ——
   否則錯誤狀態上會多出一輪呼叫，SC-001 的「不超過 1 輪」立刻被打破。
 
 ⚠️ **寫錯時的症狀**：一切正常，只是故障期間的呼叫量不降反升 —— 而且只有在真實故障時才看得出來，
@@ -93,7 +93,18 @@ Response 202 { conversationId, block }
 > 客服未 JOIN 某對話時：右側面板 MUST 不存在，且伺服器 MUST NOT 把該對話的三個分析事件
 > 送給這條連線。中欄所需的其餘事件 MUST 不受影響。
 
-**事件過濾的完整清單**（`server/api/stream.get.ts` 的 `forward()`）：
+⚠️ **「送給這條連線」有兩條路徑，兩條都 MUST 擋**：
+
+| 路徑 | 程式位置 | 未 JOIN 時 |
+|---|---|---|
+| 即時推播 | `forward()`（訂閱 conversation topic 後轉發） | 過濾三個分析事件，見下表 |
+| **連線建立時的分析快照** | `sendAnalysisSnapshotAndResume()`，走 `send()` **不經 `forward()`** | **整段跳過**（連 `runIncremental()` 的補跑一併跳過） |
+
+⚠️ 快照那條路徑最容易漏 —— 它不呼叫 `forward()`，因此在 `forward()` 裡加過濾對它完全無效。
+漏掉的症狀：未接手的客服一連上線就收到完整三個 Block，畫面上雖然沒有面板，資料已經在他的
+瀏覽器裡，SC-006 在伺服器端這一層並不成立。這也是 FR-003 為何要補上「僅限已 JOIN」限定語。
+
+**即時推播的事件過濾完整清單**（`server/api/stream.get.ts` 的 `forward()`）：
 
 | 事件 | 未 JOIN 時 | 為什麼 |
 |---|---|---|
@@ -111,6 +122,15 @@ Response 202 { conversationId, block }
 就是不變式 A 為了心跳去重必須新增的那個欄位。**MUST NOT** 另立第二份「這條連線 JOIN 了哪些對話」
 的記錄：兩份必然不同步，而症狀是「面板明明不在，前端 store 卻在背景被更新」，
 重新 JOIN 或切換對話時會閃出一份不知何時來的舊內容 —— 極難重現、極難追查。
+
+⚠️ **查詢它的介面 MUST 是 `createWatchRegistry()` 回傳物件上的方法**（比照既有的 `has()`）。
+`watched` 住在該工廠函式的 closure 裡、**每條 SSE 連線一份**；寫成 `stream-control.ts` 的模組層
+`export function` 根本讀不到它，只能改用模組全域 Map —— 那等於所有連線共用一份 JOIN 狀態，
+A 客服的接手與否會決定 B 客服收不收得到分析事件，且完全不會報錯。
+
+⚠️ **註冊表 MUST 在 attach 的副作用之前寫入**。既有實作是 `attach()` 完成後才 `watched.set()`；
+若沿用該順序，attach 期間（含 `restoreJoined()`）註冊表尚無條目，過濾會把該窗口的分析事件
+一律判成「未 JOIN」而丟棄 —— 又是一個不報錯的漏事件。
 
 ⚠️ **可見性 MUST NOT 由「Block 是否為 empty」推出**。JOIN 之後、首次分析完成之前三個 Block
 都是 `empty`，但那時面板必須已經在（客服要看到「分析中」的骨架）。用內容判斷會讓面板晚一拍才出現。

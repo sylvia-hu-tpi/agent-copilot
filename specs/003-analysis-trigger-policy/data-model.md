@@ -73,7 +73,7 @@ FR-010 之所以能夠成立（不加第二層自動退避重試），完全依�
 ### 生命週期
 
 跟隨 `CopilotAnalysisState` 的 2 小時 sliding TTL，**不另訂保存期限**（FR-011）。
-spec.md 的 edge case「失敗記憶存活期間對話一直沒有新發言，直到分析狀態過期」因此不需要任何
+spec.md 的 edge case「失敗批次記憶存活期間對話一直沒有新發言，直到分析狀態過期」因此不需要任何
 額外程式碼 —— 記憶就在同一筆記錄裡，隨之消失，此後的觸發視同全新的一批。
 
 多副本共享不在本規格範圍（spec.md Assumptions：M4 換上 Redis 時隨 `CopilotAnalysisState` 一起遷移）。
@@ -161,7 +161,7 @@ runBlock(convId, block):
    3 秒／10 秒門檻。
 2. **不可與既有的 `stateLocks` 合併**（`copilot-analysis.ts:121`）。那份保護的是**狀態寫入**不互相
    覆蓋，粒度是整個對話，而且它會把兩份分析**依序都跑完** —— 那是序列化，不是去重。兩者解決不同問題。
-3. **rerun 那一次 MUST 重新過一次 §1 的失敗記憶檢查**。否則「失敗 → 期間又被觸發 → rerun 無視記憶
+3. **rerun 那一次 MUST 重新過一次 §1 的失敗批次記憶檢查**。否則「失敗 → 期間又被觸發 → rerun 無視記憶
    再跑一次」會在錯誤狀態上多出一輪呼叫，把 SC-001 的「不超過 1 輪」打破。
 
 **為何是旗標而非佇列**：合併語意是「至少再跑一次最新的」。累積 N 次觸發就跑 N 次沒有意義 ——
@@ -209,7 +209,12 @@ JOIN／LEAVE 當下即時翻轉）。**不需要任何新的資料形狀**，也
 
 前端不渲染還不夠 —— 伺服器 MUST 不把三個分析事件送給未 JOIN 的連線。
 
-| 事件 | 未 JOIN 時 |
+⚠️ **有兩條送出路徑，兩條都要擋**：即時推播走 `forward()`；連線建立時的**分析快照**走
+`sendAnalysisSnapshotAndResume()` 裡的 `send()`，**不經 `forward()`**。後者未 JOIN 時 MUST
+整段跳過（含其中的 `runIncremental()` 補跑）。只擋 `forward()` 那條，未接手的客服仍會在
+連線當下拿到完整三個 Block（FR-003 的限定語就是為此而補）。
+
+| 事件（即時推播） | 未 JOIN 時 |
 |---|---|
 | `summary.updated`／`sentiment.updated`／`suggestion.updated` | **MUST 過濾** |
 | `messages.appended`／`presence.updated`／`control.updated`／`conversation.updated`／`stream.heartbeat` | **MUST NOT 過濾** —— 服務的是中欄，與 JOIN 無關（US2 AC#3） |

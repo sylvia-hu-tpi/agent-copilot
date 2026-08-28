@@ -53,7 +53,7 @@
 
 ---
 
-## 決策 2：失敗記憶放在 `CopilotAnalysisState` 的**新頂層欄位**，不放進三個 Block
+## 決策 2：失敗批次記憶放在 `CopilotAnalysisState` 的**新頂層欄位**，不放進三個 Block
 
 **Decision**：`CopilotAnalysisState` 新增 `failedBatches?: Partial<Record<AnalysisBlock, FailedBatch>>`，
 與 `summaryBlock`／`sentimentBlock`／`suggestionBlock` 平行。`FailedBatch = { lastMessageId, at, count }`。
@@ -62,11 +62,11 @@
 
 - spec.md Assumptions 要求「**不改對外契約**：不新增推播事件欄位」。而 SSE 的三個事件送的正是
   `state.summaryBlock` 等**整個 block**（`publishBlock()`，`copilot-analysis.ts:140`）——
-  失敗記錄若放進 block 內，它會自動流到瀏覽器，等於默默改了契約，且是那種型別檢查抓不到的改法。
+  失敗批次記憶若放進 block 內，它會自動流到瀏覽器，等於默默改了契約，且是那種型別檢查抓不到的改法。
 - 放在頂層則完全不進 SSE：`CopilotAnalysisState` 本身是 server-only 型別（`server/state/types.ts:97`），
   前端從不接觸它。**這是本規格唯一一個「放錯位置就會靜默違反 Assumptions」的決策，因此明文記錄。**
 - 生命週期需求（FR-011：跟隨既有分析狀態、不另訂保存期限）自動成立——它就在同一筆記錄裡，
-  隨 2 小時 sliding TTL 一起消失。「失敗記憶存活期間對話一直沒有新發言，直到分析狀態過期」這個
+  隨 2 小時 sliding TTL 一起消失。「失敗批次記憶存活期間對話一直沒有新發言，直到分析狀態過期」這個
   edge case 因此不需要任何額外程式碼。
 
 **判定鍵為何是「區塊 ＋ 該批最後一則訊息 id」**（FR-005）：這是 spec.md Clarifications 已定案的
@@ -79,7 +79,7 @@
 | 方案 | 否決理由 |
 |---|---|
 | 放進各 Block（`SummaryBlock.failedBatch`） | 見上：會經 SSE 外流，違反「不改契約」 |
-| 用既有的 `firstFailureAt` 當失敗記憶 | 它是**單輪重試序列**的起點（001 FR-014 的 40 秒預算用），語意是「這一輪從何時開始失敗」，不是「哪一批失敗過」。挪用它會讓兩個 FR 綁死在同一欄位上 |
+| 用既有的 `firstFailureAt` 當失敗批次記憶 | 它是**單輪重試序列**的起點（001 FR-014 的 40 秒預算用），語意是「這一輪從何時開始失敗」，不是「哪一批失敗過」。挪用它會讓兩個 FR 綁死在同一欄位上 |
 | 讓 `sentimentBlock.timeline` 在失敗時也推進（塞一個 failed marker） | 那正是根因 ④ 的鏡像——把「已分析過」與「試過但失敗」混為一談。timeline 是要畫給人看的資料，塞入失敗標記會污染 sparkline 與 `computeStats()` |
 
 ---
@@ -152,7 +152,7 @@ iMBrace 官方介面 JOIN，我方的訂閱者清單裡沒有他，分析會停�
 - 這同時吸收了 spec.md edge case「『全部重試』往返期間另一個分頁也按了同一區塊的重試」，
   也正是「不做樂觀 disable」（決策 7）能夠成立的前提。
 
-**⚠️ 與失敗記憶的互動順序**：`rerun` 那一次仍要重新過一次 FR-006 的失敗記憶檢查——否則「失敗 →
+**⚠️ 與失敗批次記憶的互動順序**：`rerun` 那一次仍要重新過一次 FR-006 的失敗批次記憶檢查——否則「失敗 →
 期間又被觸發 → rerun 無視記憶再跑一次」會在錯誤狀態上多出一輪呼叫，把 SC-001 的「不超過 1 輪」打破。
 
 ---
@@ -229,7 +229,7 @@ US2 AC#3 明文要求中欄一切照常。過濾範圍**恰為**三個分析事�
 
 ---
 
-## 決策 8：失敗記憶的清除點共三處，且 `beginAnalyzing()` **不是**其中之一
+## 決策 8：失敗批次記憶的清除點共三處，且 `beginAnalyzing()` **不是**其中之一
 
 **Decision**：清除 `failedBatches[block]` 的時機恰為三處：
 
