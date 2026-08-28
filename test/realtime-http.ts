@@ -92,6 +92,16 @@ function appendedTexts(evt: CopilotEvent): string[] {
 }
 
 /**
+ * 三個分析事件 —— specs/003-analysis-trigger-policy 契約不變式 C 的過濾範圍。
+ * 未 JOIN 的連線 MUST 一則都收不到，**含連線建立當下的快照**。
+ */
+function isAnalysisEvent(evt: CopilotEvent): boolean {
+  return evt.type === 'summary.updated' || evt.type === 'sentiment.updated' || evt.type === 'suggestion.updated'
+}
+
+const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
+
+/**
  * ④ 建議卡／知識庫檢索故障時，訊息流與 Composer 不受影響（specs/002-suggestion-knowledge-search
  * US3、T045）——獨立起一份 server（env 注入故障開關），避免影響上面 ①②③ 用的那份 harness。
  *
@@ -159,6 +169,68 @@ async function runFaultInjectionScenario(): Promise<void> {
   }
 }
 
+/**
+ * ⑥ 離開對話後不再有任何分析事件 —— specs/003-analysis-trigger-policy SC-002、FR-012、FR-016a。
+ *
+ * ⚠️ **這是 2026-08-27 那晚缺陷的另一半**：客服按下離開之後，分析仍然每 20 秒跑一輪。
+ *    原因是 `runIncremental()` 的門檻寫的是「有沒有分析狀態」，而分析狀態有 2 小時 sliding TTL、
+ *    LEAVE 不會清掉它。修好之後這條路徑靠的是既有機制，不另開停止通道（決策 4）：
+ *    離開 → 前端立刻補送一次 `beat('viewing')`（`joined: false`）→ 控制通道判定為真實變化
+ *    → 重新 attach → 訂閱者的 `joined` 翻轉 → 對話層級聚合翻轉 → 分析停止。
+ *
+ * ⚠️ **前提必須先驗**：如果 JOIN 狀態下本來就收不到分析事件，後面「離開後收不到」會是假綠。
+ *    這與 ⑤ 場景的教訓是同一句話（2026-08-27：FR-020 連 4 次全紅，根因是測試自己沒讓 B 離開對話）。
+ */
+async function runLeaveStopsAnalysis(a: HttpClient, gateway: NitroHarness['gateway']): Promise<void> {
+  console.log('\n── ⑥ 離開對話後 5 秒內不再有分析事件（specs/003-analysis-trigger-policy SC-002）──')
+
+  const stream = await watch(a, 'browser-a-leave', true)
+
+  // 前提：仍 JOIN 時收得到分析事件（背景 debounce 8 秒，給足餘裕）
+  const cursorBefore = stream.cursor()
+  gateway.pushMessage('con_1', '客戶：離開前的最後一個問題')
+  const before = await stream.waitFor(
+    e => isAnalysisEvent(e),
+    { since: cursorBefore, label: '離開前仍收得到分析事件（前提）', timeoutMs: 12_000 },
+  )
+  check('⑥ 前提成立：仍 JOIN 時收得到分析事件', isAnalysisEvent(before.event), before.event.type)
+
+  // 按下「離開對話」。⚠️ 前端的 `leave()` 在拿到回應後會**立刻**補送一次 `beat('viewing')`，
+  //    這裡照同一條路徑走 —— 那一次心跳才是讓 server 端 `joined` 翻轉的東西。
+  const leaveRes = await a.call(`/api/conversations/${CONV}/leave`, { method: 'POST' })
+  check('⑥ A 成功離開對話', leaveRes.status === 200, `實際 ${leaveRes.status} ${leaveRes.body}`)
+
+  const beatRes = await a.call('/api/presence', {
+    method: 'POST',
+    body: JSON.stringify({
+      conversationId: CONV, state: 'viewing', joined: false, visible: true, clientId: 'browser-a-leave',
+    }),
+  })
+  check('⑥ 離開後補送的 presence（joined:false）上報成功', beatRes.status === 200, `實際 ${beatRes.status}`)
+
+  const cursorAfterLeave = stream.cursor()
+  gateway.pushMessage('con_1', '客戶：離開之後才說的話')
+
+  // 中欄照常 —— 過濾範圍恰為三個分析事件（US2 AC#3）
+  const stillAppended = await stream.waitFor(
+    e => appendedTexts(e).includes('客戶：離開之後才說的話'),
+    { since: cursorAfterLeave, label: '離開後中欄仍收得到新訊息', timeoutMs: DELIVERY_BUDGET_MS },
+  )
+  check('⑥ 離開後中欄照常收到新訊息（US2 AC#3：中欄完全不受影響）', Boolean(stillAppended))
+
+  // ⚠️ 5 秒是 SC-002 的門檻本身，不是任意的等待時間。前景 debounce 1 秒、背景 8 秒，
+  //    5 秒內若門檻沒生效，前景那條路徑一定會冒出分析事件。
+  await sleep(5_000)
+  const analysisAfterLeave = stream.received.slice(cursorAfterLeave).filter(r => isAnalysisEvent(r.event))
+  check(
+    '⑥ 離開後 5 秒內不再有任何分析事件（SC-002）',
+    analysisAfterLeave.length === 0,
+    analysisAfterLeave.map(r => r.event.type).join(' / ') || '0 則',
+  )
+
+  stream.close()
+}
+
 async function main(): Promise<void> {
   let harness: NitroHarness | undefined
 
@@ -187,7 +259,8 @@ async function main(): Promise<void> {
 
     console.log('\n── ① A 送出後，B 在 4 秒內看到（§18 M1）────────────')
 
-    const streamA = await watch(a, 'browser-a', true)
+    // ⚠️ `let`：③ 會把 A 的連線換成重連後的那一條（見該處的憑證登記說明）
+    let streamA = await watch(a, 'browser-a', true)
     const streamB = await watch(b, 'browser-b', false)
 
     // ⚠️ 既有訊息**不會**從 SSE 補推給後加入的連線：第二層是共享訂閱，
@@ -320,9 +393,16 @@ async function main(): Promise<void> {
       `實際 ${sendDuringAnalysisElapsed}ms`,
     )
 
-    // ② 兩條連線（A 原連線、B 重連後的連線）都在看同一個對話，觸發一次分析完成後
-    //    兩邊都應各自收到 summary.updated／sentiment.updated（事件收斂，plan.md Testing 承諾）。
+    // ② 事件收斂：**同一位已 JOIN 客服的兩條連線**（例如開了兩個分頁）都應各自收到
+    //    summary.updated／sentiment.updated（plan.md Testing 承諾）。
+    //
+    // ⚠️ **2026-08-28 改寫（specs/003-analysis-trigger-policy FR-016a）**：原本這裡驗的是
+    //    「A 與 B 兩條連線都收到」，而 B 從頭到尾**沒有 JOIN**。新的契約不變式 C 明訂
+    //    未 JOIN 的連線 MUST 收不到這三個事件，因此原斷言驗的是已被推翻的行為 ——
+    //    收斂改用 A 自己的第二條連線驗，B 那一半反過來成為 FR-016a 的斷言。
+    const streamA2 = await watch(a, 'browser-a-2', true)
     const cursorA2 = streamA.cursor()
+    const cursorA2b = streamA2.cursor()
     const cursorB2 = reconnectedB.cursor()
     const triggeredAt = Date.now()
     gateway.pushMessage('con_1', '客戶：訂單編號是 GW9981')
@@ -332,11 +412,34 @@ async function main(): Promise<void> {
     const copilotTimeoutMs = 8_000
 
     const summaryA = await streamA.waitFor(isCopilotUpdate, { since: cursorA2, label: 'A 收到面板更新', timeoutMs: copilotTimeoutMs })
-    const summaryB = await reconnectedB.waitFor(isCopilotUpdate, { since: cursorB2, label: 'B 收到面板更新', timeoutMs: copilotTimeoutMs })
+    const summaryA2 = await streamA2.waitFor(isCopilotUpdate, { since: cursorA2b, label: 'A 的第二個分頁收到面板更新', timeoutMs: copilotTimeoutMs })
     check(
-      '兩條連線都在合理時間內各自收到 summary.updated／sentiment.updated（事件收斂）',
-      summaryA.at - triggeredAt <= copilotTimeoutMs && summaryB.at - triggeredAt <= copilotTimeoutMs,
-      `A ${summaryA.at - triggeredAt}ms／B ${summaryB.at - triggeredAt}ms`,
+      '已 JOIN 客服的兩條連線都在合理時間內各自收到 summary.updated／sentiment.updated（事件收斂）',
+      summaryA.at - triggeredAt <= copilotTimeoutMs && summaryA2.at - triggeredAt <= copilotTimeoutMs,
+      `A ${summaryA.at - triggeredAt}ms／A2 ${summaryA2.at - triggeredAt}ms`,
+    )
+
+    // FR-016a：B 從頭到尾沒有 JOIN → 這三個事件一則都不該送到他的連線。
+    // ⚠️ 上面兩個 waitFor 已經等到分析真的發生了，因此「B 沒收到」不是因為還沒送。
+    const analysisToB = reconnectedB.received.slice(cursorB2).filter(r => isAnalysisEvent(r.event))
+    check(
+      '未 JOIN 的連線收不到三個分析事件（FR-016a、SC-006）',
+      analysisToB.length === 0,
+      analysisToB.map(r => r.event.type).join(' / ') || '0 則',
+    )
+    // 中欄照常 —— 過濾範圍恰為三個分析事件，MUST NOT 波及訊息流（US2 AC#3）。
+    // ⚠️ 這裡 MUST 用 waitFor 而不是「檢查目前收到幾則」：上面兩個 waitFor 只等到 A 收到分析事件，
+    //    B 的 messages.appended 可能還在路上，用當下的計數會隨時序紅／綠。
+    const appendedToB = await reconnectedB.waitFor(
+      e => appendedTexts(e).includes('客戶：訂單編號是 GW9981'),
+      { since: cursorB2, label: 'B 仍照常收到中欄訊息', timeoutMs: DELIVERY_BUDGET_MS },
+    )
+    check('未 JOIN 的連線仍照常收到 messages.appended（中欄完全不受影響，US2 AC#3）',
+      appendedTexts(appendedToB.event).includes('客戶：訂單編號是 GW9981'))
+    // 再確認一次：整段期間三個分析事件仍然是零
+    check(
+      '中欄事件照送的同時，三個分析事件仍然一則都沒有（過濾範圍恰為那三個）',
+      reconnectedB.received.slice(cursorB2).filter(r => isAnalysisEvent(r.event)).length === 0,
     )
 
     // ③ FR-010：客服切回對話（重新連線＋watch）時，MUST 立即收到已保留的分析結果，
@@ -344,24 +447,55 @@ async function main(): Promise<void> {
     //    這是 T010c 的重連快照，伺服端以 `void sendAnalysisSnapshotAndResume()`
     //    非同步送出（不擋 attach() 本身），所以用 waitFor 而非同步檢查 received，
     //    但仍斷言它在很短時間內就到，而非要等到下一次真正的分析事件。
-    reconnectedB.close()
-    await new Promise(r => setTimeout(r, 300))
+    //
+    // ⚠️ **2026-08-28 改寫（specs/003-analysis-trigger-policy FR-003）**：快照同樣**只給已 JOIN 的
+    //    連線**。原本這裡用的是 B（從未 JOIN），那條斷言驗的是已被推翻的行為。改用 A 自己的
+    //    第二個分頁重連 —— 001 FR-010 的 2 秒門檻**不得退步**（SC-005）。
+    //
+    // ⚠️ **關閉順序有意義，不可對調**（2026-08-28 踩到）：`registerCredential()` 以
+    //    `(orgId, operatorId)` 為鍵，取消登記時**無條件刪掉該 operator 的那一筆** ——
+    //    同一位客服的第二條連線關閉時，會把還開著的第一條連線的憑證一併移除，
+    //    於是 `borrowCredential()` 回 null、兩層輪詢全部拉回空陣列，之後的場景會在
+    //    「訊息根本沒被偵測到」這一層逾時（症狀看起來像分析壞了，實際是取數停了）。
+    //    因此這裡**先關掉 A 既有的兩條連線，再開新的那一條** —— 新連線的登記
+    //    才不會被隨後的關閉動作抹掉。⚠️ 這是既有缺陷的迴避，不是本規格造成的。
+    streamA2.close()
+    streamA.close()
+    await sleep(300)
 
     const reconnectAt = Date.now()
-    const resumedStream = await watch(b, 'browser-b', false)
-    const snapshotSummary = await resumedStream.waitFor(
+    const resumedA = await watch(a, 'browser-a-3', true)
+    const snapshotSummary = await resumedA.waitFor(
       e => e.type === 'summary.updated',
-      { label: 'B 重連後立即收到 summary.updated 快照', timeoutMs: 2_000 },
+      { label: 'A 重連後立即收到 summary.updated 快照', timeoutMs: 2_000 },
     )
-    const snapshotSentiment = await resumedStream.waitFor(
+    const snapshotSentiment = await resumedA.waitFor(
       e => e.type === 'sentiment.updated',
-      { label: 'B 重連後立即收到 sentiment.updated 快照', timeoutMs: 2_000 },
+      { label: 'A 重連後立即收到 sentiment.updated 快照', timeoutMs: 2_000 },
     )
     check(
-      '重新連線並 watch 後，MUST 立即收到已保留的 summary.updated／sentiment.updated（FR-010，不必等新事件）',
+      '已 JOIN 的連線重新 watch 後，MUST 立即收到已保留的 summary.updated／sentiment.updated（001 FR-010，不得退步）',
       snapshotSummary.at - reconnectAt <= 2_000 && snapshotSentiment.at - reconnectAt <= 2_000,
       `summary ${snapshotSummary.at - reconnectAt}ms／sentiment ${snapshotSentiment.at - reconnectAt}ms`,
     )
+    // ⑤ 之後都用這一條當作 A 的連線（見上面關閉順序的說明）
+    streamA = resumedA
+
+    // ⚠️ **快照那條路徑走 `send()`、不經 `forward()`** —— 只在 `forward()` 加過濾對它完全無效。
+    //    這一項就是為了抓那個漏洞：未 JOIN 的全新連線一連上線 MUST NOT 拿到任何一個 Block
+    //    （漏掉的症狀是「畫面上沒有面板，資料卻已經在他的瀏覽器裡」，SC-006 在伺服器端不成立）。
+    reconnectedB.close()
+    await sleep(300)
+    const freshB = await watch(b, 'browser-b-fresh', false)
+    await sleep(1_500)
+    const snapshotToB = freshB.received.filter(r => isAnalysisEvent(r.event))
+    check(
+      '未 JOIN 的連線在建立當下 MUST NOT 收到分析快照（FR-003、契約不變式 C 的第二條路徑）',
+      snapshotToB.length === 0,
+      snapshotToB.map(r => r.event.type).join(' / ') || '0 則',
+    )
+    freshB.close()
+    await sleep(300)
 
     console.log('\n── ⑤ 多對話背景更新：切走仍 JOIN 時繼續背景分析、切回補跑摘要（specs/002-suggestion-knowledge-search US4）──')
 
@@ -371,18 +505,24 @@ async function main(): Promise<void> {
     //    看著同一個對話，此時就算 A 切走，這個對話對系統而言**仍然是前景**——摘要照重算是正確行為，
     //    不是 FR-020 的違反。不先關掉 B 的話，下面「背景期間 MUST NOT 重算摘要」驗的是一個
     //    根本不成立的前提，且會隨機因負載時序而紅／綠（2026-08-27：實測 HEAD 上連 4 次全紅）。
-    resumedStream.close()
-    await new Promise(r => setTimeout(r, 300))
+    // （B 的兩條連線已在 ③ 收尾時關閉，此處不需要再關）
 
     // A 切走但仍 JOIN 著（research.md #8：presence 語意修正後 MUST 變成 background watch，不是 unwatch）
     const awayRes = await a.call('/api/presence', {
       method: 'POST',
-      body: JSON.stringify({ conversationId: CONV, state: 'away', joined: true, visible: true, clientId: 'browser-a' }),
+      body: JSON.stringify({ conversationId: CONV, state: 'away', joined: true, visible: true, clientId: 'browser-a-3' }),
     })
     check('⑤ A 切走但仍 JOIN 時，presence 上報成功', awayRes.status === 200, `實際 ${awayRes.status}`)
 
     const cursorBgTrigger = streamA.cursor()
     gateway.pushMessage('con_1', '客戶：背景期間又問了一個問題')
+
+    // 前提：訊息本身要先被偵測到（第一層清單輪詢 → poke → 第二層拉取），
+    // 否則下面的「背景分析仍持續」驗的是一個根本沒被觸發的東西
+    await streamA.waitFor(
+      e => appendedTexts(e).includes('客戶：背景期間又問了一個問題'),
+      { since: cursorBgTrigger, label: '⑤ 背景期間的客戶訊息被偵測到（前提）', timeoutMs: 12_000 },
+    )
 
     // 背景 debounce 是 BACKGROUND_DEBOUNCE_MS（8 秒），給足餘裕
     const bgSentiment = await streamA.waitFor(
@@ -410,7 +550,7 @@ async function main(): Promise<void> {
     const refocusAt = Date.now()
     const refocusRes = await a.call('/api/presence', {
       method: 'POST',
-      body: JSON.stringify({ conversationId: CONV, state: 'joined', joined: true, visible: true, clientId: 'browser-a' }),
+      body: JSON.stringify({ conversationId: CONV, state: 'joined', joined: true, visible: true, clientId: 'browser-a-3' }),
     })
     check('⑤ A 切回時 presence 上報成功', refocusRes.status === 200, `實際 ${refocusRes.status}`)
 
@@ -441,6 +581,9 @@ async function main(): Promise<void> {
     check('⑤ 斷線重連後，已 JOIN 的對話立即以背景優先度復原（不必等下一次 presence 心跳）',
       restoredControl.event.type === 'control.updated')
     restoredStream.close()
+    await sleep(300)
+
+    await runLeaveStopsAnalysis(a, gateway)
   }
   finally {
     await harness?.close()

@@ -754,3 +754,116 @@ describe('背景並行與 debounce（US4）', () => {
     await Promise.all(inFlight)
   })
 })
+
+// ── FR-009：同區塊併發去重（specs/003-analysis-trigger-policy T014）────────
+
+/**
+ * 「不做樂觀 disable」（research.md 決策 7）的對價就在這裡：面板狀態一律由伺服器推播驅動，
+ * 客服在往返期間重複按下按鈕是**預期行為**，由這一層吸收。
+ *
+ * ⚠️ 合併語意是「至少再跑一次最新的」——旗標而非佇列。累積 N 次觸發就跑 N 次沒有意義：
+ *    分析的輸入是當下的狀態，不是被合併掉的那些事件。
+ */
+describe('FR-009：同一 (對話, 區塊) 的併發觸發合併為一次 rerun', () => {
+  it('同區塊連續觸發三次 → 只執行兩次（當次 + 一次合併的 rerun）', async () => {
+    const id = convId('dedupe')
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
+
+    let calls = 0
+    let releaseGate: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(input: Parameters<MockAIProvider['analyzeSentiment']>[0]) {
+        calls++
+        await gate
+        return super.analyzeSentiment(input)
+      }
+    })())
+
+    // 三次觸發，每次都是新的一批（最後一則不同）——確保被擋下的不是失敗批次記憶
+    const batches = [
+      [customerText(id, '併發 1', 9)],
+      [customerText(id, '併發 2', 8)],
+      [customerText(id, '併發 3', 7)],
+    ]
+    const running = batches.map(b => runIncremental(id, b, 'foreground', false))
+
+    await vi.waitFor(() => expect(calls).toBe(1))
+    releaseGate?.()
+    await Promise.all(running)
+
+    // 第一次進行中，第二、三次被合併成「跑完後再跑一次」
+    expect(calls).toBe(2)
+  })
+
+  it('rerun 那一次仍會過失敗批次記憶檢查 —— 錯誤狀態上 MUST NOT 多出一輪呼叫', async () => {
+    const id = convId('dedupe-failed')
+    const batch = [customerText(id, '會失敗的一批', 10)]
+
+    let calls = 0
+    let releaseGate: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(): Promise<never> {
+        calls++
+        await gate
+        throw new AIProviderHttpError('boom', 400)
+      }
+    })())
+
+    // ⚠️ 刻意不 await —— 這一次會卡在 gate 上，正是要製造「進行中」的窗口
+    const cold = runColdStart(id, batch, false)
+    await vi.waitFor(() => expect(calls).toBe(1))
+
+    // 期間再觸發同一批兩次 → 合併成一次 rerun
+    const merged = [
+      runIncremental(id, batch, 'foreground', false),
+      runIncremental(id, batch, 'foreground', false),
+    ]
+
+    releaseGate?.()
+    await Promise.all([cold, ...merged])
+
+    // rerun 重新讀了失敗批次記憶，發現這一批剛剛才失敗過 → 直接 return，不再呼叫 AI。
+    // 若少了這道檢查，這裡會是 2 —— SC-001 的「不超過 1 輪」當場被打破。
+    expect(calls).toBe(1)
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.sentimentBlock.status).toBe('error')
+  })
+
+  it('去重粒度是「對話 ＋ 區塊」，MUST NOT 是「對話」—— 三個區塊仍然並行', async () => {
+    const id = convId('dedupe-granularity')
+    await runColdStart(id, [customerText(id, '第一句', 10)], false)
+
+    const started: string[] = []
+    let releaseGate: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    setAIProvider(new (class extends MockAIProvider {
+      override async summarize(input: Parameters<MockAIProvider['summarize']>[0]) {
+        started.push('summary')
+        await gate
+        return super.summarize(input)
+      }
+
+      override async analyzeSentiment(input: Parameters<MockAIProvider['analyzeSentiment']>[0]) {
+        started.push('sentiment')
+        await gate
+        return super.analyzeSentiment(input)
+      }
+
+      override async suggest(input: Parameters<MockAIProvider['suggest']>[0]) {
+        started.push('suggestions')
+        await gate
+        return super.suggest(input)
+      }
+    })())
+
+    const running = runIncremental(id, [customerText(id, '新的一句', 5)], 'foreground', false)
+    // 三個區塊 MUST 同時在飛 —— 用對話粒度去重會把它們串成序列，
+    // 直接拖慢 002 SC-001 的 3 秒／10 秒門檻
+    await vi.waitFor(() => expect(started.sort()).toEqual(['sentiment', 'suggestions', 'summary']))
+
+    releaseGate?.()
+    await running
+  })
+})
