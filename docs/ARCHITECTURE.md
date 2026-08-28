@@ -598,6 +598,64 @@ export interface AIProvider {
 
 > `AIProvider` 與 `KnowledgeProvider` 合起來，是「所有 AI 相關外部依賴」的唯一收斂點——不管未來走 iMBrace 還是 viki，上層都不用重寫。
 
+#### ⚠️ agent 背後的模型不在版本控制裡
+
+四個 agent 的模型設定存在 **iMBrace 後台**，`.env.local` 只存 `assistant_id`。換句話說
+**模型換掉時 git 完全看不出來** —— 若不寫在這裡，沒有人知道它被改過、原值是什麼、為什麼改。
+**MUST 在每次變更後更新下表。**
+
+以下為 2026-08-28 由 `chatAi.listAiAgents()` 實際讀出的值（不是推斷）：
+
+| agent | 目前模型 | 變更紀錄 |
+|---|---|---|
+| `AgentCopilot_摘要_agent` | `google.gemma-3-27b-it` | 未變更 |
+| `AgentCopilot_情緒評分_agent` | **`openai.gpt-oss-20b-1:0`** | 2026-08-28 由 `google.gemma-3-27b-it` 改為此值，理由見下 |
+| `AgentCopilot_建議回覆_agent` | `google.gemma-3-27b-it` | 未變更 |
+| `AgentCopilot_知識庫檢索_agent` | `us.amazon.nova-pro-v1:0` | 變更時間不明 —— 見下方警告 |
+
+⚠️ **這張表是在「已經失去一次紀錄」之後才建立的。** `specs/003-analysis-trigger-policy/HANDOFF.md`
+原記載知識庫 agent「停在 `qwen.qwen3-32b-v1:0`」，2026-08-28 實際讀取卻是
+`us.amazon.nova-pro-v1:0` —— 中間的變更沒有任何紀錄，也無從得知是誰、何時、為什麼改。
+HANDOFF 記載的 `qwen3-32b` 實測值（20.5／13.0／18.6 秒）因此**不能再視為現行設定的效能資料**。
+
+模型 id 可由 API 讀取，**MUST NOT 靠人工記錄**：`chatAi.listAiAgents()` 的每個 agent 都帶
+`model_id` 欄位（欄位 `model` 是用途分類如 `rag`，不是模型）。`npm run spike:agent-latency`
+會自動印出並寫進輸出檔名。⚠️ 2026-08-28 曾因人工歸因出錯而讓一整組模型比較作廢重測，
+這條規則是那次的產物。
+
+**情緒 agent 換模型的理由**（2026-08-28，`scripts/spike/18-agent-model-latency.ts`，
+兩模型各 8 次、背靠背同一時間窗、模型皆由 API 驗證）：
+
+| | `gemma-3-27b` | `gpt-oss-20b` |
+|---|---|---|
+| 延遲範圍 | 7850～12666ms | **4743～9210ms** |
+| 中位數 | ≈ 10.5 秒 | **≈ 5.4 秒** |
+| **最慢** | 12666ms | **9210ms** |
+| 距 FR-014 的 15 秒門檻 | 2.3 秒（18%） | **5.8 秒（63%）** |
+| schema 合規／標籤正確 | 8/8、8/8 | 8/8、8/8 |
+| 輸出決定性 | 連分數都完全一致 | 分數漂移 ±10、drivers 偶爾從缺 |
+
+**逾時是被最慢值打死的，不是中位數。** gemma 在平台狀況良好時最慢就已到 12.7 秒，
+而平台延遲實測會隨時間漂移約 36%（同模型同輸入，30 分鐘內 7.5 秒 ↔ 10.2 秒）——
+12.7 × 1.36 ≈ 17.2 秒即破線，這正是 2026-08-28 真實對話上情緒分析連續兩次逾時的成因。
+換模型後同一對話的全歷史冷啟動（多個 6 則批次依序跑）一次通過、零失敗。
+
+代價是失去輸出的決定性：同一批訊息重跑會得到略為不同的分數（±10），sparkline 高度與
+`stats.lowestScore` 會跟著變。⚠️ **但示警行為不受影響** —— 示警由 label 判定
+（`isSentimentAlerting()` 的遲滯規則），而兩模型合計 16 次執行的 label 序列全部正確一致。
+
+⚠️ **`google.gemma-3-27b-it` 並非全面不可用，別把兩件事混為一談。** 它**不能**用於知識庫
+檢索（缺原生 function calling，機制與判斷方式見 §13 的「能不能檢索」一節），但在**不呼叫
+任何工具**的摘要／情緒／建議卡上完全正常 —— 2026-08-28 實測它在情緒 agent 上是所有候選裡
+輸出最穩定的（8/8 合規、連分數都完全一致、`drivers` 中文精準），換掉它純粹是為了延遲。
+
+**⚠️ 每次 AI 呼叫其實是兩個 HTTP 請求**（2026-08-28 由本機代理的日誌發現）：SDK 的
+`streamChat()` 在 `body.user_id` 缺席時會先 `POST /ai-agent/chat-client/auth/user` 取 id，
+而 `ImbraceAgentProvider.callAgent()` 沒有傳 `user_id` —— 於是每一次摘要、每一次情緒批次、
+每一次建議卡都多付一趟往返去查同一個固定值。該 id 對同一組憑證而言不變，可查一次快取。
+⚠️ **尚未量測它值多少毫秒**，因此不宣稱它能解決逾時；但它是目前唯一「不改規格數字、
+不改模型、不改批次大小」就能削減固定成本的候選。
+
 **⚠️ JSON 抽取：模型會在合法 JSON 前後加開場白／自我總結，即使 prompt 明確禁止**（2026-08-27 實測，`scripts/spike/15-copilot-agents.ts`）——常見兩種形態：前面加「Okay, I will...」這類開場白，或後面加「我已完成摘要...」這類自我總結，且是穩定出現的行為，不是隨機偶發。逼 prompt 100% 守規矩不可靠；正確做法是程式碼層面容錯：找文字中第一個 `{`／`[` 作為 JSON 起點（去掉前面的開場白），用 `JSON.parse` 錯誤回報的失敗位置切掉後面多餘的文字（見 `ImbraceAgentProvider` 的 `extractLeadingJson()`）。這個技巧對任何要求 iMBrace AI Agent 輸出結構化 JSON 的呼叫都通用，不限本功能。
 
 ### 8.3 狀態與事件匯流排
@@ -1192,8 +1250,15 @@ FR-001「依該對話當下的**完整歷史**」的字面要求有落差。客�
 **③ 分析結果沒有真正持久化，無法跨客服／跨伺服器重啟共用**——`CopilotAnalysisState`
 （`server/state/memory-store.ts`）目前是記憶體 + 2 小時滑動 TTL，設計目的是「客服切換
 對話框回來還看得到既有結果」（FR-010），不是永久保存。這代表：同一個對話換一位客服
-JOIN、或伺服器重啟過，即使訊息內容完全沒變，也會觸發全新的冷啟動分析——重複耗用 AI
-呼叫，且以 messageId 為粒度都是重算，不是只算真正新增的部分。
+JOIN，即使訊息內容完全沒變，也會觸發全新的冷啟動分析——重複耗用 AI 呼叫，且以
+messageId 為粒度都是重算，不是只算真正新增的部分。
+
+> ⚠️ **2026-08-28 訂正：伺服器重啟的後果與上一句相反，而且更嚴重。**
+> 本段原本寫「或伺服器重啟過……也會觸發全新的冷啟動分析」——**實際上不會觸發任何分析**。
+> `runColdStart()` 唯一的呼叫點是 `join.post.ts`，而平台側的 JOIN 在重啟後依然存在，
+> 客服看到的是「已接手」的畫面，不會再按一次接手，於是冷啟動永遠不會發生，
+> 面板永久停在空狀態且完全不報錯。症狀不是「浪費 AI 呼叫」，是「功能靜默消失」，
+> 處置方向也因此不同。當晚真實環境重現四次，已列為 M2 驗收的未完成工項。
 
 若後續要處理，**這三項建議合併成同一個設計**（而非分開修）：把情緒評分點（含摘要
 所依賴的歷史）以 messageId 為 key 做真正的持久化快取，會同時讓「冷啟動不受 50 則上限
@@ -1628,17 +1693,22 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] 一鍵帶入可用，且帶入後仍會做撞單檢查
 - [ ] 背景對話重算情緒與建議卡但**不重算摘要**，且並行數未超過上限（可由監控指標驗證，憲法 6.2）
 - [ ] 切換至背景對話時，立即顯示背景已更新的情緒與建議卡（不得空白、從頭載入或重新產生），僅對話摘要於此時補跑並標示「更新中」
-- [ ] AI 失敗時，訊息流與 Composer 仍完全可用
+- [x] AI 失敗時，訊息流與 Composer 仍完全可用（2026-08-28 真實環境驗證：三個區塊全數失敗並維持錯誤狀態逾 20 分鐘期間，中欄訊息流照常收發、Composer 草稿在按下「離開對話」後仍完整保留）
 - [ ] 建議卡的 `sopId` 若不在檢索結果白名單中，該卡被丟棄
 - [ ] `confidence` 無真實分數來源時顯示為留空，不得顯示模型自評的替代數字（§11.6②）
 - [ ] 知識庫自然語言快查能回傳含標題與更新日期（或「更新日期未知」）的結果列表，不顯示獨立編號；空白查詢不觸發呼叫；查無結果與「尚未輸入查詢」視覺可區分（2026-08-27 新增，隨知識庫快查併入本里程碑一併提出，見 `specs/002-suggestion-knowledge-search`）
 - [ ] Copilot 面板五大區塊（摘要卡 `SummaryCard.vue`、情緒走勢 `SentimentGauge.vue`、建議卡、知識庫快查、對話紀錄／結案摘要——**後兩者**尚未實作，待建置時一併核對；2026-08-27 訂正：知識庫快查已隨本里程碑實作，見上一項）之圖示、色票、文案措辭、`error`／`retrying` 等狀態呈現，已對照 Claude Design 畫布 artboard 2a 原始檔 `CopilotPanel.dc.html`（見 `docs/DESIGN_TOKENS.md` §7）逐一核實；有落差者已訂正，或已記錄不採用的理由（2026-08-27 新增：`specs/001-sentiment-panel` FR-003 明文排除視覺樣式於原驗收範圍外，且 `tasks.md` T030 記錄此核對動作從未執行，此前為已知但無人排入排程的缺口）
 - [ ] 左側對話列表（`Sidebar.vue`）與中間對話訊息欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、`PresenceBar.vue`、`ModeSelect.vue`）已對照 Claude Design 畫布 artboard 1c（主工作區）核實（2026-08-27 新增，隨上一項一併提出）；⚠️ `docs/DESIGN_TOKENS.md` 目前 1c 只有截圖，尚無逐字文字規格（見該檔第 10 行），核對前須先比對截圖，或依該檔附錄流程向畫布擁有者取得 1c 逐字規格再核對，不得憑既有 token 臨場判斷後就視為已核實。**2026-08-28 訂正**：1c 已不只兩張——另有 10 個狀態變體（未接手／兩欄收合／撞單／結案五態等），索引與各自的判讀重點見 `DESIGN_TOKENS.md`「1c 的狀態變體」一節，核對範圍 MUST 涵蓋全部而非只有 `_lightTheme`／`_darkTheme` 兩張
-- [ ] 中欄標題列的出口按鈕已改為狀態驅動的兩態並對照 `docs/wireframe/03-workspace_assignment01.png`／`_assignment02.png`／`_lightTheme.png` 核實：未接手→「接手對話」＋下拉（兩選項寫出後果而非模式名稱）；已接手→「離開對話」（次要）＋「結案」（primary）＋輔助說明。2026-08-28 已隨 `specs/003-analysis-trigger-policy` T032 實作完成（原本是單一的「加入對話／離開」toggle）
-- [ ] **`registerCredential()` 的雙分頁缺陷已修**：`server/services/credentials.ts` 目前以 `(orgId, operatorId)` 為鍵，取消登記時**無條件** `byOperator.delete(operatorId)`，沒有 refcount 也沒有 per-連線識別。同一位客服開兩個分頁、關掉其中一個，會把仍開著的那個的憑證一併移除 → `borrowCredential()` 回 `null` → 兩層輪詢拉回空陣列 → **那個分頁從此收不到任何新訊息，且不報錯**。⚠️ `PollingMessageSource.subscribe()` 的註解（`server/sources/polling-message-source.ts:109`）**早已記載同一個坑**並因此改用 `Symbol` 當鍵，`credentials.ts` 沒跟上——修法應比照。⚠️ 這與 `specs/003-analysis-trigger-policy` C11（雙分頁其一 LEAVE 後分析不會停，已於 003 T032a 修正）是**同一個失敗家族**：以 `operatorId` 為鍵、假設「一位客服＝一條連線」；排查時 MUST 一併確認是否還有第三處。2026-08-28 由 003 implement 過程中發現，**刻意不併入 003**（範圍外）；`npm run smoke` 場景 ③ 目前靠調整連線關閉順序迴避，產品端未修（2026-08-28 新增）
-- [ ] Copilot 面板的可見性已依 `specs/003-analysis-trigger-policy` FR-016～FR-017b 實作：未 JOIN 時整欄不呈現（非變灰／非骨架）、JOIN 時自動展開並可收合、收合狀態 per 客服 per 對話存 `localStorage`；且伺服器端不把三個分析事件推給未 JOIN 的連線（FR-016a）（2026-08-28 新增）
-- [ ] **SC-001**：注入 AI 故障後靜置 10 分鐘、對話無新發言，分析嘗試不超過 1 輪（對照修正前約 30 輪、逾 600 次呼叫）。⚠️ 這一項**只有故障注入驗得出來**，自動化測試全綠不代表止血成功 —— 自動化版本見 `test/analysis-trigger-integration.test.ts`，真實環境的計時見 `specs/003-analysis-trigger-policy/quickstart.md` US1-A（2026-08-28 新增）
-- [ ] **SC-002**：按下「離開對話」或「結案」後 5 秒內不再產生任何新的分析事件，且中欄訊息流與 Composer 草稿完全不受影響（`npm run smoke:realtime` 場景 ⑥ 已涵蓋自動化部分）（2026-08-28 新增）
+- [x] 中欄標題列的出口按鈕已改為狀態驅動的兩態並對照 `docs/wireframe/03-workspace_assignment01.png`／`_assignment02.png`／`_lightTheme.png` 核實：未接手→「接手對話」＋下拉（兩選項寫出後果而非模式名稱）；已接手→「離開對話」（次要）＋「結案」（primary）＋輔助說明。2026-08-28 已隨 `specs/003-analysis-trigger-policy` T032 實作完成（原本是單一的「加入對話／離開」toggle）
+- [ ] **`registerCredential()` 的雙分頁缺陷已修**：`server/services/credentials.ts` 目前以 `(orgId, operatorId)` 為鍵，取消登記時**無條件** `byOperator.delete(operatorId)`，沒有 refcount 也沒有 per-連線識別。同一位客服開兩個分頁、關掉其中一個，會把仍開著的那個的憑證一併移除 → `borrowCredential()` 回 `null` → 兩層輪詢拉回空陣列 → **那個分頁從此收不到任何新訊息，且不報錯**。⚠️ `PollingMessageSource.subscribe()` 的註解（`server/sources/polling-message-source.ts:109`）**早已記載同一個坑**並因此改用 `Symbol` 當鍵，`credentials.ts` 沒跟上——修法應比照。⚠️ 這與 `specs/003-analysis-trigger-policy` C11（雙分頁其一 LEAVE 後分析不會停，已於 003 T032a 修正）是**同一個失敗家族**：以 `operatorId` 為鍵、假設「一位客服＝一條連線」；**2026-08-28 已完成全面排查，確實有第三處（`session.watchers`，見下一條）**。2026-08-28 由 003 implement 過程中發現，**刻意不併入 003**（範圍外）；`npm run smoke` 場景 ③ 目前靠調整連線關閉順序迴避，產品端未修（2026-08-28 新增）
+- [ ] **`session.watchers` 的雙分頁缺陷已修**（上一條所述失敗家族的**第三處**，2026-08-28 排查時發現）：`server/services/session-manager.ts` 的 `upsertSession()` 把 `watchers` 當成**去重的 operatorId 陣列**（`includes()` 判定，同一人兩條連線只留一筆），而 `releasePipeline()` 移除時**無條件** `filter(id => id !== operatorId)`。同一位客服開兩個分頁、關掉其中一個，`watchers` 直接歸零 → `deleteCopilotSession()` 被呼叫，**即使另一個分頁還開著**。⚠️ 同一函式裡的 `pipeline.refs` **有** refcount 且行為正確（`refs` 為 2 時只減不刪），於是同一件事有兩個計數器給出不同答案——這個不變式破裂本身就是 bug 的形狀。症狀比 `registerCredential()` 輕：輪詢不會停（`refs` 擋住了），但 `advanceAnchor()` 因 `getCopilotSession()` 回 `null` 而靜默 return → 錨點不再前推 → 自己送出的訊息會在下一輪輪詢被當成新訊息再 fan-out 一次（畫面上「閃一下重新插入」，該症狀已記於 `session-manager.ts` `advanceAnchor()` 的註解），且 `isResume` 判定失準使 `session.opened` 的 `reason` 誤報為 `join`。修法比照 `PollingMessageSource.subscribe()` 的 `Symbol` 鍵，或讓 `watchers` 改存 per-連線識別。⚠️ 另有第四處但**不列為缺陷**：`presence.post.ts` 切換對話時的 `clearViewing()` 同樣以 `operatorId` 無條件刪除，但 presence 有 45 秒 TTL 且 20 秒心跳會補回，症狀為同事列表上「我」閃一下即自癒；且 presence 的語意本就是 per-人而非 per-連線（2026-08-28 新增）
+- [x] Copilot 面板的可見性已依 `specs/003-analysis-trigger-policy` FR-016～FR-017b 實作：未 JOIN 時整欄不呈現（非變灰／非骨架）、JOIN 時自動展開並可收合、收合狀態 per 客服 per 對話存 `localStorage`；且伺服器端不把三個分析事件推給未 JOIN 的連線（FR-016a）（2026-08-28 新增）。**2026-08-28 真實環境驗收通過**（quickstart US2-B／US2-E／T032a）：離開後右欄整欄消失且中欄延伸至視窗右緣、收合為窄直條且狀態隨對話與重新整理保留、同一客服雙分頁其一按下離開時另一分頁面板同步消失。⚠️ **唯獨 FR-016a 的伺服器端過濾仍只有自動化涵蓋**（`test/stream-analysis-visibility.test.ts`、`npm run smoke:realtime`）——真實環境需兩位不同客服以 EventStream 對照（quickstart US2-C），因無第二個客服帳號而未執行
+- [x] **SC-001**：注入 AI 故障後靜置 10 分鐘、對話無新發言，分析嘗試不超過 1 輪（對照修正前約 30 輪、逾 600 次呼叫）。⚠️ 這一項**只有故障注入驗得出來**，自動化測試全綠不代表止血成功 —— 自動化版本見 `test/analysis-trigger-integration.test.ts`，真實環境的計時見 `specs/003-analysis-trigger-policy/quickstart.md` US1-A（2026-08-28 新增）。**2026-08-28 真實環境驗收通過**：注入不存在的 agent id（平台回 500 → `classifyFailure()` 判 transient → 走完整重試預算，與 2026-08-27 中斷時的失敗形態一致），三個區塊各失敗一次後靜置 10 分鐘，每 30 秒取樣共 21 點，分析嘗試**新增 0 次**（期間兩個分頁 × 每 20 秒心跳 ≈ 60 次心跳）。另有一次非注入的對照組：平台自然逾時期間同樣靜置 10 分鐘、新增 0 次
+- [x] **SC-002**：按下「離開對話」或「結案」後 5 秒內不再產生任何新的分析事件，且中欄訊息流與 Composer 草稿完全不受影響（`npm run smoke:realtime` 場景 ⑥ 已涵蓋自動化部分）（2026-08-28 新增）。**2026-08-28 真實環境確認**中欄訊息流、presence、服務模式與 Composer 草稿在離開後皆完整保留（quickstart US2-B 逐項清單）。⚠️ 「5 秒內無分析事件」該時窗**未在真實環境逐秒計時**，仍以 `smoke:realtime` 場景 ⑥ 的自動化量測（實測 0 則）為準
+
+- [ ] **`runColdStart()` 的重啟復原缺口已修**（2026-08-28 真實環境發現，當晚撞到四次）：`CopilotAnalysisState` 只由 `runColdStart()` 建立，而它**唯一的呼叫點是 `server/api/conversations/[id]/join.post.ts`**。伺服器重啟會清空 `MemoryStateStore`，但平台側的 JOIN 是持久的 —— 客服重新連上後畫面仍顯示「已接手」、面板照常展開，SSE 的 `attach()` → `sendAnalysisSnapshotAndResume()` → `runIncremental()` 卻卡在開頭的 `if (!state) return`（`server/services/copilot-analysis.ts:843`）。**結果是面板永遠停在空狀態、不報錯、日誌一行都沒有**，唯一的復原方式是客服自己想到要 LEAVE 再 JOIN。⚠️ 本檔第 ③ 項「分析結果沒有真正持久化」原本把這個情境描述成「會觸發全新的冷啟動分析——重複耗用 AI 呼叫」，**方向與事實相反**，已於 2026-08-28 訂正。⚠️ M4 換上 Redis 後狀態跨重啟保留即自然消失，但在那之前每一次部署都會讓所有已接手對話的面板變成空白（2026-08-28 新增）
+- [ ] **`SentimentGauge.vue` 恰好 1 點時畫出無說明的空白框**（2026-08-28 真實環境發現）：`hasContent`（`timeline.length > 0`）決定是否渲染內容區，但折線的條件是 `pointsOnly.length > 1`。timeline 恰好只有 1 個點時兩者不一致 —— 走進繪圖分支、卻畫不出折線，於是呈現一個 64px 高、沒有數字也沒有任何文字說明的空白框（`empty`／`analyzing`／`error` 三個文字分支都已被 `hasContent` 跳過）。缺少「有資料但不足以繪圖」這個狀態。⚠️ 這在自動恢復後特別容易發生，見下一條（2026-08-28 新增）
+- [ ] **自動恢復不補算先前失敗的批次**（2026-08-28 真實環境發現）：故障排除後由新客戶發言觸發的恢復走 `runIncremental()`，它只拿到**新訊息**，因此情緒 timeline 只會補上新訊息的點，先前失敗那批的歷史點永久缺席（除非重新 JOIN 走冷啟動全量重算）。`SENTIMENT_CHUNK_SIZE` 的註解只承諾了「手動 `retryBlock()` 會重新處理全部批次」，**未涵蓋自動恢復這條路徑**。當晚實測即因此讓 timeline 只剩 1 個點，連帶觸發上一條的空白框（2026-08-28 新增）
 
 **外部依賴**：無
 
@@ -1651,6 +1721,16 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 **驗收**：
 - [ ] 若換上 `VikiKnowledgeProvider`：知識庫快查與建議卡的 `score`／`confidence` 欄位開始出現真實數值（不再恆為 `null`），且 UI 不需改動即可正確顯示（2026-08-27 訂正：快查本身的功能驗收已移至 M2，本項僅驗證換 provider 後分數欄位的行為，見上方 M2 驗收與 `specs/002-suggestion-knowledge-search`）
 - [ ] 摘要可編輯後才寫入 Board
+- [ ] **UI 上已經有一行文案在對客服承諾這個尚未實作的行為** —— 中欄出口按鈕下方的
+      `conversation.exitHint`（`i18n/locales/zh-TW.json`）寫著「離開＝僅退出不寫入・
+      **結案＝產生摘要供確認後寫入**」，但 M2 的「結案」目前只等同「離開 ＋ 停止分析 ＋
+      隱藏面板」（`useConversationView.ts` 的 `closeConversation()`，M3 銜接註解在該處）。
+      **2026-08-28 使用者決策：文案先行、M3 補上行為**，不改成描述現況——改了 M3 又要改
+      回來，且中間那段時間文案會弱化成看不出兩個出口的差別（憲法 8.1）。
+      ⚠️ **M3 落地時 MUST 回頭確認這行文案與實際行為已經一致**；在那之前，客服按下「結案」
+      不會看到任何摘要編輯畫面，這是已知落差而非缺陷。⚠️ 連帶：`specs/003-analysis-trigger-policy`
+      的 SC-007（找未參與者驗證這行文案可讀性）也因此**被決定結案而非驗證通過**，
+      若 PM／SA 的文案審查未涵蓋兩個出口的可讀性，該項要重新提出
 - [ ] 重複觸發摘要為覆蓋而非新增
 - [ ] LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用
 - [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）
