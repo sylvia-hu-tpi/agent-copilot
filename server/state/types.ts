@@ -11,6 +11,10 @@
 import type { OrganizationChoice } from '../../shared/types/auth.js'
 import type { PresenceEntry } from '../../shared/types/conversation.js'
 import type { SentimentBlock, SuggestionBlock, SummaryBlock } from '../../shared/types/copilot.js'
+// ⚠️ 純型別匯入（執行期被抹除，不產生模組相依）——`AnalysisBlock` 的正典定義在
+//    server/services/copilot-analysis.ts，這裡刻意不重寫一份同值的 union，
+//    否則日後新增／更名區塊時會有兩個地方要改，而漏改的那一份不會報錯。
+import type { AnalysisBlock } from '../services/copilot-analysis.js'
 
 // ── BFF Session（§7.1 / §7.2）──────────────────────────────────────────
 
@@ -102,6 +106,50 @@ export interface CopilotAnalysisState {
   suggestionBlock: SuggestionBlock
   /** debounce 計時器用的最後一次觸發時間戳（epoch ms），非對外欄位，供 copilot-analysis.ts 內部使用 */
   lastAnalysisTriggerAt?: number
+  /**
+   * 失敗批次記憶（specs/003-analysis-trigger-policy，data-model.md §1）。
+   *
+   * ⚠️ **MUST 留在頂層，MUST NOT 併入任一 Block。**
+   *    `summary.updated`／`sentiment.updated`／`suggestion.updated` 三個 SSE 事件送的是
+   *    **整個 Block**（`publishBlock()`）——放進 Block 就等於把它送到瀏覽器，
+   *    也就等於默默改了對外契約，而型別檢查抓不到這個違反
+   *    （contracts/analysis-trigger-contract.md 1.1，驗法：`grep -n "failedBatches" shared/` 必須零結果）。
+   *
+   * 生命週期跟隨本狀態的 2 小時 sliding TTL，**不另訂保存期限**（FR-011）。
+   */
+  failedBatches?: Partial<Record<AnalysisBlock, FailedBatch>>
+}
+
+/**
+ * 「同一批訊息、同一個區塊已經失敗過」的記憶 —— specs/003-analysis-trigger-policy FR-005～FR-008。
+ *
+ * ⚠️ 鍵是「區塊 ＋ 該批**最後一則**訊息 id」，這不是任意選擇，是**自癒機制的支點**：
+ *    客戶再說一句話 → 該批的最後一則變了 → 不再是同一批 → FR-007 自動再試一次。
+ *    改成對話層級或時間窗，「對話還活著」的自癒就會消失，錯誤狀態會變成永久紅燈，
+ *    而 FR-010（不加第二層自動退避重試）就再也無法成立。
+ */
+export interface FailedBatch {
+  /** 這一批**最後一則客戶訊息**的 id —— 判定「是不是同一批」的鍵（FR-005） */
+  lastMessageId: string
+  /** 這一批最近一次失敗的時間（ISO8601），供診斷與日後可能的觀測需求 */
+  at: string
+  /** 這一批累計失敗次數 —— 手動重試也失敗時遞增 */
+  count: number
+  /**
+   * 客服手動重試（FR-008）或重新 JOIN 冷啟動（FR-015）已把這一批**放行**：
+   * 門檻不再擋它，但 `count` 保留。
+   *
+   * ⚠️ 為何不直接刪掉整筆（data-model.md §1「讀寫時機」表寫的是「清」）：
+   *    刪掉的話 `count` 每次都從 1 重新起算，而 `count` 唯一能超過 1 的路徑
+   *    正是「手動重試也失敗」—— 該欄位會變成恆為 1 的死欄位，
+   *    與它自己的定義互相矛盾。放行旗標讓兩個要求同時成立，代價是一個布林。
+   *
+   * ⚠️ 這裡 MUST 是**狀態**而非呼叫端的參數：分析入口有同區塊併發去重
+   *    （`runBlockDeduped()`），手動重試很可能被合併進一次進行中的分析，
+   *    屆時真正執行的是**先前那個**閉包 —— 用參數傳「這次要略過門檻」會在合併路徑上遺失，
+   *    症狀是「剛好有分析在跑的時候按重試，按了沒反應」。
+   */
+  released?: boolean
 }
 
 // ── 介面 ──────────────────────────────────────────────────────────────

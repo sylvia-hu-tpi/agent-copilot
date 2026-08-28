@@ -29,7 +29,7 @@ import type { KnowledgeHit } from '../../shared/types/knowledge.js'
 import type { WatchPriority } from '../sources/types.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
-import type { CopilotAnalysisState } from '../state/types.js'
+import type { CopilotAnalysisState, FailedBatch } from '../state/types.js'
 import { useAIProvider } from './ai/index.js'
 import type { FailureKind } from './ai/retry-policy.js'
 import {
@@ -120,6 +120,170 @@ async function ensureState(conversationId: string): Promise<CopilotAnalysisState
  */
 const stateLocks = new Map<string, Promise<unknown>>()
 
+// ── 失敗批次記憶（specs/003-analysis-trigger-policy §1、FR-005～FR-008、FR-011）─────
+//
+// ⚠️ 三個純存取函式，刻意匯出供測試直接引用。狀態放在 `CopilotAnalysisState` **頂層**
+//    （見 server/state/types.ts 的 `failedBatches` 註解），MUST NOT 併入任一 Block。
+
+/** 讀：這個區塊上次是在哪一批失敗的？從未失敗過（或狀態不存在）回 `null` */
+export function readFailedBatch(state: CopilotAnalysisState | null, block: AnalysisBlock): FailedBatch | null {
+  return state?.failedBatches?.[block] ?? null
+}
+
+/**
+ * 寫：記下「這個區塊、這一批」失敗了。同一批再次失敗時 `count` 遞增（手動重試也失敗的情形），
+ * 並清掉 `released` —— 放行只有一次機會，失敗了就重新擋住。
+ * @param batchLastMessageId 該批最後一則客戶訊息 id —— 自癒機制的支點，見 FailedBatch 註解
+ */
+export function markFailedBatch(
+  state: CopilotAnalysisState,
+  block: AnalysisBlock,
+  batchLastMessageId: string,
+): CopilotAnalysisState {
+  const prev = state.failedBatches?.[block]
+  const count = prev?.lastMessageId === batchLastMessageId ? prev.count + 1 : 1
+  return {
+    ...state,
+    failedBatches: {
+      ...state.failedBatches,
+      [block]: { lastMessageId: batchLastMessageId, at: nowIso(), count },
+    },
+  }
+}
+
+/** 清：分析成功時整筆移除 —— 這一批已經有結果了，記憶沒有存在意義 */
+export function clearFailedBatch(state: CopilotAnalysisState, block: AnalysisBlock): CopilotAnalysisState {
+  if (!state.failedBatches?.[block]) return state
+  const next = { ...state.failedBatches }
+  delete next[block]
+  return { ...state, failedBatches: next }
+}
+
+/**
+ * 放行：手動重試（FR-008）與重新 JOIN 冷啟動（FR-015）用。門檻不再擋這一批，
+ * 但 `count` 保留（見 `FailedBatch.released` 的說明 —— 刪掉整筆會讓 `count` 變成死欄位）。
+ */
+export function releaseFailedBatch(state: CopilotAnalysisState, block: AnalysisBlock): CopilotAnalysisState {
+  const prev = state.failedBatches?.[block]
+  if (!prev || prev.released) return state
+  return {
+    ...state,
+    failedBatches: { ...state.failedBatches, [block]: { ...prev, released: true } },
+  }
+}
+
+/**
+ * 「這一批是不是已經失敗過、而且還沒被放行」—— 各區塊分析進入點的門檻（FR-006）。
+ *
+ * ⚠️ `batchLastMessageId` 為 `null` 時一律回 `false`（放行）：沒有可判定的批次，
+ *    寧可下次再試一次，也不要用一個假的鍵擋住未來的分析。
+ */
+async function isBatchAlreadyFailed(
+  conversationId: string,
+  block: AnalysisBlock,
+  batchLastMessageId: string | null,
+): Promise<boolean> {
+  if (batchLastMessageId === null) return false
+  const state = await useStateStore().getAnalysisState(conversationId)
+  const failed = readFailedBatch(state, block)
+  return failed !== null && failed.lastMessageId === batchLastMessageId && !failed.released
+}
+
+/**
+ * 該批的判定鍵：這一批**最後一則客戶訊息**的 id（data-model.md §1）。
+ *
+ * ⚠️ 取「最後一則客戶訊息」而非「最後一則訊息」：客服自己送出的訊息 MUST NOT 觸發
+ *    重新分析（001 FR-005）。用整批的最後一則當鍵的話，客服回一句話就會讓鍵改變，
+ *    等同繞過失敗批次記憶再跑一輪 —— 而那條路不會報錯。
+ *
+ * ⚠️ 為何不用訊息 id 集合的雜湊：批次一律是時間上連續的尾段，最後一則不同即代表新的一批。
+ *    雜湊更精確但換不到任何行為差異，只多一份要維護的推導邏輯。
+ *
+ * 找不到（整批沒有客戶訊息）時回 `null`，呼叫端一律當作「無法判定」而放行。
+ */
+function batchAnchor(messages: Message[]): string | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i]
+    if (m?.sender.type === 'customer') return m.id
+  }
+  return null
+}
+
+// ── JOIN 界線（specs/003-analysis-trigger-policy 決策 3、FR-012）───────────────────
+
+/**
+ * 「這個對話還有沒有人 JOIN」的解析器。
+ *
+ * ⚠️ **本檔 MUST NOT 直接 import `copilot-runtime.ts`**（那裡才拿得到 `messageSource`）：
+ *    它經 `server/utils/imbrace-client.ts` 用到 Nitro auto-import 的 `useRuntimeConfig()`，
+ *    一旦被 `test/` 透過本檔間接拉進型別圖，`tsconfig.scripts.json` 會整份紅
+ *    —— 那份設定檔開頭已經把這個陷阱寫成警告。因此相依方向反過來：
+ *    由 `copilot-runtime.ts` 在載入時呼叫 `setJoinedResolver()` 注入進來。
+ *
+ * ⚠️ 預設是 `() => true`（不設門檻）：純單元測試不會載入 runtime，預設擋掉會讓
+ *    既有測試全部安靜地失去分析。裝配那一行被刪掉時同樣不會報錯，
+ *    因此由 `test/contract-guards.test.ts` 直接掃描 `copilot-runtime.ts` 守住它。
+ */
+type JoinedResolver = (conversationId: string) => boolean
+let resolveJoined: JoinedResolver = () => true
+
+/** 由 `copilot-runtime.ts` 於載入時呼叫；測試也用它注入特定情境（比照 `setAIProvider()`） */
+export function setJoinedResolver(resolver: JoinedResolver | null): void {
+  resolveJoined = resolver ?? (() => true)
+}
+
+// ── 同區塊併發去重（specs/003-analysis-trigger-policy §3、FR-009）──────────────────
+//
+// ⚠️ 粒度 MUST 是「對話 ＋ 區塊」，MUST NOT 是「對話」：三個區塊本來就是 `Promise.all`
+//    併行的（`runColdStart()`／`runIncremental()`），用對話粒度會把它們串成序列，
+//    直接拖慢 002 SC-001 的 3 秒／10 秒門檻。
+//
+// ⚠️ MUST NOT 與上面的 `stateLocks` 合併：那份保護的是**狀態寫入**不互相覆蓋，
+//    粒度是整個對話，而且它會把兩份分析**依序都跑完** —— 那是序列化，不是去重。
+
+/** 鍵：`${conversationId}:${block}` */
+const analysisInFlight = new Map<string, Promise<void>>()
+/** 同鍵。標記「這次跑完後還要再跑一次」——旗標而非佇列 */
+const analysisRerunPending = new Set<string>()
+
+/**
+ * 同一個 (對話, 區塊) 同時只跑一份分析；進行中又被觸發時**合併**成「跑完後再跑一次」
+ * （FR-009），MUST NOT 直接丟棄。
+ *
+ * **為何是旗標而非佇列**：合併語意是「至少再跑一次最新的」。累積 N 次觸發就跑 N 次
+ * 沒有意義 —— 分析的輸入是當下的狀態，不是被合併掉的那些事件。
+ *
+ * ⚠️ rerun 的那一次 **MUST 重新過一次失敗批次記憶檢查**（`fn` 自己會查，見各分析入口）。
+ *    否則「失敗 → 期間又被觸發 → rerun 無視記憶再跑一次」會在錯誤狀態上多出一輪呼叫，
+ *    把 SC-001 的「不超過 1 輪」打破。
+ */
+async function runBlockDeduped(
+  conversationId: string,
+  block: AnalysisBlock,
+  fn: () => Promise<void>,
+): Promise<void> {
+  const key = `${conversationId}:${block}`
+
+  const inFlight = analysisInFlight.get(key)
+  if (inFlight) {
+    analysisRerunPending.add(key)
+    return
+  }
+
+  const task = (async () => {
+    try {
+      await fn()
+    }
+    finally {
+      analysisInFlight.delete(key)
+    }
+  })()
+  analysisInFlight.set(key, task)
+  await task
+
+  if (analysisRerunPending.delete(key)) await runBlockDeduped(conversationId, block, fn)
+}
+
 async function updateAnalysisState(
   conversationId: string,
   mutate: (state: CopilotAnalysisState) => CopilotAnalysisState,
@@ -182,6 +346,13 @@ function logFailure(conversationId: string, block: AnalysisBlock, kind: FailureK
 
 // ── 步驟①：進入 analyzing，保留舊內容（呈現規則，data-model.md）──────────
 
+/**
+ * ⚠️ **這裡 MUST NOT 清除失敗批次記憶**（specs/003-analysis-trigger-policy data-model.md §1）。
+ *    直覺上會想寫在這裡（「開始分析就清掉」），但本函式是每次分析的**共同入口**，
+ *    包含那些「被記憶擋下之前就已排入」的分析 —— 寫在這裡會讓 FR-006 完全失效，
+ *    而且測試全綠、型別全過，只有真實故障時呼叫量不降反升。
+ *    記憶只在「有理由相信這次會不一樣」時才清：手動重試（FR-008）、冷啟動（FR-015）、分析成功。
+ */
 async function beginAnalyzing(conversationId: string, block: AnalysisBlock): Promise<void> {
   const next = await updateAnalysisState(conversationId, (state) => {
     const at = nowIso()
@@ -241,12 +412,24 @@ async function publishRetrying(
   await publishBlock(conversationId, block, next)
 }
 
-async function finishBlockError(conversationId: string, block: AnalysisBlock, err: unknown): Promise<void> {
+/**
+ * @param batchLastMessageId 這一批的判定鍵（`batchAnchor()`）。**MUST 由呼叫端傳入** ——
+ *   本函式看不到那一批訊息。為 `null` 時**不寫入**失敗批次記憶：沒有可判定的批次，
+ *   寧可下次再試一次，也不要用一個假的鍵擋住未來的分析（data-model.md §1）。
+ */
+async function finishBlockError(
+  conversationId: string,
+  block: AnalysisBlock,
+  err: unknown,
+  batchLastMessageId: string | null,
+): Promise<void> {
   const kind: FailureKind = err instanceof RetryExhaustedError ? err.kind : 'permanent'
   const firstFailureAt = err instanceof RetryExhaustedError ? err.firstFailureAt : nowIso()
   logFailure(conversationId, block, kind, err)
 
-  const next = await updateAnalysisState(conversationId, (state) => {
+  const next = await updateAnalysisState(conversationId, (input) => {
+    // FR-005：記下「這個區塊、這一批」失敗了。同一批再次失敗（手動重試也失敗）時 count 遞增。
+    const state = batchLastMessageId === null ? input : markFailedBatch(input, block, batchLastMessageId)
     const at = nowIso()
     if (block === 'summary') {
       return {
@@ -294,29 +477,40 @@ async function analyzeSummary(
 ): Promise<void> {
   if (input.history.length === 0) return
 
-  await beginAnalyzing(conversationId, 'summary')
+  await runBlockDeduped(conversationId, 'summary', async () => {
+    const anchor = batchAnchor(input.history)
+    // FR-006：這一批在這個區塊已經失敗過 → 不再自動重試。
+    // ⚠️ MUST 在 beginAnalyzing() **之前** —— 之後才檢查等於已經對外宣告「分析中」，
+    //    畫面會閃一下「分析中」再跳回錯誤（且 FR-006 的呼叫量目標也達不到）。
+    // ⚠️ runBlockDeduped() 的 rerun 會重新執行整個 callback，因此這道檢查會再過一次
+    //    （契約不變式 B 的推論三）。
+    if (await isBatchAlreadyFailed(conversationId, 'summary', anchor)) return
 
-  try {
-    const outcome = await withRetry(
-      async () => parseConversationSummary(await useAIProvider().summarize(input)),
-      { onRetry: info => publishRetrying(conversationId, 'summary', info) },
-    )
+    await beginAnalyzing(conversationId, 'summary')
 
-    const next = await updateAnalysisState(conversationId, state => ({
-      ...state,
-      summaryBlock: {
-        status: 'ready' as const,
-        summary: outcome.value,
-        retryAttempt: undefined,
-        firstFailureAt: undefined,
-        updatedAt: nowIso(),
-      },
-    }))
-    await publishBlock(conversationId, 'summary', next)
-  }
-  catch (err) {
-    await finishBlockError(conversationId, 'summary', err)
-  }
+    try {
+      const outcome = await withRetry(
+        async () => parseConversationSummary(await useAIProvider().summarize(input)),
+        { onRetry: info => publishRetrying(conversationId, 'summary', info) },
+      )
+
+      const next = await updateAnalysisState(conversationId, state => ({
+        // 成功即清除該區塊的失敗批次記憶
+        ...clearFailedBatch(state, 'summary'),
+        summaryBlock: {
+          status: 'ready' as const,
+          summary: outcome.value,
+          retryAttempt: undefined,
+          firstFailureAt: undefined,
+          updatedAt: nowIso(),
+        },
+      }))
+      await publishBlock(conversationId, 'summary', next)
+    }
+    catch (err) {
+      await finishBlockError(conversationId, 'summary', err, anchor)
+    }
+  })
 }
 
 // ── 情緒 sparkline ────────────────────────────────────────────────────
@@ -376,7 +570,8 @@ async function finishSentimentSuccess(
     }
     const timeline = sortByAt([...byId.values()])
     return {
-      ...state,
+      // 成功即清除該區塊的失敗批次記憶
+      ...clearFailedBatch(state, 'sentiment'),
       sentimentBlock: {
         status: 'ready' as const,
         timeline,
@@ -395,28 +590,34 @@ async function analyzeSentimentBatch(conversationId: string, messages: Message[]
   const markerMessages = messages.filter(isAttachmentOnlyCustomerMessage)
 
   if (textMessages.length === 0) {
+    // 純附件輪不呼叫模型，因此不受失敗批次記憶約束 —— 它不會失敗，也不該被擋
     if (markerMessages.length > 0) await mergeMarkersOnly(conversationId, markerMessages)
     return
   }
 
-  await beginAnalyzing(conversationId, 'sentiment')
+  await runBlockDeduped(conversationId, 'sentiment', async () => {
+    const anchor = batchAnchor(messages)
+    if (await isBatchAlreadyFailed(conversationId, 'sentiment', anchor)) return
 
-  try {
-    const allPoints: SentimentPoint[] = []
-    // 依序處理每一小批（見 SENTIMENT_CHUNK_SIZE 的說明）——刻意不平行送出，
-    // 避免對話很長時一次對同一個 agent 開幾十條並發請求。
-    for (const part of chunk(textMessages, SENTIMENT_CHUNK_SIZE)) {
-      const outcome = await withRetry(
-        async () => parseSentimentPoints(await useAIProvider().analyzeSentiment({ messages: part })),
-        { onRetry: info => publishRetrying(conversationId, 'sentiment', info) },
-      )
-      allPoints.push(...outcome.value)
+    await beginAnalyzing(conversationId, 'sentiment')
+
+    try {
+      const allPoints: SentimentPoint[] = []
+      // 依序處理每一小批（見 SENTIMENT_CHUNK_SIZE 的說明）——刻意不平行送出，
+      // 避免對話很長時一次對同一個 agent 開幾十條並發請求。
+      for (const part of chunk(textMessages, SENTIMENT_CHUNK_SIZE)) {
+        const outcome = await withRetry(
+          async () => parseSentimentPoints(await useAIProvider().analyzeSentiment({ messages: part })),
+          { onRetry: info => publishRetrying(conversationId, 'sentiment', info) },
+        )
+        allPoints.push(...outcome.value)
+      }
+      await finishSentimentSuccess(conversationId, allPoints, markerMessages)
     }
-    await finishSentimentSuccess(conversationId, allPoints, markerMessages)
-  }
-  catch (err) {
-    await finishBlockError(conversationId, 'sentiment', err)
-  }
+    catch (err) {
+      await finishBlockError(conversationId, 'sentiment', err, anchor)
+    }
+  })
 }
 
 // ── 建議卡（specs/002-suggestion-knowledge-search）──────────────────────
@@ -517,6 +718,16 @@ async function analyzeSuggestions(
   conversationId: string,
   input: { history: Message[], aiReplies: boolean },
 ): Promise<void> {
+  await runBlockDeduped(conversationId, 'suggestions', () => analyzeSuggestionsOnce(conversationId, input))
+}
+
+async function analyzeSuggestionsOnce(
+  conversationId: string,
+  input: { history: Message[], aiReplies: boolean },
+): Promise<void> {
+  const anchor = batchAnchor(input.history)
+  if (await isBatchAlreadyFailed(conversationId, 'suggestions', anchor)) return
+
   await beginAnalyzing(conversationId, 'suggestions')
 
   const query = input.history
@@ -556,7 +767,8 @@ async function analyzeSuggestions(
     const cards = forceNullConfidence(whitelisted, knowledgeHits)
 
     const next = await updateAnalysisState(conversationId, state => ({
-      ...state,
+      // 成功即清除該區塊的失敗批次記憶
+      ...clearFailedBatch(state, 'suggestions'),
       suggestionBlock: {
         status: 'ready' as const,
         cards,
@@ -569,7 +781,7 @@ async function analyzeSuggestions(
     await publishBlock(conversationId, 'suggestions', next)
   }
   catch (err) {
-    await finishBlockError(conversationId, 'suggestions', err)
+    await finishBlockError(conversationId, 'suggestions', err, anchor)
   }
 }
 
@@ -580,6 +792,12 @@ export async function runColdStart(conversationId: string, history: Message[], a
   await ensureState(conversationId)
   // FR-009：客戶尚無任何發言（含純附件）時維持 empty，不呼叫 AI
   if (!history.some(m => m.sender.type === 'customer')) return
+
+  // FR-015：重新 JOIN 走冷啟動 —— 三個區塊的失敗批次記憶一併放行。
+  // 客服刻意重新接手這個對話，本身就是「有理由相信這次會不一樣」（data-model.md §1）。
+  await updateAnalysisState(conversationId, state =>
+    releaseFailedBatch(releaseFailedBatch(releaseFailedBatch(state, 'summary'), 'sentiment'), 'suggestions'),
+  )
 
   await Promise.all([
     analyzeSummary(conversationId, { history, previousSummary: undefined }),
@@ -623,6 +841,19 @@ export async function runIncremental(
   if (newCustomerMessages.length === 0) return
   const state = await useStateStore().getAnalysisState(conversationId)
   if (!state) return
+
+  // ⚠️ **2026-08-28 修正（specs/003-analysis-trigger-policy FR-012）**：
+  //    上面那道「有沒有分析狀態」的門檻回答不了「現在還有沒有人 JOIN」——
+  //    `CopilotAnalysisState` 有 2 小時 sliding TTL，LEAVE 不會清掉它，
+  //    於是客服按下離開之後分析照跑（SC-002 失效，且完全不報錯）。
+  //
+  //    ⚠️ 檢查點在 debounce **觸發的當下**，不是排入時：這涵蓋所有路徑
+  //    （心跳補跑、onMessages 增量、背景名額釋出後的重排），判斷的也是觸發時的真實狀態。
+  //    `cancelPendingAnalysis()` 只是清理層，擋不住背景名額滿時自己重排的那條路。
+  //
+  //    ⚠️ 它是**對話層級**的聚合，因此 FR-014「同事仍 JOIN 時我的 LEAVE 不停止分析」
+  //    不需要額外邏輯。已在飛的分析不中斷 —— 本門檻只擋「排入新的」。
+  if (!resolveJoined(conversationId)) return
 
   if (priority === 'background') {
     if (backgroundInFlight.size >= BACKGROUND_CONCURRENCY_LIMIT && !backgroundInFlight.has(conversationId)) {
@@ -686,6 +917,12 @@ export async function retryBlock(
   aiReplies: boolean,
 ): Promise<void> {
   await ensureState(conversationId)
+
+  // FR-008：手動重試是「客服明確要求再試一次」—— 放行該區塊的失敗批次記憶，
+  // 否則 FR-006 的門檻會把這次重試也一併擋下，重試按鈕變成完全無效（且不報錯）。
+  // ⚠️ 只放行這一個區塊：另一區塊的記憶與本次操作無關（contracts/copilot-retry-api.md）。
+  await updateAnalysisState(conversationId, state => releaseFailedBatch(state, block))
+
   if (block === 'summary') {
     await analyzeSummary(conversationId, { history, previousSummary: undefined })
   }
@@ -768,4 +1005,19 @@ export function scheduleIncremental(
   }, delayMs)
   timer.unref?.()
   debounceTimers.set(conversationId, { timer, pending, priority: mergedPriority, aiReplies })
+}
+
+/**
+ * 清掉這個對話尚未執行、等待中的分析排程（specs/003-analysis-trigger-policy FR-013）。
+ *
+ * ⚠️ **這是清理層，不是保證層。** 真正的保證是 `runIncremental()` 在 debounce
+ *    觸發的當下檢查 JOIN 狀態（見該處註解）—— 只做清理會漏掉「背景名額滿時
+ *    `runIncremental()` 自己重新 `scheduleIncremental()`」那條路，那是清理之後才排的。
+ *    反過來只做保證層則行為正確、但留著一個空轉的計時器。兩層都要。
+ */
+export function cancelPendingAnalysis(conversationId: string): void {
+  const pending = debounceTimers.get(conversationId)
+  if (!pending) return
+  clearTimeout(pending.timer)
+  debounceTimers.delete(conversationId)
 }

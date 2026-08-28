@@ -164,6 +164,21 @@ export class PollingMessageSource implements MessageSource {
   }
 
   /**
+   * specs/003-analysis-trigger-policy 決策 3：分析管線的 JOIN 界線（FR-012）判斷依據，
+   * 與上面的 `getPriority()` 走**同一份** `aggregateState()`，不另訂一套規則。
+   *
+   * 它天生是**對話層級**的（跑過該對話所有訂閱者），因此 FR-014
+   * 「同事仍 JOIN 時我的 LEAVE 不停止分析」不需要任何額外邏輯，是同一個聚合的自然結果。
+   *
+   * 目前無任何訂閱者時回傳 `false`（安全預設，比照 `getPriority()` 的 `'background'`）。
+   */
+  isJoined(conversationId: string): boolean {
+    const entry = this.entries.get(conversationId)
+    if (!entry) return false
+    return this.aggregateState(entry).joined
+  }
+
+  /**
    * 送出訊息後呼叫：把本地錨點推到最新，避免自己送的那則被當成「別人的新訊息」
    * 再 fan-out 一次。
    */

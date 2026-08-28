@@ -27,6 +27,7 @@ import { imbraceClientForPolling } from '../utils/imbrace-client.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic, organizationTopic } from '../state/types.js'
 import { resolveBusinessUnitId } from './business-unit.js'
+import { setJoinedResolver } from './copilot-analysis.js'
 import {
   borrowCredential,
   hasForegroundOperator,
@@ -62,6 +63,33 @@ export function useCopilotRuntime(orgId: string): CopilotRuntime {
   runtime.listPoller.start()
   return runtime
 }
+
+/**
+ * 該對話目前是否仍有任何人 JOIN（我方系統內）—— specs/003-analysis-trigger-policy 決策 3。
+ *
+ * ⚠️ 不需要 `orgId`：一個對話只屬於一個組織，其餘組織的 `messageSource` 對它沒有 entry
+ *    而回傳 `false`，因此「任一組織說 true 即為 true」與「先找出正確的組織再問」等價，
+ *    但不必把 orgId 一路穿過 `copilot-analysis.ts` 的每一個入口。
+ */
+export function isConversationJoined(conversationId: string): boolean {
+  for (const runtime of runtimes().values()) {
+    if (runtime.messageSource.isJoined(conversationId)) return true
+  }
+  return false
+}
+
+/**
+ * ⚠️ **裝配點，MUST NOT 刪除。** `copilot-analysis.ts` 需要上面那個判斷來守住 FR-012 的
+ *    JOIN 界線，但它**不能**反向 import 本檔：本檔經 `server/utils/imbrace-client.ts`
+ *    用到 Nitro auto-import 的 `useRuntimeConfig()`，一旦被 `test/` 間接拉進型別圖，
+ *    `tsconfig.scripts.json` 會整份紅（該檔開頭已把這個陷阱寫成警告）。
+ *    因此相依方向反過來，由這裡在載入時注入。
+ *
+ *    這一行被刪掉時解析器會退回「一律視為已 JOIN」，症狀是 LEAVE 之後分析照跑、
+ *    面板事件照送 —— **不報錯、不會有型別錯誤**。`test/contract-guards.test.ts`
+ *    因此直接掃描本檔是否仍有這行呼叫。
+ */
+setJoinedResolver(isConversationJoined)
 
 /** 測試與程序關閉用 */
 export async function disposeAllRuntimes(): Promise<void> {

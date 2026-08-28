@@ -19,6 +19,7 @@ import { controlFromMode } from '../../shared/types/conversation.js'
 import type { CopilotEvent } from '../../shared/types/events.js'
 import { STREAM_HEARTBEAT_MS } from '../../shared/types/events.js'
 import {
+  cancelPendingAnalysis,
   catchUpSummaryIfStale,
   lastCoveredMessageId,
   newCustomerMessagesSince,
@@ -33,7 +34,12 @@ import { conversationTopic, organizationTopic } from '../state/types.js'
 import type { Unsubscribe } from '../state/types.js'
 import { assertConversationId } from '../utils/conversation-param.js'
 import { requireActiveBffSession } from '../utils/session.js'
-import { createWatchRegistry, isStreamControl, streamControlTopic } from '../utils/stream-control.js'
+import {
+  createWatchRegistry,
+  isStreamControl,
+  shouldForwardToConnection,
+  streamControlTopic,
+} from '../utils/stream-control.js'
 
 export default defineEventHandler(async (event) => {
   const session = await requireActiveBffSession(event)
@@ -140,19 +146,41 @@ export default defineEventHandler(async (event) => {
       presence: await snapshotOf(store, conversationId, { mode }),
     })
 
+    // ⚠️ **這條連線對這個對話有沒有 JOIN**（specs/003-analysis-trigger-policy 不變式 C）。
+    //    下面兩段補跑與快照都以它為門檻。用 `joined` 參數而非 `watchers.isJoined()`：
+    //    兩者此刻必然相同（註冊表在 attach 之前就寫入了），但參數才是這一次 attach 的真相。
+    const viewerJoined = joined
+
     // 情緒面板重連快照 + 補跑（specs/001-sentiment-panel FR-010，T010c）——
     // ⚠️ 純 SSE 推播只在狀態變動時發事件；若離開期間沒有新客戶發言就不會有任何事件，
     //    重新連線的前端會永遠拿不到已保留的結果，因此必須像 control.updated 一樣主動送一次快照。
-    void sendAnalysisSnapshotAndResume(conversationId, priority, controlFromMode(mode).aiReplies)
+    //
+    // ⚠️ **未 JOIN 時整段跳過**（FR-003、FR-016a）：快照走的是 `send()`、**不經 `forward()`**，
+    //    因此 `forward()` 裡的過濾對它完全無效。漏掉的症狀是「未接手的客服一連上線就收到
+    //    完整三個 Block」—— 畫面上雖然沒有面板，資料已經在他的瀏覽器裡，SC-006 在伺服器端不成立。
+    if (viewerJoined) {
+      void sendAnalysisSnapshotAndResume(conversationId, priority, controlFromMode(mode).aiReplies)
+    }
 
     // US4 AC#5：客服重新聚焦（切回前景）背景對話時，摘要才補跑（FR-020、research.md #10）——
     // 與上面的重連快照並列呼叫，不是同一件事：快照送的是「已有的結果」，這裡補的是
     // 「背景期間被跳過、還沒生成」的摘要。
-    if (priority === 'foreground') {
+    // ⚠️ 同樣受 JOIN 門檻約束（003 FR-004 已補上「限已 JOIN」限定語）——它也是一條會呼叫 AI 的路徑。
+    if (priority === 'foreground' && viewerJoined) {
       void runtime.messageSource.fetchSince(conversationId)
         .then(history => catchUpSummaryIfStale(conversationId, history))
         .catch(err => console.error(`[stream] ${conversationId} 摘要補跑失敗:`, err instanceof Error ? err.message : String(err)))
     }
+
+    // FR-013 的清理層：這一次 watch 帶著 `joined: false` 抵達（客服按下離開／結案時，
+    // 前端會**立刻**補送一次 `beat('viewing')`，一個往返內就到，SC-002 的 5 秒門檻有餘裕），
+    // 就把還沒觸發的 debounce 排程清掉，不留一個空轉的計時器。
+    //
+    // ⚠️ 判斷用 `messageSource.isJoined()`（對話層級聚合）而非本次的 `joined`：
+    //    同事仍 JOIN 時我的離開 MUST NOT 停掉整個對話的分析（FR-014）。
+    // ⚠️ 選在這一層而不是 `leave.post.ts`：後者維持「一行未動」（憲法七的檢核前提），
+    //    `server/sources/` 也不必反向相依 `server/services/`。
+    if (!runtime.messageSource.isJoined(conversationId)) cancelPendingAnalysis(conversationId)
 
     return () => {
       offTopic()
@@ -198,6 +226,24 @@ export default defineEventHandler(async (event) => {
    *    客服會在 PresenceBar 上看到自己 —— 而 PresenceBar 要回答的是「還有誰」。
    */
   async function forward(conversationId: string, evt: CopilotEvent): Promise<void> {
+    // ⚠️ 面板可見 ⟺ 該客服已 JOIN（specs/003-analysis-trigger-policy 不變式 C、FR-016a）。
+    //    未 JOIN 時面板整欄不存在，這三個事件沒有消費者 —— 送過去只會在背景更新一份
+    //    看不見的 store，重新 JOIN 或切換對話時閃出一份「不知何時來的」舊內容。
+    //
+    // ⚠️ **過濾範圍恰為這三個**。`messages.appended`／`presence.updated`／`control.updated`／
+    //    `conversation.updated`／`session.*`／`stream.heartbeat` 服務的是中欄與連線本身，
+    //    與 JOIN 無關（US2 AC#3 明文要求中欄一切照常）；
+    //    尤其 `stream.heartbeat` 過濾掉會直接讓連線被中間 proxy 切斷。
+    //    完整清單以 contracts/analysis-trigger-contract.md 不變式 C 的表格為準。
+    //
+    // ⚠️ 判斷資料取自 `WatchRegistration.joined`（`watchers.isJoined()`）——
+    //    那是「這條連線對這個對話有沒有 JOIN」的**唯一**真相來源，
+    //    MUST NOT 另立第二份記錄（兩份必然不同步，症狀極難追查）。
+    //
+    // ⚠️ 這裡擋的只是**即時推播**。連線建立時的分析快照走 `send()`、不經本函式，
+    //    在 `attach()` 裡另外擋（見該處）—— 只擋一條等於沒擋。
+    if (!shouldForwardToConnection(evt.type, watchers.isJoined(conversationId))) return
+
     if (evt.type !== 'presence.updated') return send(evt)
 
     const personal = await snapshotOf(store, conversationId, {
@@ -232,8 +278,10 @@ export default defineEventHandler(async (event) => {
   //   ② 若走獨立的 fire-and-forget（不經 enqueue），會跟稍後客服自己送出的第一次 presence
   //      心跳（觸發同一個 convId 的 attach()）產生競態：兩者都可能通過 `watched.has()` 檢查、
   //      各自建立一份訂閱，其中一份會變成孤兒（`watched` 只留得住最後寫入的那份 cleanup）。
-  //      經 `enqueue()` 排進同一條佇列，可確保這裡永遠先跑完，客服的第一次心跳（foreground
-  //      升級，見 attach() 的 watched.get(convId)?.() 一律先解舊再建新）才不會撞期。
+  //      經 `enqueue()` 排進同一條佇列，可確保這裡永遠先跑完，客服的第一次心跳才不會撞期。
+  //      ⚠️ 2026-08-28 起 `watch()` 只在 `{priority, joined}` 真的改變時才解舊建新
+  //      （specs/003-analysis-trigger-policy 不變式 A）—— 上面的競態因此更不可能發生，
+  //      但 `enqueue()` 仍是必要的：`restoreJoined()` 與第一次心跳的**先後**才是這裡要保證的東西。
   enqueue(() => watchers.restoreJoined(() => store.listJoinedConversations(session.operatorId)))
 
   const heartbeat = setInterval(() => {
