@@ -98,7 +98,7 @@ description: "分析管線的觸發與失敗政策 —— 實作任務清單"
 - [x] T017 [US1] 在 `server/services/copilot-analysis.ts` 的 `finishBlockError()` 新增第四個參數 `batchLastMessageId: string | null`，失敗時寫入失敗批次記憶；為 `null` 時不寫入（沒有可判定的批次，寧可下次再試也不要用假的鍵擋住未來的分析，data-model.md §1）
 - [x] T018 [US1] 在 `server/services/copilot-analysis.ts` 的三個分析入口（`analyzeSummary` / `analyzeSentimentBatch` / `analyzeSuggestions`）算出該批的 `lastMessageId` 並向下傳給 `finishBlockError()`；同時在 `beginAnalyzing()` **之前**加入失敗批次記憶檢查，命中則直接 return（FR-005、FR-006）
 - [x] T019 [US1] 在 `server/services/copilot-analysis.ts` 用 T011 的 `runBlockDeduped()` 包住三個分析入口，實作 FR-009 的合併與 rerun；rerun 前 MUST 重新讀一次失敗批次記憶
-- [x] T020 [US1] 在 `server/services/copilot-analysis.ts` 的 `retryBlock()` 開頭清除該區塊的失敗批次記憶（FR-008），在 `runColdStart()` 開頭清除全部三個區塊的失敗批次記憶（FR-015）
+- [x] T020 [US1] 在 `server/services/copilot-analysis.ts` 的 `retryBlock()` 開頭放行該區塊的失敗批次記憶（FR-008），在 `runColdStart()` 開頭放行全部三個區塊的失敗批次記憶（FR-015）。⚠️ 實作為 `releaseFailedBatch()` 設 `released` 旗標而非刪除整筆（data-model.md §1）
 - [x] T021 [US1] 以 `grep -rn "setTimeout\|setInterval" server/services/copilot-analysis.ts` 與 `grep -rn "自動重試\|秒後重試" app/ i18n/ server/` 確認**沒有**任何自動退避重試的計時器或「X 秒後自動重試」文案（FR-010）；若有殘留一併移除。⚠️ 這是「確認型」任務，**MUST 把實際執行的指令與輸出貼進該 phase 的 commit 說明**，否則沒有任何痕跡能證明它跑過
 
 **Checkpoint**: US1 可獨立驗收 —— 注入故障、靜置 10 分鐘、統計呼叫次數
@@ -261,7 +261,7 @@ description: "分析管線的觸發與失敗政策 —— 實作任務清單"
 ```bash
 # 三份測試檔互不相干，可同時撰寫（先確認會失敗）：
 Task: "T012 test/stream-control-heartbeat.test.ts —— 心跳去重的完整表格"
-Task: "T013 test/analysis-failure-memory.test.ts —— 失敗批次記憶與三個清除點"
+Task: "T013 test/analysis-failure-memory.test.ts —— 失敗批次記憶與三個解除點"
 Task: "T014 test/copilot-analysis.test.ts —— FR-009 併發去重與 rerun"
 
 # 實作階段：T017～T021 全在 copilot-analysis.ts，MUST 依序，不可平行

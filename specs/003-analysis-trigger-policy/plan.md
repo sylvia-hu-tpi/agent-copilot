@@ -63,7 +63,7 @@ MUST NOT 做成「按下就自動寫」或「閒置逾時自動寫」。M3 的�
 可被 vitest 直接 import 的模組（`server/utils/stream-control.ts`、`server/services/copilot-analysis.ts`、
 `server/sources/polling-message-source.ts`），不需要碰 Nitro auto-import。
 - 單元：心跳去重（相同 `{priority, joined}` 不 attach／任一改變則 attach）、失敗批次記憶的存取與三個
-  清除點、同區塊併發去重與 rerun、`isJoined()` 聚合、`forward()` 的分析事件過濾、**分析快照對未 JOIN
+  解除點、同區塊併發去重與 rerun、`isJoined()` 聚合、`forward()` 的分析事件過濾、**分析快照對未 JOIN
   連線整段跳過**、`control.updated` 觸發的對話詳情重讀、收合偏好的讀寫
 - 整合：對假 gateway 的「故障注入 → 靜置 → 統計嘗試次數」（SC-001 的自動化版本）
 - `npm run smoke:realtime` 需擴充「LEAVE 後不再有分析事件」（SC-002）
@@ -157,9 +157,9 @@ server/
 │   │                              # ⚠️ FR-013 的呼叫點：watchConversation() 之後若 isJoined()
 │   │                              #    為 false 即 cancelPendingAnalysis()（leave.post.ts 維持不動）
 │   └── conversations/[id]/
-│       └── copilot/retry.post.ts  # 不改形狀；經 retryBlock() 連帶清除失敗批次記憶（FR-008）
+│       └── copilot/retry.post.ts  # 不改形狀；經 retryBlock() 連帶放行失敗批次記憶（FR-008）
 ├── services/
-│   └── copilot-analysis.ts        # ⚠️ 決策 2/5/8 主戰場：failedBatches 讀寫與三個清除點、
+│   └── copilot-analysis.ts        # ⚠️ 決策 2/5/8 主戰場：failedBatches 讀寫與三個解除點、
 │                                  #    per-(對話,區塊) 併發去重與 rerun、cancelPendingAnalysis()、
 │                                  #    runIncremental() 的 isJoined() 門檻
 ├── sources/
@@ -185,7 +185,7 @@ i18n/locales/zh-TW.json            # 收合／展開、「全部重試」、兩�
 
 test/
 ├── stream-control-heartbeat.test.ts    # 新增：心跳去重（FR-001、FR-002）
-├── analysis-failure-memory.test.ts     # 新增：失敗批次記憶、三個清除點、rerun 仍過記憶檢查
+├── analysis-failure-memory.test.ts     # 新增：失敗批次記憶、三個解除點、rerun 仍過記憶檢查
 ├── analysis-join-boundary.test.ts      # 新增：isJoined() 門檻與 FR-014 對話層級
 ├── stream-analysis-visibility.test.ts  # 新增：未 JOIN 連線過濾三個分析事件、其餘事件照送（FR-016a）
 ├── contract-guards.test.ts             # 新增：shared/ 不得出現 failedBatches（契約 1.1）
