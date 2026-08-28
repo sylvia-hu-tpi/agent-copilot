@@ -189,6 +189,18 @@ UI 依此欄位是否為 `null` 決定顯示或留空 —— 來源從 iMBrace �
 
 同一對話重複產生摘要 **MUST** 覆蓋而非新增。以 `conversation_id` 為唯一鍵，寫入前先 `search()` 再決定 `createItem` / `updateItem`。詳見 `ARCHITECTURE.md` §13.4。
 
+> ⚠️ **待修憲（MAJOR，MUST 在 M3 開工前完成）—— 2026-08-28 由 `specs/003-analysis-trigger-policy` 提出。**
+>
+> 本條現行的「以 `conversation_id` 為唯一鍵覆蓋」與 M3 的結案流程**互相牴觸**：
+> 同一個對話可以被不同人在不同時間結案多次（客戶回頭再問一次是常態），
+> 以對話 id 覆蓋會讓前一次的結案紀錄消失，而那是真實發生過的事實。
+>
+> 修訂方向：**主鍵改為 uuid ＋ 以「草稿 id」為冪等鍵**。後者保留本條原本要防的東西
+> （寫入逾時後客服重按，不該產生兩筆重複紀錄）—— 換的是唯一性的**範圍**，不是取消冪等。
+>
+> ⚠️ **MUST NOT 在 003 內修憲**（B.4 建議 MAJOR 變更於里程碑交界進行，M2→M3 交界正合適）；
+> 003 完全不寫入 Data Board。詳見 `specs/003-analysis-trigger-policy/spec.md`「待修憲事項」。
+
 ---
 
 ## 第六條：資源使用

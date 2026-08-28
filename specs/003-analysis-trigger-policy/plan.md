@@ -188,13 +188,20 @@ test/
 ├── analysis-failure-memory.test.ts     # 新增：失敗批次記憶、三個清除點、rerun 仍過記憶檢查
 ├── analysis-join-boundary.test.ts      # 新增：isJoined() 門檻與 FR-014 對話層級
 ├── stream-analysis-visibility.test.ts  # 新增：未 JOIN 連線過濾三個分析事件、其餘事件照送（FR-016a）
-├── copilot-panel-collapse.test.ts      # 新增：可見性＝viewerJoined、per-對話收合偏好（FR-016/017a）
-├── copilot-retry-all.test.ts           # 新增：「全部重試」只打 error 區塊（FR-018/019）
 ├── contract-guards.test.ts             # 新增：shared/ 不得出現 failedBatches（契約 1.1）
 ├── analysis-trigger-integration.test.ts # 新增：故障注入 → 靜置 → 統計嘗試次數（SC-001）
 ├── stream-reconnect-background.test.ts # ⚠️ 既有，決策 1 最可能撞到
-└── presence-away-joined.test.ts        # ⚠️ 既有，同上
+├── presence-away-joined.test.ts        # ⚠️ 既有，同上
+└── nuxt/                               # ⚠️ 載入 app/ 的測試 MUST 放這裡，見下方說明
+    ├── copilot-panel-collapse.test.ts  # 新增：可見性＝viewerJoined、per-對話收合偏好（FR-016/017a）
+    └── copilot-retry-all.test.ts       # 新增：「全部重試」只打 error 區塊（FR-018/019）
 ```
+
+⚠️ **兩支前端測試放在 `test/nuxt/` 而非 `test/`（2026-08-28 實作時訂正）**：它們直接載入
+`app/composables/`，而管 `test/` 的 `tsconfig.scripts.json` 是 Node 環境、沒有 DOM 也沒有
+auto-import 宣告，放在 `test/` 底下 `npm run typecheck` 必紅。`test/nuxt/` 是 Nuxt 預留的目錄，
+已列在 `.nuxt/tsconfig.app.json` 的 include 裡，由 `nuxt typecheck` 以**真正的** auto-import 檢查
+（既有慣例：`test/nuxt/stream-store.test.ts`；理由寫在 `tsconfig.scripts.json` 檔尾）。
 
 **Structure Decision**：沿用既有三層結構（`app/`／`server/`／`shared/`），不新增任何目錄或分層。
 新增的檔案是一個 Vue 元件（`PanelHeader.vue`）、一個 composable（`useCopilotPanel.ts`）

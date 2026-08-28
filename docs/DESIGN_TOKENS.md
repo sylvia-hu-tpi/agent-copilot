@@ -286,9 +286,12 @@ box-shadow: var(--shadow)
 > （字夠大、可信），**不是**像原本的 380 那樣經 `dc-import` 逐字擷取。若日後要據此做精確版面計算，
 > 建議依文末附錄流程重新擷取一次 2a 的 wrapper HTML 確認。
 >
-> ⚠️ **實作端仍是 380**：`app/pages/c/[conversationId].vue` 的 `copilotWidth` 預設值為 `ref(380)`。
-> 拖曳範圍 320–520 兩者皆相容，因此這個落差**只影響「首次開啟時的預設寬度」**，不影響任何行為。
-> 已排入 `specs/003-analysis-trigger-policy` T031 一併修正。
+> ✅ **實作端已對齊**：`app/pages/c/[conversationId].vue` 的 `copilotWidth` 預設值已於 2026-08-28
+> 由 `ref(380)` 改為 `ref(420)`（`specs/003-analysis-trigger-policy` T031）。拖曳範圍 320–520 不變。
+>
+> ⚠️ **收合態沒有獨立的欄寬 token**：收合時整欄改渲染窄直條（見 `03-workspace_toggleCopilot.png`），
+> 寬度由元件自己決定，`copilotWidth` 只在展開態生效 —— 不要為收合態另立一個寬度 token，
+> 那會變成第二個需要跟畫布同步的數字。
 - **五個區塊皆可獨立折疊**（wrapper 原文：「五區塊皆可折疊」）
 - 支援淺色／深色主題
 - 支援「載入骨架」與「準備結案收合」兩種特殊狀態
