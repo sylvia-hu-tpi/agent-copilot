@@ -1387,11 +1387,28 @@ boards.linkItems()                                      # 關聯至 Contact
 
 > 右欄的五個區塊以 §14.1.1 為準，本圖與該節必須一致。**「AI 轉接摘要」不在右欄**——依 demo 對照它屬於左欄（見 `PLATFORM_CAPABILITY.md` §2）。
 >
-> 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 380px（可拖曳 320–520px）、五區塊皆可折疊、支援載入骨架與「準備結案」收合態。
+> 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 **420px**（可拖曳 320–520px）、五區塊皆可折疊、支援載入骨架與「準備結案」收合態。
+>
+> ⚠️ **2026-08-28 訂正**：本行原寫 380px。畫布已統一為 420px（所有狀態共用，非結案專屬），
+> `DESIGN_TOKENS.md` §7.1 原本「結案態是否有獨立寬度」的未定案問題隨之關閉。
+> 實作端 `copilotWidth` 預設值仍是 380，已排入 `specs/003-analysis-trigger-policy` T031 修正。
+
+> ⚠️ **2026-08-28：右欄的可見性不再是「永遠都在」。**
+> 依 `specs/003-analysis-trigger-policy`，**客服未 JOIN 該對話時右欄整欄不呈現**（連收合鈕一起消失），
+> 中欄延伸至可用寬度；JOIN 時自動展開並提供收合鈕，收合狀態以「每位客服、每個對話」為粒度
+> 存 `localStorage`。伺服器端亦不把三個分析事件推給未 JOIN 的連線。
+> 規則見該規格 FR-016～FR-017b，視覺見 `docs/wireframe/03-workspace_assignment01.png`
+> （未接手）與 `03-workspace_toggleCopilot.png`（收合態）。
 
 ### 14.1.1 右欄的區塊與捲動
 
 依 `demo_agentCopilot02.png`（後由畫布 artboard 2a 確認，見 `DESIGN_TOKENS.md` §7.2），右欄自上而下共五個區塊：① 客戶情緒提示（處理中最常看）② AI 語意即時建議（處理中最常用）③ 知識庫自然語言快查（隨時可能用）④ AI 階段完整對話紀錄（可折疊，偶爾回顧）⑤ 結案摘要自動填入（只在結案時使用）。
+
+> ⚠️ **2026-08-28：⑤ 的「只在結案時使用」是硬性的 —— 未進入結案流程時 MUST 完全不呈現該區塊。**
+> 兩個理由：① 常駐會讓「這個區塊」與「結案按鈕」的關係曖昧不明；② 區塊若常駐就得在某個時機
+> 產生內容，等於每個對話都多跑一次 AI 呼叫，而絕大多數對話不會在那一刻結案。
+> 結案流程本身屬 M3，行為定案見 `specs/003-analysis-trigger-policy` 的「Session 2026-08-28 補充」
+> 與 `tasks.md` 附錄；視覺見 `docs/wireframe/03-workspace_close*.png` 四張。
 
 > ✅ **2026-08-26 已由設計稿定案，以下「問題／建議做法」段落已解決，保留是為了記錄決策脈絡**：
 > 2a 採用的是「區塊可折疊」+「階段感知」的組合，不是兩者擇一——五區塊平時各自可折疊；一旦偵測到「準備結案」，
@@ -1591,7 +1608,9 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] `confidence` 無真實分數來源時顯示為留空，不得顯示模型自評的替代數字（§11.6②）
 - [ ] 知識庫自然語言快查能回傳含標題與更新日期（或「更新日期未知」）的結果列表，不顯示獨立編號；空白查詢不觸發呼叫；查無結果與「尚未輸入查詢」視覺可區分（2026-08-27 新增，隨知識庫快查併入本里程碑一併提出，見 `specs/002-suggestion-knowledge-search`）
 - [ ] Copilot 面板五大區塊（摘要卡 `SummaryCard.vue`、情緒走勢 `SentimentGauge.vue`、建議卡、知識庫快查、對話紀錄／結案摘要——**後兩者**尚未實作，待建置時一併核對；2026-08-27 訂正：知識庫快查已隨本里程碑實作，見上一項）之圖示、色票、文案措辭、`error`／`retrying` 等狀態呈現，已對照 Claude Design 畫布 artboard 2a 原始檔 `CopilotPanel.dc.html`（見 `docs/DESIGN_TOKENS.md` §7）逐一核實；有落差者已訂正，或已記錄不採用的理由（2026-08-27 新增：`specs/001-sentiment-panel` FR-003 明文排除視覺樣式於原驗收範圍外，且 `tasks.md` T030 記錄此核對動作從未執行，此前為已知但無人排入排程的缺口）
-- [ ] 左側對話列表（`Sidebar.vue`）與中間對話訊息欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、`PresenceBar.vue`、`ModeSelect.vue`）已對照 Claude Design 畫布 artboard 1c（主工作區）核實（2026-08-27 新增，隨上一項一併提出）；⚠️ `docs/DESIGN_TOKENS.md` 目前 1c 只有截圖（`docs/wireframe/03-workspace_lightTheme.png`／`_darkTheme.png`），尚無逐字文字規格（見該檔第 10 行），核對前須先比對截圖，或依該檔附錄流程向畫布擁有者取得 1c 逐字規格再核對，不得憑既有 token 臨場判斷後就視為已核實
+- [ ] 左側對話列表（`Sidebar.vue`）與中間對話訊息欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、`PresenceBar.vue`、`ModeSelect.vue`）已對照 Claude Design 畫布 artboard 1c（主工作區）核實（2026-08-27 新增，隨上一項一併提出）；⚠️ `docs/DESIGN_TOKENS.md` 目前 1c 只有截圖，尚無逐字文字規格（見該檔第 10 行），核對前須先比對截圖，或依該檔附錄流程向畫布擁有者取得 1c 逐字規格再核對，不得憑既有 token 臨場判斷後就視為已核實。**2026-08-28 訂正**：1c 已不只兩張——另有 10 個狀態變體（未接手／兩欄收合／撞單／結案五態等），索引與各自的判讀重點見 `DESIGN_TOKENS.md`「1c 的狀態變體」一節，核對範圍 MUST 涵蓋全部而非只有 `_lightTheme`／`_darkTheme` 兩張
+- [ ] 中欄標題列的出口按鈕已改為狀態驅動的兩態並對照 `docs/wireframe/03-workspace_assignment01.png`／`_assignment02.png`／`_lightTheme.png` 核實：未接手→「接手對話」＋下拉（兩選項寫出後果而非模式名稱）；已接手→「離開對話」（次要）＋「結案」（primary）＋輔助說明。⚠️ 現行實作仍是單一的「加入對話／離開」toggle，落差見 `specs/003-analysis-trigger-policy` T032（2026-08-28 新增）
+- [ ] Copilot 面板的可見性已依 `specs/003-analysis-trigger-policy` FR-016～FR-017b 實作：未 JOIN 時整欄不呈現（非變灰／非骨架）、JOIN 時自動展開並可收合、收合狀態 per 客服 per 對話存 `localStorage`；且伺服器端不把三個分析事件推給未 JOIN 的連線（FR-016a）（2026-08-28 新增）
 
 **外部依賴**：無
 
