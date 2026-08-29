@@ -45,6 +45,11 @@ import type { ImbraceClient, Conversation as SdkConversation } from '@imbrace/sd
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { businessUnitId, env, isMain, loadEnv, makeClient, OUT_DIR, ROOT, SkipProbe } from './lib/harness.js'
+import { setAIProvider, useAIProvider } from '../../server/services/ai/index.js'
+import { setKnowledgeProvider, useKnowledgeProvider } from '../../server/services/knowledge/index.js'
+import { whitelistFilter } from '../../server/services/copilot-analysis.js'
+import type { AIProvider, SuggestionCard } from '../../shared/types/copilot.js'
+import type { KnowledgeHit, KnowledgeProvider } from '../../shared/types/knowledge.js'
 import { normalizeConversationId, toConversation, unwrapPaged } from '../../server/sources/mappers.js'
 import { fetchLatest } from '../../server/sources/message-fetch.js'
 import { getConversationDetail, joinConversation, leaveConversation } from '../../server/services/imbrace.js'
@@ -97,7 +102,110 @@ interface Sample {
   provenance: { stage: 1 | 2, stage1RetryAttempt: number } | null
   /** `status/citation` 的完整序列 —— 契約 §2 的那張表就是照這個形狀寫的 */
   sequence: string[]
+  /** 檢索耗時與命中數（每輪一次） */
+  retrievals?: Array<{ elapsedMs: number, hitCount: number }>
+  /** 第二段的原始輸出診斷 —— 「命中卻沒引用」的成因就靠它判讀（見 Stage2Trace） */
+  stage2?: Stage2Trace[]
   error?: string
+}
+
+/**
+ * 第二段到底發生了什麼 —— **T032 判讀 SC-002 未達的關鍵**。
+ *
+ * 「命中 > 0 卻落成 `none`」有三個成因，處置完全不同，而它們在事件序列上長得一模一樣：
+ *   - `timeout`／`failed`  → 第二段沒回來或報錯 → 依 T032 回頭重議 `SUGGESTION_STAGE2_CALL_TIMEOUT_MS`（T011）
+ *   - `whitelisted-out`    → 第二段回來了，但卡片的 `sopId` 全不在本次命中集合＝**模型杜撰引用**
+ *                            → 是 prompt／agent 的問題，**與逾時無關，改常數沒有用**
+ *   - `empty-output`       → 模型回了 0 張卡
+ * 少了這一層，只能靠「日誌有沒有印錯誤」反推，那是猜測不是證據。
+ */
+interface Stage2Trace {
+  /** 第二段呼叫送出時距起點的毫秒數 */
+  startedAtMs: number
+  elapsedMs: number
+  /** 傳入第二段的命中數 */
+  hitCount: number
+  /** 模型回傳的原始卡數（Zod 之後、白名單之前） */
+  rawCardCount?: number
+  /** 通過白名單的卡數 */
+  keptCardCount?: number
+  /** 模型宣稱引用的 sopId 是否都在命中集合裡；false 即為杜撰 */
+  sopIdsAllValid?: boolean
+  outcome: 'ok' | 'whitelisted-out' | 'empty-output' | 'failed'
+  errorName?: string
+  errorMessage?: string
+}
+
+/**
+ * 把真實 provider 包一層，**只觀察不改行為**：記錄檢索耗時與第二段的原始輸出。
+ * 判別兩段的方式與 `test/copilot-analysis.test.ts` 相同——第一段的 `knowledgeHits` 恆為空集合。
+ */
+function instrumentProviders(startedAt: () => number) {
+  const retrievals: Array<{ elapsedMs: number, hitCount: number }> = []
+  const stage2: Stage2Trace[] = []
+
+  const realAI = useAIProvider()
+  const realKnowledge = useKnowledgeProvider()
+
+  const knowledge: KnowledgeProvider = {
+    async search(query, opts) {
+      const t0 = Date.now()
+      try {
+        const hits = await realKnowledge.search(query, opts)
+        retrievals.push({ elapsedMs: Date.now() - t0, hitCount: hits.length })
+        return hits
+      }
+      catch (err) {
+        retrievals.push({ elapsedMs: Date.now() - t0, hitCount: -1 })
+        throw err
+      }
+    },
+  }
+
+  const ai: AIProvider = {
+    summarize: input => realAI.summarize(input),
+    analyzeSentiment: input => realAI.analyzeSentiment(input),
+    async suggest(input) {
+      const hits: KnowledgeHit[] = input.knowledgeHits
+      if (hits.length === 0) return realAI.suggest(input) // 第一段，不記錄
+
+      const t0 = Date.now()
+      const trace: Stage2Trace = {
+        startedAtMs: t0 - startedAt(),
+        elapsedMs: 0,
+        hitCount: hits.length,
+        outcome: 'ok',
+      }
+      stage2.push(trace)
+      try {
+        const cards: SuggestionCard[] = await realAI.suggest(input)
+        trace.elapsedMs = Date.now() - t0
+        trace.rawCardCount = cards.length
+        // ⚠️ 用生產的 `whitelistFilter()`，不自己重寫一份判斷（重寫就量到另一件事）
+        const kept = whitelistFilter(cards, hits)
+        trace.keptCardCount = kept.length
+        const validIds = new Set(hits.map(h => h.id))
+        trace.sopIdsAllValid = cards.every(c => c.sopId === null || validIds.has(c.sopId))
+        trace.outcome = cards.length === 0 ? 'empty-output' : kept.length === 0 ? 'whitelisted-out' : 'ok'
+        return cards
+      }
+      catch (err) {
+        trace.elapsedMs = Date.now() - t0
+        trace.outcome = 'failed'
+        trace.errorName = err instanceof Error ? err.constructor.name : typeof err
+        trace.errorMessage = err instanceof Error ? err.message : String(err)
+        throw err
+      }
+    },
+  }
+
+  setKnowledgeProvider(knowledge)
+  setAIProvider(ai)
+
+  return {
+    read: () => ({ retrievals: [...retrievals], stage2: [...stage2] }),
+    restore: () => { setAIProvider(realAI); setKnowledgeProvider(realKnowledge) },
+  }
 }
 
 function percentile(sorted: number[], p: number): number {
@@ -190,11 +298,15 @@ async function finishSample(
   conversationId: string,
   base: Omit<Sample, 'pendingMs' | 'settledMs' | 'finalCitation' | 'finalStatus' | 'hitCount' | 'cardCount' | 'provenance' | 'sequence'>,
   watcher: ReturnType<typeof watchSuggestions>,
+  probes?: ReturnType<typeof instrumentProviders>,
 ): Promise<Sample> {
   const { pendingMs, settledMs } = watcher.read()
   const block = (await useStateStore().getAnalysisState(conversationId))?.suggestionBlock ?? null
+  const traces = probes?.read()
   return {
     ...base,
+    retrievals: traces?.retrievals,
+    stage2: traces?.stage2,
     pendingMs,
     settledMs,
     finalCitation: block?.citation ?? null,
@@ -228,6 +340,7 @@ async function measureReadOnly(client: ImbraceClient, target: Target): Promise<S
 
   let startedAt = Date.now()
   const watcher = watchSuggestions(target.conversationId, () => startedAt)
+  const probes = instrumentProviders(() => startedAt)
   try {
     startedAt = Date.now()
     await runColdStart(target.conversationId, history, false)
@@ -235,8 +348,9 @@ async function measureReadOnly(client: ImbraceClient, target: Target): Promise<S
   }
   finally {
     watcher.off()
+    probes.restore()
   }
-  return finishSample(target.conversationId, base, watcher)
+  return finishSample(target.conversationId, base, watcher, probes)
 }
 
 /**
@@ -270,6 +384,7 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
 
   let startedAt = Date.now()
   const watcher = watchSuggestions(target.conversationId, () => startedAt)
+  const probes = instrumentProviders(() => startedAt)
   let joined = false
 
   try {
@@ -293,6 +408,7 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
   }
   finally {
     watcher.off()
+    probes.restore()
     if (joined) {
       // ⚠️ 無論成功失敗都要離開。LEAVE 會把 mode 帶到 `automation`，**不保證回到原值**
       try {
@@ -305,7 +421,7 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
     }
   }
 
-  const sample = await finishSample(target.conversationId, base, watcher)
+  const sample = await finishSample(target.conversationId, base, watcher, probes)
   const after = await enrich(client, target).catch(() => target)
   return { ...sample, modeAfter: after.mode }
 }
@@ -380,7 +496,16 @@ async function main(): Promise<void> {
           + `｜第一段 ${sample.pendingMs ?? '—'}ms｜落定 ${sample.settledMs ?? '—'}ms`
           + `｜命中 ${sample.hitCount}｜卡 ${sample.cardCount} 張`
           + (sample.modeAfter !== undefined ? `｜mode ${sample.modeBefore ?? 'null'} → ${sample.modeAfter ?? 'null'}` : '')
-          + `\n        序列：${sample.sequence.join(' → ')}`,
+          + `\n        序列：${sample.sequence.join(' → ')}`
+          + (sample.retrievals?.length
+            ? `\n        檢索：${sample.retrievals.map(r => `${r.elapsedMs}ms/${r.hitCount === -1 ? '失敗' : `${r.hitCount} 筆`}`).join('、')}`
+            : '')
+          + (sample.stage2?.length
+            ? `\n        第二段：${sample.stage2.map(t =>
+              `${t.outcome}（送出 +${t.startedAtMs}ms、耗時 ${t.elapsedMs}ms、模型回 ${t.rawCardCount ?? '—'} 張、`
+              + `過白名單 ${t.keptCardCount ?? '—'} 張、sopId 全有效=${t.sopIdsAllValid ?? '—'}`
+              + `${t.errorName ? `、${t.errorName}: ${t.errorMessage}` : ''}）`).join('；')}`
+            : ''),
         )
       }
     }
@@ -451,8 +576,13 @@ async function main(): Promise<void> {
   }
 
   mkdirSync(OUT_DIR, { recursive: true })
+  const payload = JSON.stringify(summary, null, 2)
   const jsonFile = resolve(OUT_DIR, '21-progressive-citations.json')
-  writeFileSync(jsonFile, JSON.stringify(summary, null, 2), 'utf8')
+  writeFileSync(jsonFile, payload, 'utf8')
+  // ⚠️ 同時留一份帶時間戳的：本規格的量測**每次結果都不同**（檢索與模型輸出都非決定性，
+  //    2026-08-29 連跑兩次即得到不同的 citation 結論），只留最新一份等於把前一次的證據蓋掉。
+  const stampFile = resolve(OUT_DIR, `21-progressive-citations-${summary.at.replace(/[:.]/g, '-')}.json`)
+  writeFileSync(stampFile, payload, 'utf8')
 
   console.log(`\n── 彙總 ${'─'.repeat(45)}`)
   console.log(`  第一段（SC-001，p90 ≤ ${SC001_BUDGET_MS / 1000} 秒）：`
@@ -464,7 +594,7 @@ async function main(): Promise<void> {
   console.log(`  引用比例（SC-002，≥ ${SC002_CITED_RATIO * 100}%）：`
     + `${summary.sc002.cited}/${summary.sc002.withHits} 段有命中的對話取得 cited`
     + ` → ${summary.sc002.pass ? '✅ 通過' : summary.sc002.withHits === 0 ? '❓ 無有效樣本（沒有任何一段命中知識庫）' : '❌ 未達'}`)
-  console.log(`\n  📁 ${jsonFile.replace(ROOT, '.')}`)
+  console.log(`\n  📁 ${jsonFile.replace(ROOT, '.')}（同時留存 ${stampFile.replace(ROOT, '.')}）`)
 
   if (mode === 'join') {
     const changed = samples.filter(s => s.modeAfter !== undefined && s.modeAfter !== s.modeBefore)
@@ -475,9 +605,22 @@ async function main(): Promise<void> {
   }
 
   if (!summary.sc002.pass && summary.sc002.withHits > 0) {
-    console.log('\n  ⚠️ SC-002 未達且有有效樣本 —— 依 tasks.md T032，若失敗原因是第二段 20 秒逾時，'
-      + '回到 T011 重議 SUGGESTION_STAGE2_CALL_TIMEOUT_MS。'
-      + '判讀方式：看 samples 裡 hitCount > 0 卻落成 none 的那幾筆的 settledMs 是否貼著 30+20 秒。')
+    // ⚠️ T032 只在「失敗原因是第二段 20 秒逾時」時才要求回頭重議 T011。
+    //    其餘成因（模型杜撰引用而被整卡捨棄）改常數一點用都沒有 —— 這裡直接分類，不留給人猜。
+    const missed = usable.filter(s => (s.hitCount ?? 0) > 0 && s.finalCitation !== 'cited')
+    const byOutcome = new Map<string, number>()
+    for (const s of missed) {
+      for (const t of s.stage2 ?? []) byOutcome.set(t.outcome, (byOutcome.get(t.outcome) ?? 0) + 1)
+      if ((s.stage2?.length ?? 0) === 0) byOutcome.set('第二段從未送出', (byOutcome.get('第二段從未送出') ?? 0) + 1)
+    }
+    console.log(`\n  ⚠️ SC-002 未達（${missed.length} 段有命中卻沒拿到引用）。成因分類：`)
+    for (const [outcome, n] of byOutcome) console.log(`     ${outcome}：${n} 次`)
+    const failed = missed.some(s => s.stage2?.some(t => t.outcome === 'failed'))
+    console.log(failed
+      ? '     → 含第二段失敗／逾時：依 tasks.md T032 回到 T011 重議 SUGGESTION_STAGE2_CALL_TIMEOUT_MS'
+        + '（先確認 errorName 是不是 AICallTimeoutError —— 其他錯誤改常數也沒用）'
+      : '     → **不是逾時、也不是失敗**：改 SUGGESTION_STAGE2_CALL_TIMEOUT_MS 無效。'
+        + '問題在建議卡 agent 的輸出，憲法 4.3 的白名單正在擋它杜撰引用。')
   }
 }
 
