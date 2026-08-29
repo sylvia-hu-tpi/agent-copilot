@@ -54,6 +54,24 @@ export interface ActiveSession {
   refreshToken?: string
   /** access token 的到期時間（epoch ms），供續期判斷 */
   tokenExpiresAt?: number
+  /**
+   * ⚠️ **保留 `login_acc_` 中間 token 是為了「切換組織」**（U-3，2026-08-30）。
+   *    換到另一個組織必須用它重新 exchange，而 exchange 只吃這個 token；
+   *    active session 的 `accessToken` 已經綁定在單一組織上，換不了。
+   *
+   * ⚠️ **這代表它會在 server 端存活整個 8 小時 session，而不只是登入那幾秒。**
+   *    它能換到這位客服**任何**組織的存取權，因此與 `accessToken` 同等對待：
+   *    永不離開 server、永不寫進日誌、不出現在任何 API 回應（憲法 1.1／1.5）。
+   *    ⚠️ 這個取捨是刻意的 —— 不留它就做不到切換組織，而 1b 的文案正在承諾這件事。
+   *    若日後決定不做切換，這個欄位 MUST 一併移除，不要留著「反正沒用到」。
+   */
+  loginToken: string
+  /**
+   * 可切換的組織清單。與 `PendingOrgSession.organizations` 是同一份，
+   * 帶著它才能在不重跑 OTP 的情況下回到選組織畫面。
+   * ⚠️ 這份清單**沒有憑證**，可以安全地回給瀏覽器（`GET /api/auth/me`）。
+   */
+  organizations: OrganizationChoice[]
   /** session 的到期時間（epoch ms）—— 8 小時滑動視窗，每次存取往後推 */
   expiresAt: number
 }

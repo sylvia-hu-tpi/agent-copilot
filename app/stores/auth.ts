@@ -56,6 +56,17 @@ export const useAuthStore = defineStore('auth', () => {
     await refresh()
   }
 
+  /**
+   * 回到選組織畫面（U-3）—— 把 session 退回 pending_org，再由呼叫端導向 /organization。
+   *
+   * ⚠️ 導向前 MUST 先 refresh()：stage 還停在 active 的話，organization.vue 的
+   *    掛載守衛會立刻把使用者導回工作區，看起來像「按了沒反應」。
+   */
+  async function reselectOrganization(): Promise<void> {
+    await $fetch('/api/auth/reselect-organization', { method: 'POST' })
+    await refresh()
+  }
+
   async function logout(): Promise<void> {
     await $fetch('/api/auth/logout', { method: 'POST' })
     me.value = null
@@ -70,6 +81,6 @@ export const useAuthStore = defineStore('auth', () => {
 
   return {
     me, resolved, stage, isActive, organizations,
-    refresh, ensure, requestOtp, verifyOtp, selectOrganization, logout, invalidate,
+    refresh, ensure, requestOtp, verifyOtp, selectOrganization, reselectOrganization, logout, invalidate,
   }
 })

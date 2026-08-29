@@ -187,6 +187,43 @@ async function main(): Promise<void> {
     check('orgId 正確', activeJson.orgId === 'org_a')
     assertNoSecrets('me(active)', active.body, active.setCookie)
 
+
+    console.log('\n── 切換組織（U-3）─────────────────────────────────')
+    /**
+     * ⚠️ 這段守的是一條**繞過既有驗證就會出事**的路徑：換組織必須重新 exchange，
+     *    而 exchange 只吃 login_acc_ 中間 token。把它留在 active session 裡是刻意的
+     *    取捨，因此「它不會外洩到瀏覽器」必須有自動化驗證，不能只靠 code review。
+     */
+    check('active 的 me 帶得出組織清單（頂欄的切換入口靠它判斷）',
+      Array.isArray((JSON.parse(active.body) as { organizations?: unknown[] }).organizations),
+      active.body)
+
+    const reselect = await call('/api/auth/reselect-organization', { method: 'POST' })
+    check('POST /api/auth/reselect-organization 回 200', reselect.status === 200, `實際 ${reselect.status} ${reselect.body}`)
+    assertNoSecrets('reselect-organization', reselect.body, reselect.setCookie)
+
+    const backToPending = await call('/api/auth/me')
+    const backJson = JSON.parse(backToPending.body) as { stage?: string, organizations?: unknown[] }
+    check('session 退回 pending_org', backJson.stage === 'pending_org', `實際 ${backJson.stage}`)
+    check('組織清單仍在（不必重跑 OTP）', (backJson.organizations?.length ?? 0) > 0)
+    assertNoSecrets('me(退回 pending_org)', backToPending.body, backToPending.setCookie)
+
+    // ⚠️ 退回之後業務 API MUST 擋下來 —— 舊組織的 accessToken 已經丟掉了
+    const blockedAfterReselect = await call('/api/conversations')
+    check('退回 pending_org 後業務 API 被擋下（不是拿舊 token 繼續用）',
+      blockedAfterReselect.status === 401 || blockedAfterReselect.status === 403,
+      `實際 ${blockedAfterReselect.status}`)
+
+    const rechosen = await call('/api/auth/organization', {
+      method: 'POST',
+      body: JSON.stringify({ organizationId: 'org_a' }),
+    })
+    check('重新選組織回 200（既有流程原封重用）', rechosen.status === 200, `實際 ${rechosen.status} ${rechosen.body}`)
+    assertNoSecrets('organization(第二次)', rechosen.body, rechosen.setCookie)
+
+    const activeAgain = await call('/api/auth/me')
+    check('切換後回到 active', (JSON.parse(activeAgain.body) as { stage?: string }).stage === 'active')
+
     console.log('\n── 對話清單 ────────────────────────────────────────')
     const list = await call('/api/conversations')
     check('GET /api/conversations 回 200', list.status === 200, `實際 ${list.status} ${list.body}`)

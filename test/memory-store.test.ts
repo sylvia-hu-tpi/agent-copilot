@@ -23,6 +23,9 @@ function activeSession(expiresInMs: number): ActiveSession {
     orgId: 'org_a',
     orgName: '客服一部',
     accessToken: 'acc_secret',
+    // 切換組織所需（U-3）—— 兩者都不得離開 server，見 ActiveSession 的說明
+    loginToken: 'login_acc_secret',
+    organizations: [{ id: 'org_a', name: '客服一部' }],
     expiresAt: Date.now() + expiresInMs,
   }
 }

@@ -16,6 +16,27 @@ async function logout() {
   await navigateTo('/login')
 }
 
+/**
+ * 切換組織（U-3）—— 退回 pending_org 再導向選組織頁。
+ *
+ * ⚠️ MUST 先 `stream.disconnect()`：session 一旦退回 pending_org，那條 SSE 的
+ *    憑證就不再有效，留著只會讓前端一直重連並吃到 401。與 `logout()` 同樣的理由。
+ */
+const switching = ref(false)
+
+async function switchOrganization() {
+  if (switching.value) return
+  switching.value = true
+  try {
+    stream.disconnect()
+    await auth.reselectOrganization()
+    await navigateTo('/organization')
+  }
+  finally {
+    switching.value = false
+  }
+}
+
 const statusLabel = computed(() => {
   if (stream.status === 'open') return null
   if (stream.status === 'reconnecting') return 'stream.reconnecting'
@@ -34,16 +55,32 @@ const statusLabel = computed(() => {
 
       <span v-if="auth.me?.orgName" aria-hidden="true" class="shrink-0" :style="{ color: 'var(--border-strong)' }">|</span>
 
-      <NuxtLink
-        v-if="auth.me?.orgName"
-        to="/organization"
-        class="flex min-w-0 items-center gap-1 truncate text-[0.9375rem] transition-opacity hover:opacity-70"
+      <!--
+        ⚠️ **不是 NuxtLink**：直接連到 /organization 會停在一個永遠不會長出清單的畫面 ——
+           換組織要先把 session 退回 pending_org（見 server/api/auth/reselect-organization.post.ts）。
+        ⚠️ 只有一個組織時不給切換入口，但**名稱仍要顯示**（那是「我在哪個組織」的指示）。
+      -->
+      <button
+        v-if="auth.me?.orgName && auth.organizations.length > 1"
+        type="button"
+        class="flex min-w-0 items-center gap-1 truncate text-[0.9375rem] transition-opacity hover:opacity-70 disabled:opacity-50"
         :style="{ color: 'var(--text-2)' }"
         :title="$t('organization.switch')"
+        :disabled="switching"
+        @click="switchOrganization"
       >
         <span class="truncate">{{ auth.me.orgName }}</span>
-        <UIcon v-if="auth.organizations.length > 1" name="i-lucide-chevron-down" class="size-3 shrink-0" />
-      </NuxtLink>
+        <UIcon
+          :name="switching ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'"
+          class="size-3 shrink-0"
+          :class="{ 'animate-spin': switching }"
+        />
+      </button>
+      <span
+        v-else-if="auth.me?.orgName"
+        class="min-w-0 truncate text-[0.9375rem]"
+        :style="{ color: 'var(--text-2)' }"
+      >{{ auth.me.orgName }}</span>
 
       <!-- 連線狀態：只在不正常時才出現，正常時不佔視覺注意力 -->
       <span

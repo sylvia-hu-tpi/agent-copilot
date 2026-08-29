@@ -41,6 +41,10 @@ export default defineEventHandler(async (event) => {
     orgName: chosen.name,
     accessToken,
     refreshToken,
+    // ⚠️ 帶著 loginToken 與清單才能「切換組織」（U-3）—— 換組織必須重新 exchange，
+    //    而 exchange 只吃 login_acc_ token。理由與安全取捨見 ActiveSession 的說明。
+    loginToken: pending.loginToken,
+    organizations: pending.organizations,
     expiresAt: Date.now() + SESSION_TTL_MS,
   })
 
