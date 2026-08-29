@@ -116,6 +116,17 @@ export function useCopilotSession(conversationId: Ref<string>) {
   )
 
   /**
+   * 有任一區塊正在分析／重試 —— 面板副標據此在「即時輔助」與「分析中」之間切換（畫布 2a）。
+   *
+   * ⚠️ `retrying` 也算分析中：對客服而言兩者是同一件事（面板還沒定案），
+   *    區分留給各區塊自己的狀態文字。
+   */
+  const analyzing = computed(() =>
+    [summary.value.status, sentiment.value.status, suggestions.value.status]
+      .some(s => s === 'analyzing' || s === 'retrying'),
+  )
+
+  /**
    * FR-018：一次重試所有失敗的區塊。
    *
    * ⚠️ **對每個 `error` 區塊各發一次既有的單區塊端點**（契約 1.2）——
@@ -154,5 +165,5 @@ export function useCopilotSession(conversationId: Ref<string>) {
     suggestionCitedAt.value = null
   })
 
-  return { summary, sentiment, suggestions, suggestionCitedAt, hasError, retry, retryAll }
+  return { summary, sentiment, suggestions, suggestionCitedAt, hasError, analyzing, retry, retryAll }
 }

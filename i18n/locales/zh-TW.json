@@ -21,6 +21,13 @@
     "empty": "沒有符合的對話。",
     "loadFailed": "讀取對話清單失敗",
     "unread": "有新訊息",
+    "filter": "依狀態篩選",
+    "filterAll": "全部",
+    "loadMore": "載入更多對話…",
+    "shown": "顯示 {n} / {total}",
+    "shownOnly": "顯示 {n}",
+    "sortedBy": "依最新訊息排序",
+    "coverageLimit": "只列出最近 {n} 筆；更早的請用上方搜尋",
     "collapse": "收合側欄",
     "expand": "展開側欄"
   },
@@ -31,6 +38,9 @@
     "offline": "即時更新已中斷。畫面上的內容可能不是最新的。"
   },
   "presence": {
+    "inThisConversation": "在此對話中",
+    "youViewing": "你正在檢視",
+    "lastUpdated": "最後更新 {time}",
     "viewing": "正在檢視",
     "composing": "正在輸入…",
     "joined": "已加入",
@@ -96,6 +106,7 @@
     "sendFailed": "送出失敗",
     "hint": "Enter 送出，Shift + Enter 換行",
     "draftSaved": "草稿已保存",
+    "blocked": "已攔截",
     "notJoined": "尚未接手此對話，無法輸入回覆。請先點右上角「接手對話」。",
     "readonlyAutomation": "這個對話目前是「全自動（唯讀）」模式，任何人都無法送出訊息。",
     "locked": "{name} 已強制介入此對話。",
@@ -123,12 +134,13 @@
       }
     },
     "sentiment": {
-      "title": "情緒走勢",
+      "title": "客戶情緒提示",
       "empty": "尚無可分析內容",
       "analyzing": "分析中…",
       "updating": "更新中…",
       "retrying": "重試中 ({attempt}/2)",
       "error": "暫時無法分析",
+      "rounds": "近 {n} 輪",
       "attachmentMarker": "客戶傳送附件",
       "singlePoint": "僅一次評分，尚不足以看出走勢",
       "label": {
@@ -144,14 +156,16 @@
       }
     },
     "suggestion": {
-      "title": "建議回覆",
+      "title": "AI 即時回覆建議",
       "empty": "尚無資料",
       "analyzing": "產生中…",
       "updating": "更新中…",
       "retrying": "重試中 ({attempt}/2)",
       "error": "暫時無法產生建議",
+      "count": "{n} 則建議",
       "readyEmpty": "本次未產生建議",
       "insert": "一鍵帶入",
+      "scrollHint": "可捲動查看其餘建議",
       "noKnowledgeRef": "未引用知識庫",
       "noKnowledgeRefPending": "尚未引用知識庫",
       "citationPending": "尚未引用知識庫・檢索中",
@@ -186,21 +200,29 @@
       "confirm": "覆蓋",
       "cancel": "取消"
     },
+    "block": {
+      "collapse": "收合「{title}」",
+      "expand": "展開「{title}」"
+    },
     "retry": "重新分析",
     "panelTitle": "COPILOT",
+    "subtitleLive": "即時輔助",
+    "subtitleAnalyzing": "分析中",
     "collapse": "收合 Copilot 面板",
     "expand": "展開 Copilot 面板",
     "retryAll": "全部重試",
     "retryAllNone": "目前沒有失敗的區塊"
   },
   "collision": {
-    "title": "有人搶先回覆了",
-    "byAgent": "{name} 已經回覆過客戶，你的內容可能重複。",
-    "byAi": "AI 已經自動回覆，請確認內容是否衝突。",
+    "title": "撞單攔截：客戶已在你打字期間收到回覆",
+    "byAgent": "{name} 已於 {time}（{ago}）送出「{preview}」。你的草稿尚未送出，直接送出可能造成重複或矛盾訊息。",
+    "byAi": "AI 自動回覆已於 {time}（{ago}）送出「{preview}」。你的草稿尚未送出，直接送出可能造成重複或矛盾訊息。",
     "unverified": "無法確認是否有人搶先回覆，請自行確認對話內容後再送出。",
     "theirMessage": "對方送出的內容",
-    "sendAnyway": "仍要送出",
-    "discard": "捨棄我的內容",
-    "review": "先看看"
+    "sendAnyway": "我已確認，仍要送出",
+    "discard": "捨棄草稿",
+    "review": "先看最新訊息",
+    "draftHeld": "草稿已保留 · 送出鍵已鎖定",
+    "secondsAgo": "{n} 秒前"
   }
 }

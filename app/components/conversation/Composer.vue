@@ -148,18 +148,23 @@ defineExpose({ focus })
         @keydown="onKeydown"
       />
 
+      <!--
+        ⚠️ 撞單期間送出鍵 MUST 明說是「已攔截」而不是只變灰（畫布 §8.4，憲法 8.1）——
+           只變灰的話客服會以為是壞掉或還在送，而正確的下一步在上方的三個選項裡。
+      -->
       <button
         type="button"
         class="ac-btn-primary flex shrink-0 items-center gap-1.5 px-3"
-        :disabled="disabled || !value.trim()"
+        :disabled="disabled || !value.trim() || Boolean(collision)"
+        :aria-disabled="Boolean(collision)"
         @click="emit('send', false)"
       >
         <UIcon
-          :name="sending ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'"
+          :name="collision ? 'i-lucide-lock' : sending ? 'i-lucide-loader-circle' : 'i-lucide-send-horizontal'"
           class="size-3.5"
-          :class="{ 'animate-spin': sending }"
+          :class="{ 'animate-spin': sending && !collision }"
         />
-        {{ sending ? t('composer.sending') : t('composer.send') }}
+        {{ collision ? t('composer.blocked') : sending ? t('composer.sending') : t('composer.send') }}
       </button>
     </div>
 

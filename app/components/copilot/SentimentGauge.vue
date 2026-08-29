@@ -23,6 +23,15 @@ const emit = defineEmits<{ retry: [] }>()
 
 const { t } = useI18n()
 
+/**
+ * 區塊 tag（畫布 2a：「近 5 輪」）。
+ * ⚠️ 數字是**實際的評分點數**，不是寫死的 5 —— 冷啟動或剛開始的對話會少於 5 點，
+ *    顯示「近 5 輪」而實際只有 2 點就是在謊報樣本量。沒有資料時不顯示 tag。
+ */
+const roundsTag = computed(() => (
+  props.block.timeline.length ? t('copilot.sentiment.rounds', { n: props.block.timeline.length }) : null
+))
+
 const MAX_POINTS = 50
 
 /** 從尾端往前取，直到湊滿 MAX_POINTS 個 point，沿途遇到的 marker 一併保留（FR-012、FR-015） */
@@ -104,26 +113,23 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
 </script>
 
 <template>
-  <section class="ac-card p-4">
-    <div class="flex items-center justify-between gap-2">
-      <h2 class="ac-status-label">{{ t('copilot.sentiment.title') }}</h2>
-      <div class="flex items-center gap-2">
-        <span v-if="statusText" class="text-[0.8125rem]" :style="{ color: statusColor }">
-          {{ statusText }}
-        </span>
-        <button
-          type="button"
-          class="rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
-          :style="{ color: 'var(--text-3)' }"
-          :disabled="block.status !== 'error'"
-          :aria-label="t('copilot.retry')"
-          :title="t('copilot.retry')"
-          @click="emit('retry')"
-        >
-          <UIcon name="i-lucide-rotate-cw" class="size-4" />
-        </button>
-      </div>
-    </div>
+  <CopilotBlockShell :title="t('copilot.sentiment.title')" :tag="roundsTag">
+    <template #actions>
+      <span v-if="statusText" class="shrink-0 text-[0.8125rem]" :style="{ color: statusColor }">
+        {{ statusText }}
+      </span>
+      <button
+        type="button"
+        class="shrink-0 rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
+        :style="{ color: 'var(--text-3)' }"
+        :disabled="block.status !== 'error'"
+        :aria-label="t('copilot.retry')"
+        :title="t('copilot.retry')"
+        @click="emit('retry')"
+      >
+        <UIcon name="i-lucide-rotate-cw" class="size-4" />
+      </button>
+    </template>
 
     <!-- 示警：顏色＋圖示＋文字三者並呈（FR-003、憲法 8.1），frustrated／angry 可互相區分 -->
     <p
@@ -209,5 +215,5 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
         <span>{{ t('copilot.sentiment.error') }}</span>
       </p>
     </div>
-  </section>
+  </CopilotBlockShell>
 </template>

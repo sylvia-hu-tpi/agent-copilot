@@ -41,6 +41,18 @@ const statusText = computed(() => {
   }
 })
 
+/**
+ * 區塊 tag（畫布 2a：「3 則建議」）。
+ *
+ * ⚠️ **刻意不做畫布的「產生中 x / y」**：那個進度在 004 的兩段式生成下已經沒有對應語意 ——
+ *    第一段先給整批不帶引用的卡，第二段再整批換掉，中途不存在「已完成 x 張、還剩 y 張」
+ *    這種狀態。照抄會顯示一個永遠對不上實際流程的進度（2026-08-29 使用者裁示 D-15）。
+ * ⚠️ 沒有卡片時不顯示 tag，而不是顯示「0 則建議」—— 空狀態的說明已經在區塊內容裡。
+ */
+const countTag = computed(() => (
+  props.block.cards.length ? t('copilot.suggestion.count', { n: props.block.cards.length }) : null
+))
+
 const readyEmpty = computed(() => props.block.status === 'ready' && props.block.cards.length === 0)
 
 /**
@@ -69,36 +81,67 @@ watch(() => props.citedAt, (at) => {
   if (at !== null) cueTimer = setTimeout(() => { showCitedCue.value = false }, CITED_CUE_MS)
 })
 
-onBeforeUnmount(() => clearTimeout(cueTimer))
+/**
+ * 畫布 2a 的「可捲動查看其餘建議」提示。
+ *
+ * ⚠️ **依實際是否溢出決定，不是寫死或依卡片數量。** 卡片高度隨內容長短差很多，
+ *    兩張長卡就會溢出、三張短卡可能不會——用張數判斷會在兩個方向都說謊，
+ *    而「說有得捲卻捲不動」比不提示更糟。
+ * ⚠️ 量測要等 DOM 更新完（`nextTick`），否則拿到的是換卡前的高度。
+ */
+const scrollBox = ref<HTMLElement | null>(null)
+const scrollable = ref(false)
+
+function measure(): void {
+  const el = scrollBox.value
+  scrollable.value = el ? el.scrollHeight > el.clientHeight + 1 : false
+}
+
+watch(() => props.block.cards, () => void nextTick(measure), { deep: true, immediate: true })
+
+/**
+ * ⚠️ 面板寬度**可拖曳**，變窄會讓卡片換行變高、原本捲不動的變成捲得動。
+ *    只在卡片變動時量測會讓提示與實際狀態脫節，所以一併觀察尺寸。
+ */
+let observer: ResizeObserver | undefined
+onMounted(() => {
+  void nextTick(measure)
+  if (scrollBox.value && typeof ResizeObserver !== 'undefined') {
+    observer = new ResizeObserver(measure)
+    observer.observe(scrollBox.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  clearTimeout(cueTimer)
+  observer?.disconnect()
+})
 </script>
 
 <template>
-  <section class="ac-card p-4">
-    <div class="flex items-center justify-between gap-2">
-      <h2 class="ac-status-label">{{ t('copilot.suggestion.title') }}</h2>
-      <div class="flex items-center gap-2">
-        <!-- 檢索中（004 FR-002）：圖示＋文字，兩者缺一不可（憲法 8.1） -->
-        <span v-if="citationPending" class="flex items-center gap-1 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
-          <UIcon name="i-lucide-loader-circle" class="size-3.5 shrink-0 animate-spin" />
-          {{ t('copilot.suggestion.citationPending') }}
-        </span>
-        <span v-if="statusText" class="text-[0.8125rem]" :style="{ color: block.status === 'error' ? 'var(--warn)' : 'var(--text-3)' }">
-          {{ statusText }}
-        </span>
-        <!-- FR-024：重試按鈕只在 error 狀態可用，非一般性的「重新產生」 -->
-        <button
-          type="button"
-          class="rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
-          :style="{ color: 'var(--text-3)' }"
-          :disabled="block.status !== 'error'"
-          :aria-label="t('copilot.retry')"
-          :title="t('copilot.retry')"
-          @click="emit('retry')"
-        >
-          <UIcon name="i-lucide-rotate-cw" class="size-4" />
-        </button>
-      </div>
-    </div>
+  <CopilotBlockShell :title="t('copilot.suggestion.title')" :tag="countTag">
+    <template #actions>
+      <!-- 檢索中（004 FR-002）：圖示＋文字，兩者缺一不可（憲法 8.1） -->
+      <span v-if="citationPending" class="flex shrink-0 items-center gap-1 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+        <UIcon name="i-lucide-loader-circle" class="size-3.5 shrink-0 animate-spin" />
+        {{ t('copilot.suggestion.citationPending') }}
+      </span>
+      <span v-if="statusText" class="shrink-0 text-[0.8125rem]" :style="{ color: block.status === 'error' ? 'var(--warn)' : 'var(--text-3)' }">
+        {{ statusText }}
+      </span>
+      <!-- FR-024：重試按鈕只在 error 狀態可用，非一般性的「重新產生」 -->
+      <button
+        type="button"
+        class="shrink-0 rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
+        :style="{ color: 'var(--text-3)' }"
+        :disabled="block.status !== 'error'"
+        :aria-label="t('copilot.retry')"
+        :title="t('copilot.retry')"
+        @click="emit('retry')"
+      >
+        <UIcon name="i-lucide-rotate-cw" class="size-4" />
+      </button>
+    </template>
 
     <!-- empty：尚無資料（FR-014） -->
     <p v-if="block.status === 'empty'" class="mt-3 text-[0.9375rem]" :style="{ color: 'var(--text-3)' }">
@@ -145,7 +188,7 @@ onBeforeUnmount(() => clearTimeout(cueTimer))
         {{ t('copilot.suggestion.citedUpdated') }}
       </p>
 
-      <div class="max-h-120 space-y-2 overflow-y-auto">
+      <div ref="scrollBox" class="max-h-120 space-y-2 overflow-y-auto">
         <CopilotSuggestionCard
           v-for="card in block.cards"
           :key="card.id"
@@ -154,6 +197,10 @@ onBeforeUnmount(() => clearTimeout(cueTimer))
           @insert="emit('insert', $event)"
         />
       </div>
+
+      <p v-if="scrollable" class="mt-2 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+        {{ t('copilot.suggestion.scrollHint') }}
+      </p>
     </div>
-  </section>
+  </CopilotBlockShell>
 </template>

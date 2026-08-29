@@ -47,8 +47,9 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
 </script>
 
 <template>
-  <section class="ac-card space-y-3 p-4">
-    <h2 class="ac-status-label">{{ t('copilot.knowledgeSearch.title') }}</h2>
+  <!-- ⚠️ 快查在畫布 2a 上**沒有** tag（其餘四塊都有），不要為了整齊而發明一個 -->
+  <CopilotBlockShell :title="t('copilot.knowledgeSearch.title')">
+    <div class="space-y-3">
 
     <input
       v-model="search.query.value"
@@ -136,5 +137,6 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
         </div>
       </li>
     </ul>
-  </section>
+    </div>
+  </CopilotBlockShell>
 </template>

@@ -197,6 +197,11 @@ const title = computed(() =>
         :items="conversations.sorted"
         :active-id="conversations.activeId"
         :unread="conversations.unread"
+        :counts="conversations.counts"
+        :total="conversations.total"
+        :has-more="conversations.hasMore"
+        :at-coverage-limit="conversations.atCoverageLimit"
+        @load-more="conversations.loadMore()"
         :loading="conversations.loading"
         :error="conversations.error"
         @select="select"
@@ -241,12 +246,22 @@ const title = computed(() =>
           <div class="ml-auto flex shrink-0 items-center gap-2">
             <template v-if="!view.viewerJoined.value">
               <div class="relative flex">
+                <!--
+                  ⚠️ 畫布 §8.3 的主按鈕帶 `user-check` icon（13px、gap 6px）——
+                     這顆按鈕是整個標題列唯一的 primary 動作，icon 是它與旁邊次要按鈕的
+                     主要視覺區分，少了它在深色主題下更難一眼認出。
+                -->
                 <button
                   type="button"
-                  class="ac-btn-primary h-8 rounded-r-none px-3 text-[0.9375rem]"
+                  class="ac-btn-primary flex h-8 items-center gap-1.5 rounded-r-none px-3 text-[0.9375rem]"
                   :disabled="view.busy.value"
                   @click="joinAs('manual')"
                 >
+                  <UIcon
+                    :name="view.busy.value ? 'i-lucide-loader-circle' : 'i-lucide-user-check'"
+                    class="size-3.5 shrink-0"
+                    :class="{ 'animate-spin': view.busy.value }"
+                  />
                   {{ view.busy.value ? $t('conversation.joining') : $t('conversation.join') }}
                 </button>
                 <button
@@ -466,11 +481,19 @@ const title = computed(() =>
         <CopilotPanelHeader
           :collapsed="panel.collapsed.value"
           :has-error="copilot.hasError.value"
+          :analyzing="copilot.analyzing.value"
           @toggle="panel.toggle()"
           @retry-all="copilot.retryAll()"
         />
-        <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
+        <!--
+          ⚠️ **區塊順序照畫布 artboard 2a，不要隨手調動。**
+             畫布的排序有記載的理由（ARCHITECTURE §「右欄自上而下共五個區塊」）——依處理中的
+             使用頻率排：情緒「最常看」→ 建議「最常用」→ 快查「隨時可能用」→ 對話紀錄
+             「偶爾回顧」→ 結案摘要「只在結案時」。
+             摘要卡是畫布沒有的第六個區塊，2026-08-29 由使用者裁定插在情緒與建議之間。
+        -->
         <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
+        <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
         <CopilotSuggestionList
           :block="copilot.suggestions.value"
           :cited-at="copilot.suggestionCitedAt.value"

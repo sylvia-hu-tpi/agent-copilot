@@ -43,31 +43,28 @@ const statusColor = computed(() => {
 </script>
 
 <template>
-  <section class="ac-card p-4">
-    <div class="flex items-center justify-between gap-2">
-      <h2 class="ac-status-label">{{ t('copilot.summary.title') }}</h2>
-      <div class="flex items-center gap-2">
-        <span
-          v-if="statusText"
-          class="text-[0.8125rem]"
-          :style="{ color: statusColor }"
-          :aria-live="block.status === 'error' ? 'polite' : undefined"
-        >
-          {{ statusText }}
-        </span>
-        <button
-          type="button"
-          class="rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
-          :style="{ color: 'var(--text-3)' }"
-          :disabled="block.status !== 'error'"
-          :aria-label="t('copilot.retry')"
-          :title="t('copilot.retry')"
-          @click="emit('retry')"
-        >
-          <UIcon name="i-lucide-rotate-cw" class="size-4" />
-        </button>
-      </div>
-    </div>
+  <CopilotBlockShell :title="t('copilot.summary.title')">
+    <template #actions>
+      <span
+        v-if="statusText"
+        class="shrink-0 text-[0.8125rem]"
+        :style="{ color: statusColor }"
+        :aria-live="block.status === 'error' ? 'polite' : undefined"
+      >
+        {{ statusText }}
+      </span>
+      <button
+        type="button"
+        class="shrink-0 rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
+        :style="{ color: 'var(--text-3)' }"
+        :disabled="block.status !== 'error'"
+        :aria-label="t('copilot.retry')"
+        :title="t('copilot.retry')"
+        @click="emit('retry')"
+      >
+        <UIcon name="i-lucide-rotate-cw" class="size-4" />
+      </button>
+    </template>
 
     <!-- empty：尚無可分析內容（FR-009），與 error／loading 視覺上可區分 -->
     <p v-if="block.status === 'empty'" class="mt-3 text-[0.9375rem]" :style="{ color: 'var(--text-3)' }">
@@ -139,5 +136,5 @@ const statusColor = computed(() => {
         <span>{{ t('copilot.summary.error') }}</span>
       </p>
     </div>
-  </section>
+  </CopilotBlockShell>
 </template>
