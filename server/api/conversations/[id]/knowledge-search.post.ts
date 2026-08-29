@@ -12,6 +12,8 @@
 import { z } from 'zod'
 import { useKnowledgeProvider } from '../../../services/knowledge/index.js'
 import { resolveKnowledgeSearch } from '../../../services/knowledge/resolve-search.js'
+import { isViewerJoined } from '../../../services/conversation-context.js'
+import { imbraceClientFor } from '../../../utils/imbrace-client.js'
 import { useStateStore } from '../../../state/index.js'
 import { conversationIdParam } from '../../../utils/conversation-param.js'
 import { requireActiveBffSession } from '../../../utils/session.js'
@@ -29,13 +31,20 @@ export default defineEventHandler(async (event): Promise<KnowledgeSearchResponse
   const { query, expandRef } = await readBodyAs(event, Body)
   const session = await requireActiveBffSession(event)
 
-  // FR-025：JOIN 門檻——查的是 listJoinedConversations()，JOIN 成功時 T051 已寫入。
+  // FR-025：JOIN 門檻。
   // ⚠️ 優先於空白查詢短路：未 JOIN 時無論查詢內容為何都不該使用本功能，
   //    不可讓空白輸入意外繞過這道門檻。
-  const joined = await useStateStore().listJoinedConversations(session.operatorId)
-  if (!joined.includes(conversationId)) {
-    throw createError({ statusCode: 403, message: '需先加入對話' })
-  }
+  // ⚠️ 走 isViewerJoined() 而非直接查 listJoinedConversations()——後者的記錄只有
+  //    join.post.ts 會寫且存在記憶體裡，伺服器重啟後會與平台的持久 JOIN 不同步，
+  //    症狀是「面板開著、分析在跑，但快查說我沒加入」。理由詳見該函式的說明。
+  const ok = await isViewerJoined(
+    useStateStore(),
+    imbraceClientFor(session),
+    session.orgId,
+    session.operatorId,
+    conversationId,
+  )
+  if (!ok) throw createError({ statusCode: 403, message: '需先加入對話' })
 
   return resolveKnowledgeSearch(query, () => useKnowledgeProvider().search(query, { topK: 5, fileId: expandRef }))
 })
