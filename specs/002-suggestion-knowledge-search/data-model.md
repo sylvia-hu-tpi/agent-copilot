@@ -92,10 +92,11 @@ export interface KnowledgeProvider {
   /**
    * @param opts.fileId 限定在單一檔案內檢索（「展開全文」用，research.md #3）
    * @param opts.timeoutMs 逾時上限；預設 KNOWLEDGE_SEARCH_TIMEOUT_MS（快查用，見 plan.md Constraints）。
-   *                       ⚠️ 建議卡生成的檢索 MUST 明確傳入 SUGGESTION_RETRIEVAL_TIMEOUT_MS，
-   *                       MUST NOT 沿用這個預設 —— 那條路徑受 SC-001 的 10 秒約束，
-   *                       沿用快查的長逾時會讓建議卡遲到（見該常數註解）。
-   *                       （⚠️ 2026-08-29：SC-001 已改為 20 秒，且 004 FR-003 以「第二段等檢索 30 秒」取代這個 8 秒短逾時；本段描述的是兩段式落地前的現況）
+   *                       ⚠️ **2026-08-29（004 FR-003）起，建議卡路徑與快查共用這個預設，
+   *                       MUST NOT 另訂第二個數字**（`test/contract-guards.test.ts` 有守衛擋著）。
+   *                       本欄原本要求建議卡明確傳入一個 8 秒的短逾時，理由是那條路徑受 SC-001
+   *                       約束且走「先檢索再生成」的串行流程；004 改成兩段式後檢索不再擋在生成
+   *                       前面，而那個 8 秒在生產路徑上是 100% 逾時（實測檢索最快 9.4 秒）。
    */
   search(query: string, opts?: { topK?: number, fileId?: string, timeoutMs?: number }): Promise<KnowledgeHit[]>
 }

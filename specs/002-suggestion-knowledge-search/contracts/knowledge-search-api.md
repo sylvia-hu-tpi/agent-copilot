@@ -45,7 +45,7 @@ FR-007）；`updatedAt` 可能為 `null`（research.md #2）。
 
 ⚠️ **本端點（快查）與建議卡生成用的是兩個不同的逾時值**，MUST NOT 共用：快查是客服主動
 發起、畫面上有骨架的同步查詢，用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`；建議卡走「先檢索再生成」
-的串行流程且受 SC-001 的 10 秒約束，用明顯更短的 `SUGGESTION_RETRIEVAL_TIMEOUT_MS`（⚠️ 2026-08-29：SC-001 已改為 20 秒，且 004 FR-003 以「第二段等檢索 30 秒」取代這個 8 秒短逾時；本段描述的是兩段式落地前的現況）。
+的串行流程且受 SC-001 的 10 秒約束，用明顯更短的 `SUGGESTION_RETRIEVAL_TIMEOUT_MS`（⚠️ 2026-08-29：SC-001 已改為 20 秒，且 004 FR-003 以「第二段等檢索 30 秒」取代這個 8 秒短逾時；本段描述的是 004 兩段式**落地前**的設計，已成為歷史，不是現況）。
 兩者的完整理由與實測數據見 `server/services/knowledge/agent-knowledge-provider.ts`。
 
 ## 前端契約（`useKnowledgeSearch.ts`）
