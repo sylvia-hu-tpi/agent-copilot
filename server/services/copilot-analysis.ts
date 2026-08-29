@@ -40,7 +40,7 @@ import {
   withRetry,
 } from './ai/retry-policy.js'
 import { parseConversationSummary, parseSentimentPoints, parseSuggestionCards } from './ai/schemas.js'
-import { SUGGESTION_RETRIEVAL_TIMEOUT_MS } from './knowledge/agent-knowledge-provider.js'
+import { KNOWLEDGE_SEARCH_TIMEOUT_MS } from './knowledge/agent-knowledge-provider.js'
 import { useKnowledgeProvider } from './knowledge/index.js'
 
 export type AnalysisBlock = 'summary' | 'sentiment' | 'suggestions'
@@ -98,7 +98,16 @@ function initialState(conversationId: string): CopilotAnalysisState {
     conversationId,
     summaryBlock: { status: 'empty', summary: null, updatedAt: at },
     sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: at },
-    suggestionBlock: { status: 'empty', cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, updatedAt: at },
+    suggestionBlock: {
+      status: 'empty',
+      cards: [],
+      knowledgeSearch: { ran: false, hitCount: 0 },
+      // 004：尚無卡片時 `citation` 沒有語意，取不會誤導的值（data-model.md §1）
+      citation: 'none',
+      basedOnMessageId: null,
+      provenance: { stage: 1, stage1RetryAttempt: 0 },
+      updatedAt: at,
+    },
   }
 }
 
@@ -737,12 +746,14 @@ async function analyzeSuggestionsOnce(
 
   let knowledgeHits: KnowledgeHit[] = []
   try {
-    // ⚠️ 明確帶上 SUGGESTION_RETRIEVAL_TIMEOUT_MS，**不可**沿用 provider 的預設值——
-    //    那個預設是快查（US2）的 30 秒，套到這條串行路徑上會讓建議卡 30 秒才出現，
-    //    直接違反 SC-001 的 10 秒。兩個常數的完整理由見 agent-knowledge-provider.ts。
+    // ⚠️ **2026-08-29（004 FR-003）**：改與快查共用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`。
+    //    原本這裡帶的是建議卡專用的 8 秒短逾時常數（已刪除），
+    //    理由是保護「先檢索再生成」這條**串行**路徑的門檻；而實測檢索最快 9.4 秒，
+    //    那個上限等於建議卡永遠拿不到引用。兩段式（下方 'progressive'）讓檢索不再擋在
+    //    生成前面，30 秒因此可以承受。MUST NOT 為建議卡另立第二個逾時值。
     knowledgeHits = await useKnowledgeProvider().search(query, {
       topK: 5,
-      timeoutMs: SUGGESTION_RETRIEVAL_TIMEOUT_MS,
+      timeoutMs: KNOWLEDGE_SEARCH_TIMEOUT_MS,
     })
   }
   catch (err) {
@@ -773,6 +784,9 @@ async function analyzeSuggestionsOnce(
         status: 'ready' as const,
         cards,
         knowledgeSearch,
+        citation: knowledgeHits.length > 0 ? ('cited' as const) : ('none' as const),
+        basedOnMessageId: anchor,
+        provenance: { stage: 2 as const, stage1RetryAttempt: 0 },
         retryAttempt: undefined,
         firstFailureAt: undefined,
         updatedAt: nowIso(),

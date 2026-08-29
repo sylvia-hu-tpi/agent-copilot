@@ -31,6 +31,10 @@ function emptySuggestionBlock(): SuggestionBlock {
     status: 'empty',
     cards: [],
     knowledgeSearch: { ran: false, hitCount: 0 },
+    // 004：尚無卡片時 `citation` 沒有語意，取不會誤導的值（data-model.md §1）
+    citation: 'none',
+    basedOnMessageId: null,
+    provenance: { stage: 1, stage1RetryAttempt: 0 },
     updatedAt: new Date().toISOString(),
   }
 }

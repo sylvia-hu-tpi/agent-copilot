@@ -152,6 +152,9 @@
       "readyEmpty": "本次未產生建議",
       "insert": "一鍵帶入",
       "noKnowledgeRef": "未引用知識庫",
+      "noKnowledgeRefPending": "尚未引用知識庫",
+      "citationPending": "尚未引用知識庫・檢索中",
+      "citedUpdated": "已更新為有 SOP 依據的版本",
       "confidence": "信心度 {value}%",
       "tone": {
         "apologetic": "致歉",

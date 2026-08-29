@@ -23,10 +23,7 @@ import {
 import { setAIProvider } from '../server/services/ai/index.js'
 import { AIProviderHttpError } from '../server/services/ai/retry-policy.js'
 import { MockAIProvider } from '../server/services/ai/mock-ai-provider.js'
-import {
-  KNOWLEDGE_SEARCH_TIMEOUT_MS,
-  SUGGESTION_RETRIEVAL_TIMEOUT_MS,
-} from '../server/services/knowledge/agent-knowledge-provider.js'
+import { KNOWLEDGE_SEARCH_TIMEOUT_MS } from '../server/services/knowledge/agent-knowledge-provider.js'
 import { setKnowledgeProvider } from '../server/services/knowledge/index.js'
 import { MockKnowledgeProvider } from '../server/services/knowledge/mock-knowledge-provider.js'
 import { useEventBus, useStateStore } from '../server/state/index.js'
@@ -336,7 +333,7 @@ describe('lastCoveredMessageId()（T010c 重連快照的補跑判斷依據）', 
   })
 
   it('尚無任何資料時回傳 null', () => {
-    const empty = { conversationId: 'x', summaryBlock: { status: 'empty' as const, summary: null, updatedAt: '' }, sentimentBlock: { status: 'empty' as const, timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' }, suggestionBlock: { status: 'empty' as const, cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, updatedAt: '' } }
+    const empty = { conversationId: 'x', summaryBlock: { status: 'empty' as const, summary: null, updatedAt: '' }, sentimentBlock: { status: 'empty' as const, timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' }, suggestionBlock: { status: 'empty' as const, cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, citation: 'none' as const, basedOnMessageId: null, provenance: { stage: 1 as const, stage1RetryAttempt: 0 }, updatedAt: '' } }
     expect(lastCoveredMessageId(empty)).toBeNull()
   })
 })
@@ -570,10 +567,11 @@ describe('analyzeSuggestions()（US1，specs/002-suggestion-knowledge-search）'
     expect(querySeen).toBe('這是客戶的原始文字')
   })
 
-  it('檢索 MUST 帶 SUGGESTION_RETRIEVAL_TIMEOUT_MS，不得沿用快查的 30 秒預設（否則建議卡會撞破 SC-001 的 10 秒）', async () => {
-    // ⚠️ 2026-08-27 實測：真實檢索最快 13 秒。建議卡是「先檢索再生成」的串行流程，
-    //    若這裡沿用快查那條路徑的 30 秒預設，建議卡就會 30 秒後才出現。
-    //    這個斷言存在的唯一理由，是那個錯誤不會報錯也不會有型別問題。
+  it('檢索 MUST 帶 KNOWLEDGE_SEARCH_TIMEOUT_MS —— 004 起建議卡與快查共用同一個逾時值', async () => {
+    // ⚠️ **2026-08-29（004 FR-003）**：本項原本斷言的是 8 秒的 `SUGGESTION_RETRIEVAL_TIMEOUT_MS`，
+    //    理由是保護「先檢索再生成」的串行路徑；而實測檢索最快 9.4 秒，那個上限等於
+    //    建議卡永遠拿不到引用。兩段式讓檢索不再擋在生成前面，因此改為共用 30 秒。
+    //    這個斷言存在的唯一理由，是「悄悄改回另一個數字」不會報錯也不會有型別問題。
     let optsSeen: { topK?: number, fileId?: string, timeoutMs?: number } | undefined
     setKnowledgeProvider({
       search: async (_query: string, opts?: { topK?: number, fileId?: string, timeoutMs?: number }) => {
@@ -585,8 +583,7 @@ describe('analyzeSuggestions()（US1，specs/002-suggestion-knowledge-search）'
     const id = convId('suggestion-retrieval-timeout')
     await runColdStart(id, [customerText(id, '請問流程')], false)
 
-    expect(optsSeen?.timeoutMs).toBe(SUGGESTION_RETRIEVAL_TIMEOUT_MS)
-    expect(SUGGESTION_RETRIEVAL_TIMEOUT_MS).toBeLessThan(KNOWLEDGE_SEARCH_TIMEOUT_MS)
+    expect(optsSeen?.timeoutMs).toBe(KNOWLEDGE_SEARCH_TIMEOUT_MS)
   })
 })
 

@@ -38,10 +38,16 @@ function createProvider(): KnowledgeProvider {
     // ⚠️ smoke:realtime（specs/002-suggestion-knowledge-search T045）用來注入知識庫檢索
     // 故障，驗證建議卡改以無引用續行、快查顯示 degraded（憲法 3.2）。只在已經退回 Mock 的
     // 路徑上生效，不影響任何正式環境行為。
+    //
+    // ⚠️ `AC_SMOKE_KNOWLEDGE_DELAY_MS`（004 T006）同理：Mock 檢索本身是零延遲的，
+    //    兩段式的 `pending → cited` 序列因此在 smoke／本機 dev 上會快到看不見中間狀態。
+    //    給檢索一個人為延遲，第一段才會先落地，序列才觀察得到。同樣**只在已退回 Mock 的
+    //    路徑上生效**，正式環境走 AgentKnowledgeProvider，完全讀不到這個變數。
     return new MockKnowledgeProvider({
       searchFailure: process.env.AC_SMOKE_FORCE_KNOWLEDGE_FAILURE
         ? () => new Error('smoke 測試注入的知識庫檢索故障')
         : undefined,
+      searchDelayMs: Number(process.env.AC_SMOKE_KNOWLEDGE_DELAY_MS) || undefined,
     })
   }
 

@@ -157,6 +157,40 @@ export interface SuggestionBlock {
    */
   knowledgeSearch: { ran: boolean, hitCount: number }
   updatedAt: string
+
+  /**
+   * 知識庫引用狀態（specs/004-progressive-citations FR-002／FR-003）。與 `status` **正交**：
+   *   - `'pending'` → 第一段已顯示，第二段仍在等檢索（最多 30 秒）＋生成（最多 20 秒）
+   *   - `'cited'`   → 這批卡是**餵入命中結果**生成的（前景第二段，或背景／命中已在手的單段）。
+   *                   個別卡片仍可能 `sopId` 為 null（模型判斷該卡不需引用），以卡片的
+   *                   `sopTitle` 分辨，MUST NOT 以本欄位推斷單張卡有沒有來源
+   *   - `'none'`    → 最終狀態：檢索無命中、失敗、逾時，或第二段失敗／全數遭白名單捨棄。
+   *                   `cards` 維持第一段內容（FR-003）
+   *
+   * 初始（`empty`／首次 `analyzing`）為 `'none'` —— 尚無卡片時這個欄位沒有語意，取不會誤導的值。
+   * ⚠️ `'none' → 'pending'` 是**禁止**的方向（FR-003a ①）：第二段落定「未引用」前必須等第一段
+   *    落定，否則第一段隨後落地會把標示寫回 `'pending'`，而該輪已無路徑再落定它。
+   */
+  citation: 'pending' | 'cited' | 'none'
+
+  /**
+   * 這批卡依據到哪一則客戶訊息（`batchAnchor()`，與 `ConversationSummary.basedOnMessageId` 同語意）。
+   *
+   * ⚠️ **僅供稽核與 UI**；第二段的過期判定用執行期的世代計數（004 research.md #2），
+   *    **MUST NOT** 拿這個欄位做控制 —— 手動重試會用同一個錨點再跑一次，
+   *    錨點比對會放行舊尾巴覆蓋新結果，而且不會報錯。
+   */
+  basedOnMessageId: string | null
+
+  /**
+   * 004 FR-014／SC-005 的稽核證據：這批卡由哪一段產出、第一段自動重試了幾次。
+   *   - 前景第一段落地：`{ stage: 1, stage1RetryAttempt: n }`
+   *   - 前景第二段落地：`{ stage: 2, stage1RetryAttempt: n }`（沿用第一段的 n，讓
+   *     「這批訊息總共呼叫幾次」＝ 1 + n + 1 可以從單一 block 讀出）
+   *   - 背景／命中已在手的單段：`{ stage: 2, stage1RetryAttempt: 0 }`（沒有第一段）
+   * 上限可驗證：前景每批最壞 1 + 2 + 1 = 4 次（004 FR-014）。
+   */
+  provenance: { stage: 1 | 2, stage1RetryAttempt: number }
 }
 
 // ── AIProvider 介面（docs/ARCHITECTURE.md §8.2b）───────────────────────

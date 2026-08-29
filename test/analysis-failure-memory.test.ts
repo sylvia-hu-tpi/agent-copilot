@@ -74,7 +74,7 @@ describe('readFailedBatch / markFailedBatch / clearFailedBatch / releaseFailedBa
     conversationId: 'c1',
     summaryBlock: { status: 'empty', summary: null, updatedAt: '2026-08-28T00:00:00.000Z' },
     sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '2026-08-28T00:00:00.000Z' },
-    suggestionBlock: { status: 'empty', cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, updatedAt: '2026-08-28T00:00:00.000Z' },
+    suggestionBlock: { status: 'empty', cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, citation: 'none', basedOnMessageId: null, provenance: { stage: 1, stage1RetryAttempt: 0 }, updatedAt: '2026-08-28T00:00:00.000Z' },
   }
 
   it('從未失敗過時回 null；三個區塊各自獨立', () => {
