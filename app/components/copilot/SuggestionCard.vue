@@ -12,9 +12,15 @@
  *    仍值得參考）。
  */
 
-import type { SuggestionCard } from '#shared/types/copilot'
+import type { SuggestionBlock, SuggestionCard } from '#shared/types/copilot'
 
-const props = defineProps<{ card: SuggestionCard }>()
+/**
+ * ⚠️ **FR-002（004）**：`sopTitle` 為 null 有兩種語意，MUST 分辨得出來 ——
+ *    `citation === 'pending'` 是「尚未引用知識庫」（檢索還沒回來，之後可能會有），
+ *    其餘是「未引用知識庫」（已經確定沒有）。少了這個區分，客服會以為第一段的卡
+ *    就是最終結論而據此回覆。
+ */
+const props = defineProps<{ card: SuggestionCard, citation: SuggestionBlock['citation'] }>()
 const emit = defineEmits<{ insert: [text: string] }>()
 
 const { t } = useI18n()
@@ -57,7 +63,7 @@ const toneStyle = computed(() => TONE_CLASS[props.card.tone])
     <p class="text-[0.9375rem]" :style="{ color: 'var(--text-1)' }">{{ card.text }}</p>
 
     <p class="text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
-      {{ card.sopTitle ?? t('copilot.suggestion.noKnowledgeRef') }}
+      {{ card.sopTitle ?? t(citation === 'pending' ? 'copilot.suggestion.noKnowledgeRefPending' : 'copilot.suggestion.noKnowledgeRef') }}
     </p>
 
     <ul v-if="card.requiresData.length > 0" class="list-disc space-y-0.5 pl-4 text-[0.8125rem]" :style="{ color: 'var(--text-2)' }">
