@@ -188,8 +188,13 @@ box-shadow: var(--shadow)
 
 1. Header row：**純圖示返回按鈕**（`arrow-left`，26×26）+「步驟 2 / 2」
    ⚠️ **沒有「改用其他 email」文字連結** —— 只有圖示按鈕，不要多做一個文字連結元件
-2. 標題「輸入驗證碼」+「已寄送至 {{maskedEmail}}，10 分鐘內有效。」
-3. **驗證碼是 6 格分離輸入，不是單一輸入框**（確定答案）：6 個獨立 `<input>`，各 `56×56px`，`text-align:center`，`font-size:22px`，`font-family:'IBM Plex Mono'`，`maxlength=1`，`inputmode="numeric"`，`border-radius:9px`；focus 時 `border-color:var(--navy-2)` + bg 轉 `var(--surface)`
+2. 標題「輸入驗證碼」+「已寄送至 {{maskedEmail}}，10 分鐘內有效。」（⚠️ **10 分鐘是畫布寫錯的，實際 15 分鐘**，見 §6 的註記）
+3. **驗證碼是 6 格分離輸入，不是單一輸入框**（確定答案）：6 個獨立 `<input>`，各 `56×56px`，`text-align:center`，`font-size:22px`，`font-family:'IBM Plex Mono'`，`maxlength=1`，`border-radius:9px`；focus 時 `border-color:var(--navy-2)` + bg 轉 `var(--surface)`
+   > ⚠️ **畫布的 `inputmode="numeric"` 與只收數字的 `replace(/[^0-9]/g,'')` 都是錯的，不要照抄。**
+   > 平台的 OTP 是**數字 ＋ 大寫英文**（2026-08-29 由使用者確認）。`app/pages/login.vue` 目前的
+   > `inputmode="text"` ＋ `[^0-9A-Z]` ＋ `autocapitalize="characters"` 才是對的。
+   > 連同 §6 的 OTP 有效期，這是本文件**第二處**「畫布錯、實作對」的落差——
+   > 1a 的互動細節在畫布上是示意，不是規格，核對時要留意。
 4. 主按鈕「驗證並登入」，樣式同上
 5. 重新寄送列：左「沒收到？ {{mm:ss}} 後可重新寄送」（倒數格式 `mm:ss`），右「重新寄送」按鈕在倒數中為 disabled（`refresh-cw` icon）
 6. 錯誤狀態（虛線分隔示範）：已輸入格顯示錯誤色（`var(--warn)` 文字／`var(--warn-bg)` 底／`var(--warn-bd)` 邊）+ 錯誤訊息（`alert-circle` icon 15px）
@@ -238,6 +243,10 @@ box-shadow: var(--shadow)
 ### 1a-otp
 - 「步驟 2 / 2」
 - 「輸入驗證碼」／「已寄送至 {{maskedEmail}}，10 分鐘內有效。」
+  > ⚠️ **這裡的「10 分鐘」是畫布寫錯的，不要照抄，也不要在下次核對時把實作「訂正」回去。**
+  > 平台 OTP 的實際有效期是 **15 分鐘**，明載於使用者收到的 OTP 信件（2026-08-29 由使用者確認）。
+  > `app/pages/login.vue` 目前寫的 15 分鐘是對的。
+  > 這是本文件**兩處**「畫布錯、實作對」的落差之一，另一處是 §4.2 的 OTP 字元集。
 - 按鈕「驗證並登入」
 - 「沒收到？」＋「{{mm:ss}} 後可重新寄送」／按鈕「重新寄送」
 - 錯誤「驗證碼不正確，還可嘗試 {{n}} 次。」
