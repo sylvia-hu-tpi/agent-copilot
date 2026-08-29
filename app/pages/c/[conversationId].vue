@@ -473,6 +473,7 @@ const title = computed(() =>
         <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
         <CopilotSuggestionList
           :block="copilot.suggestions.value"
+          :cited-at="copilot.suggestionCitedAt.value"
           @retry="copilot.retry('suggestions')"
           @insert="overwriteConfirm.request($event)"
         />

@@ -47,6 +47,16 @@ export function useCopilotSession(conversationId: Ref<string>) {
   const suggestions = ref<SuggestionBlock>(emptySuggestionBlock())
   const retrying = ref<Partial<Record<'summary' | 'sentiment' | 'suggestions', boolean>>>({})
 
+  /**
+   * 004 FR-007：第二段剛把整批卡換掉的時間戳（`null` ＝ 不顯示提示）。
+   *
+   * ⚠️ **由轉移推導，不由事件旗標**（research.md #7）：伺服器送的是「現在的狀態」，
+   *    而「剛剛換過」是**消費端**的概念。做成事件欄位的話，重連快照送同一份狀態時
+   *    也會帶著旗標，客服一連上線就看到「已更新為有 SOP 依據的版本」——而什麼都沒發生。
+   *    這裡的 `prev.cards.length > 0` 正是排除那種情形：快照前 `prev` 是空 block。
+   */
+  const suggestionCitedAt = ref<number | null>(null)
+
   function handle(evt: CopilotEvent): void {
     if (!('conversationId' in evt) || evt.conversationId !== conversationId.value) return
 
@@ -57,9 +67,22 @@ export function useCopilotSession(conversationId: Ref<string>) {
       case 'sentiment.updated':
         sentiment.value = evt.sentiment
         break
-      case 'suggestion.updated':
-        suggestions.value = evt.suggestion
+      case 'suggestion.updated': {
+        const prev = suggestions.value
+        const next = evt.suggestion
+
+        // 「客服手上原本就有一批卡，現在被換成有 SOP 依據的版本」——這才需要提示（FR-007）。
+        if (prev.citation !== 'cited' && next.citation === 'cited' && prev.cards.length > 0) {
+          suggestionCitedAt.value = Date.now()
+        }
+        // 新一輪分析開始（或第二段又在跑了）→ 上一次的提示已經沒有意義，立即清除
+        if (next.status === 'analyzing' || next.citation === 'pending') {
+          suggestionCitedAt.value = null
+        }
+
+        suggestions.value = next
         break
+      }
     }
   }
 
@@ -127,7 +150,9 @@ export function useCopilotSession(conversationId: Ref<string>) {
     summary.value = emptySummaryBlock()
     sentiment.value = emptySentimentBlock()
     suggestions.value = emptySuggestionBlock()
+    // 換一個對話，上一個對話的「已更新」提示當然不該跟過來
+    suggestionCitedAt.value = null
   })
 
-  return { summary, sentiment, suggestions, hasError, retry, retryAll }
+  return { summary, sentiment, suggestions, suggestionCitedAt, hasError, retry, retryAll }
 }

@@ -19,7 +19,11 @@
 
 import type { SuggestionBlock } from '#shared/types/copilot'
 
-const props = defineProps<{ block: SuggestionBlock }>()
+/**
+ * @prop citedAt 第二段剛整批換上有 SOP 依據的卡片的時間戳（004 FR-007）。
+ *   由 `useCopilotSession()` 以**轉移**推導（見該處註解），本元件只負責顯示與淡出。
+ */
+const props = defineProps<{ block: SuggestionBlock, citedAt: number | null }>()
 const emit = defineEmits<{ retry: [], insert: [text: string] }>()
 
 const { t } = useI18n()
@@ -47,6 +51,25 @@ const readyEmpty = computed(() => props.block.status === 'ready' && props.block.
  *    也 MUST NOT 讓重試按鈕因此變成可按（FR-024：只有 `error` 可按）。
  */
 const citationPending = computed(() => props.block.citation === 'pending')
+
+/**
+ * 004 FR-007：整批換卡是**程式主動**的更新，MUST 有區塊層級的明確提示 ——
+ * 客服可能正盯著某一張卡讀到一半，內容悄悄換掉比沒有更新更糟。
+ *
+ * 提示 5 秒後自動淡出：它是「剛剛發生了什麼」的說明，不是需要處理的狀態。
+ * ⚠️ `citedAt` 變回 `null`（新一輪分析、切換對話）時 MUST 立即隱藏，不等計時器。
+ */
+const CITED_CUE_MS = 5_000
+const showCitedCue = ref(false)
+let cueTimer: ReturnType<typeof setTimeout> | undefined
+
+watch(() => props.citedAt, (at) => {
+  clearTimeout(cueTimer)
+  showCitedCue.value = at !== null
+  if (at !== null) cueTimer = setTimeout(() => { showCitedCue.value = false }, CITED_CUE_MS)
+})
+
+onBeforeUnmount(() => clearTimeout(cueTimer))
 </script>
 
 <template>
@@ -109,14 +132,28 @@ const citationPending = computed(() => props.block.citation === 'pending')
     </div>
 
     <!-- 有卡片：ready／retrying(保留舊卡)／error(曾成功過，仍顯示上次卡片) -->
-    <div v-else class="mt-3 max-h-120 space-y-2 overflow-y-auto">
-      <CopilotSuggestionCard
-        v-for="card in block.cards"
-        :key="card.id"
-        :card="card"
-        :citation="block.citation"
-        @insert="emit('insert', $event)"
-      />
+    <div v-else class="mt-3">
+      <!-- 004 FR-007：第二段整批換上有 SOP 依據的版本 —— 圖示＋文字（憲法 8.1），role="status" -->
+      <p
+        v-if="showCitedCue"
+        role="status"
+        aria-live="polite"
+        class="mb-2 flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.8125rem] transition-opacity"
+        :style="{ background: 'var(--surface-3)', color: 'var(--text-2)' }"
+      >
+        <UIcon name="i-lucide-book-check" class="size-3.5 shrink-0" />
+        {{ t('copilot.suggestion.citedUpdated') }}
+      </p>
+
+      <div class="max-h-120 space-y-2 overflow-y-auto">
+        <CopilotSuggestionCard
+          v-for="card in block.cards"
+          :key="card.id"
+          :card="card"
+          :citation="block.citation"
+          @insert="emit('insert', $event)"
+        />
+      </div>
     </div>
   </section>
 </template>
