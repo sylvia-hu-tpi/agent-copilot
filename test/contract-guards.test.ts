@@ -69,3 +69,76 @@ describe('FR-012 的門檻必須真的被接上（決策 3 的裝配點）', () 
     expect(source).not.toMatch(/from '\.\/copilot-runtime\.js'/)
   })
 })
+
+// ── specs/004-progressive-citations（research.md #8、data-model.md §4、contracts §3）──
+
+describe('004 契約：檢索逾時只有一個數字', () => {
+  const serverFiles = filesUnder(resolve(ROOT, 'server'), ['.ts'])
+
+  it('掃描確實看得到 server/ 的檔案（否則這支守衛等於沒在驗）', () => {
+    expect(serverFiles.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * `SUGGESTION_RETRIEVAL_TIMEOUT_MS`（8 秒）已於 004 刪除，建議卡路徑改與快查共用
+   * `KNOWLEDGE_SEARCH_TIMEOUT_MS`（30 秒）。
+   *
+   * ⚠️ 守住的是「**不要再長回兩個數字**」：002 的教訓是兩個並存的逾時值會各自漂移，
+   *    而漂移的症狀（建議卡永遠拿不到引用）不報錯、不影響型別、測試也全綠。
+   *    留一個 `= KNOWLEDGE_SEARCH_TIMEOUT_MS` 的別名同樣不行 —— 別名日後照樣會被改成別的數字。
+   */
+  it('server/ 底下不存在 SUGGESTION_RETRIEVAL_TIMEOUT_MS', () => {
+    const offenders = serverFiles.filter(f => readFileSync(f, 'utf8').includes('SUGGESTION_RETRIEVAL_TIMEOUT_MS'))
+    expect(offenders.map(f => f.replace(ROOT, '.').replace(/\\/g, '/'))).toEqual([])
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 對著含該字串的內容必須抓得出來', () => {
+    expect('const SUGGESTION_RETRIEVAL_TIMEOUT_MS = 8_000'.includes('SUGGESTION_RETRIEVAL_TIMEOUT_MS')).toBe(true)
+  })
+})
+
+describe('004 契約：尾巴是 server-only 的控制流狀態', () => {
+  const sharedFiles = filesUnder(resolve(ROOT, 'shared'), ['.ts'])
+
+  /**
+   * `suggestionTails`／`citedLanded` 是第二段的世代與競態控制（data-model.md §4），
+   * **不是分析結果**。一旦被搬進 `shared/`（＝進了 `SuggestionBlock` 之類的型別），
+   * 就會隨 `publishBlock()` 送出的整個 block 流到瀏覽器 —— 對外契約被默默改掉，
+   * 而 `npm run typecheck` 一聲不吭。理由與上方契約 1.1 的 `failedBatches` 完全相同。
+   */
+  it('shared/ 底下不存在 suggestionTails／citedLanded', () => {
+    const offenders = sharedFiles.filter((f) => {
+      const source = readFileSync(f, 'utf8')
+      return source.includes('suggestionTails') || source.includes('citedLanded')
+    })
+    expect(offenders.map(f => f.replace(ROOT, '.').replace(/\\/g, '/'))).toEqual([])
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 對著含該字串的內容必須抓得出來', () => {
+    expect('interface X { citedLanded: boolean }'.includes('citedLanded')).toBe(true)
+    expect('const suggestionTails = new Map()'.includes('suggestionTails')).toBe(true)
+  })
+})
+
+describe('004 FR-008：程式主動更新 MUST NOT 碰 Composer 草稿', () => {
+  const SOURCE_PATH = 'app/composables/useCopilotSession.ts'
+
+  /**
+   * 第二段整批換卡是**程式主動**的更新，而客服可能正在 Composer 裡改一鍵帶入的內容。
+   * 這個 composable 只該覆蓋 `suggestions` ref；一旦它碰得到 `useDraft()`，
+   * 「更新時 Composer 一字不變」就只剩下慣例在守，而違反它的症狀是客服打到一半的字被清掉 ——
+   * 不報錯、不影響型別。
+   *
+   * ⚠️ 這是**靜態**守衛，不等於 SC-003 的行為驗證（見 004 contracts §3 的註記）。
+   */
+  it('useCopilotSession.ts 不得出現 useDraft', () => {
+    const source = readFileSync(resolve(ROOT, SOURCE_PATH), 'utf8')
+    expect(source).not.toContain('useDraft')
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 檔案讀得到且對著含該字串的內容抓得出來', () => {
+    const source = readFileSync(resolve(ROOT, SOURCE_PATH), 'utf8')
+    expect(source.length).toBeGreaterThan(0)
+    expect('const draft = useDraft(id)'.includes('useDraft')).toBe(true)
+  })
+})
