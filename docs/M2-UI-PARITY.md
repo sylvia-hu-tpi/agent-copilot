@@ -401,3 +401,19 @@
 > （`background:var(--navy)`／`color:var(--navy-fg)`／`padding:3px 9px`／`radius:5px`），
 > 實作全部用成 `.ac-status-label`（灰色純文字）。這與 `COPILOT` 徽章是同一個錯，
 > 第一輪只改了 header 那一顆。現已統一在 `BlockShell.vue` 用 `.ac-eyebrow`。
+
+## 2026-08-30 使用者在真實環境回報的四項
+
+| # | 問題 | 處理 |
+|---|---|---|
+| R-1 | 6.4 MB 的畫布 HTML | ✅ **不進版控**，先留在 worktree |
+| R-2 | 面板五個區塊**預設全部收合**，應該全部展開 | ✅ **已修**。根因是 Vue 的 **boolean prop casting**：宣告為 boolean 的 prop 沒傳值時是 `false` 而非 `undefined`，所以 `props.defaultOpen ?? true` 永遠拿到 `false`。改用 `withDefaults`。⚠️ 型別檢查與測試對這個錯**完全沒有反應** |
+| R-3 | 關分頁後再進入已 JOIN 的對話：面板會自動展開並跑分析，但知識庫快查回「需先加入對話」；LEAVE 再 JOIN 才好 | ✅ **已修**。根因是**三個「有沒有 JOIN」的來源不同步**：前端讀平台詳情的 `is_joined`（對）、面板靠 presence 心跳帶來的 `joined` 旗標（對）、而快查查的是只有 `join.post.ts` 會寫的**記憶體** registry（伺服器重啟後為空）。新增 `isViewerJoined()`：記憶體優先，查不到就用**該客服自己的 token** 回平台確認並回填。⚠️ MUST NOT 改成信任前端傳來的 `joined` 旗標——那是伺服器端的授權判斷（FR-025） |
+| R-4 | 選完組織後轉場閃過「此帳號尚未加入任何組織」 | ✅ **已修**。`GET /api/auth/me` 對 `active` 的 session 不回傳 `organizations`（該欄位只存在於 `PendingOrgSession`），所以選完後 `auth.organizations` 立刻變空陣列，而空狀態的條件只看長度。改成只在 `stage === 'pending_org'` 時才顯示 |
+| R-5 | 1b 文案「之後可從**右**上角切換」 | ✅ **已修為「左上角」**。畫布**自相矛盾**：1b 文案寫右上角，但畫布自己的 1c 頂列把組織名放在左邊。已記入 `DESIGN_TOKENS.md` §6 的第三處「畫布錯、實作對」 |
+
+### 仍未關閉（續）
+
+| # | 問題 |
+|---|---|
+| **U-3** | ⚠️ **「切換組織」完全沒有實作**，而 1b 的文案正在對使用者承諾它。頂欄的組織名連到 `/organization`，但重新 exchange 需要 `loginToken`，它只存在於 `PendingOrgSession`，選完組織後就沒有了。連帶：`console.vue` 的 chevron 判斷 `auth.organizations.length > 1` 對 active session 永遠是 `false`，所以**那個下拉指示從來沒出現過**。R-4 的修正順手讓已 active 的人從該頁導回工作區——那是**掩蓋症狀的權宜之計，不是修好**。真正的修法要先決定：要不要把 `loginToken` 留在 active session 裡（安全取捨），或改成「回到選組織」的獨立流程 |
