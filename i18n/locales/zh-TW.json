@@ -130,6 +130,7 @@
       "retrying": "重試中 ({attempt}/2)",
       "error": "暫時無法分析",
       "attachmentMarker": "客戶傳送附件",
+      "singlePoint": "僅一次評分，尚不足以看出走勢",
       "label": {
         "calm": "平靜",
         "neutral": "普通",

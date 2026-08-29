@@ -24,6 +24,7 @@ import {
   hasSuggestionTail,
   lastCoveredMessageId,
   newCustomerMessagesSince,
+  recoverColdStart,
   runIncremental,
   settleOrphanedPendingCitation,
 } from '../services/copilot-analysis.js'
@@ -202,7 +203,19 @@ export default defineEventHandler(async (event) => {
   ): Promise<void> {
     try {
       let analysisState = await store.getAnalysisState(conversationId)
-      if (!analysisState) return
+
+      /**
+       * ⚠️ **重啟復原**：沒有分析狀態，但這條連線對該對話**已 JOIN**（呼叫端的門檻）。
+       * 平台側的 JOIN 是持久的，而 `CopilotAnalysisState` 隨程序消失 —— 兩者不同步時，
+       * 原本這裡直接 `return`，面板就**永遠空白、沒有日誌、不報錯**。
+       * 補跑冷啟動後結果會經 `forward()` 推到這條連線（`offTopic` 在 attach 一開始就訂閱了），
+       * 因此這裡不必、也不能再送一次快照 —— 狀態此刻還不存在。
+       */
+      if (!analysisState) {
+        const history = await runtime.messageSource.fetchSince(conversationId)
+        await recoverColdStart(conversationId, history, aiReplies)
+        return
+      }
 
       /**
        * ⚠️ **004 契約 §4**：`citation: 'pending'` 代表「第二段還在跑」，而尾巴是**執行期**

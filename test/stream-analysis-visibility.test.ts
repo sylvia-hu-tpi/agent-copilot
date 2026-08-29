@@ -23,6 +23,7 @@ import { createWatchRegistry, shouldForwardToConnection } from '../server/utils/
 import {
   awaitSuggestionTail,
   hasSuggestionTail,
+  recoverColdStart,
   runColdStart,
   settleOrphanedPendingCitation,
 } from '../server/services/copilot-analysis.js'
@@ -32,6 +33,7 @@ import { setKnowledgeProvider } from '../server/services/knowledge/index.js'
 import { MockKnowledgeProvider } from '../server/services/knowledge/mock-knowledge-provider.js'
 import { useStateStore } from '../server/state/index.js'
 import type { CopilotEvent } from '../shared/types/events.js'
+import type { Message } from '../shared/types/conversation.js'
 
 const ANALYSIS_EVENTS: Array<CopilotEvent['type']> = [
   'summary.updated',
@@ -253,5 +255,80 @@ describe('契約 §4：重連快照不得送出無人接手的 pending（004 T01
     await vi.advanceTimersByTimeAsync(5_000)
     await awaitSuggestionTail(id)
     vi.useRealTimers()
+  })
+})
+
+/**
+ * 重啟復原：已 JOIN 但沒有 `CopilotAnalysisState` 的對話 MUST 補跑冷啟動。
+ *
+ * ⚠️ 這是 2026-08-28 真實環境撞到四次的缺陷：平台側的 JOIN 是持久的，而
+ *    `CopilotAnalysisState` 隨程序消失。兩者不同步時，重連快照原本直接 `return`，
+ *    於是**面板永遠空白、沒有日誌、不報錯**——唯一的復原方式是客服自己想到 LEAVE 再 JOIN。
+ *    症狀完全沉默，因此非有測試不可。
+ */
+describe('重啟復原：已 JOIN 但狀態不存在時補跑冷啟動', () => {
+  const customer = (id: string, convId: string): Message => ({
+    id,
+    conversationId: convId,
+    at: new Date().toISOString(),
+    sender: { type: 'customer', id: 'con_1' },
+    text: '客戶：我要退貨',
+  })
+
+  it('沒有分析狀態 → 補跑冷啟動並建立狀態', async () => {
+    const id = `conv-recover-${Date.now()}`
+    setAIProvider(new MockAIProvider())
+    setKnowledgeProvider(new MockKnowledgeProvider())
+
+    expect(await useStateStore().getAnalysisState(id)).toBeNull()
+
+    await recoverColdStart(id, [customer('m_r1', id)], false)
+    await awaitSuggestionTail(id)
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state).not.toBeNull()
+    expect(state!.summaryBlock.status).toBe('ready')
+    expect(state!.sentimentBlock.status).toBe('ready')
+  })
+
+  it('已經有分析狀態 → MUST NOT 再跑一次（不浪費 AI 呼叫）', async () => {
+    const id = `conv-recover-existing-${Date.now()}`
+    let summarizeCalls = 0
+    setAIProvider(new (class extends MockAIProvider {
+      override async summarize(input: Parameters<MockAIProvider['summarize']>[0]) {
+        summarizeCalls++
+        return super.summarize(input)
+      }
+    })())
+    setKnowledgeProvider(new MockKnowledgeProvider())
+
+    await recoverColdStart(id, [customer('m_r2', id)], false)
+    await awaitSuggestionTail(id)
+    const after = summarizeCalls
+    expect(after).toBeGreaterThan(0)
+
+    await recoverColdStart(id, [customer('m_r2', id)], false)
+    expect(summarizeCalls).toBe(after)
+  })
+
+  it('同一對話的兩條連線同時復原 → 只跑一次（多分頁不會各付一次 AI 成本）', async () => {
+    const id = `conv-recover-race-${Date.now()}`
+    let summarizeCalls = 0
+    setAIProvider(new (class extends MockAIProvider {
+      override async summarize(input: Parameters<MockAIProvider['summarize']>[0]) {
+        summarizeCalls++
+        return super.summarize(input)
+      }
+    })())
+    setKnowledgeProvider(new MockKnowledgeProvider())
+
+    const history = [customer('m_r3', id)]
+    await Promise.all([
+      recoverColdStart(id, history, false),
+      recoverColdStart(id, history, false),
+    ])
+    await awaitSuggestionTail(id)
+
+    expect(summarizeCalls).toBe(1)
   })
 })

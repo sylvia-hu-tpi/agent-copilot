@@ -1928,11 +1928,13 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       移除時無條件 filter，同一客服關掉一個分頁即歸零 → `deleteCopilotSession()` 被呼叫。
       ⚠️ 同一函式裡的 `pipeline.refs` **有** refcount 且正確——同一件事兩個計數器給出不同答案，
       這個不變式破裂本身就是 bug 的形狀。症狀較輕：錨點不再前推，自己送出的訊息會被當新訊息再 fan-out
-- [ ] **`runColdStart()` 重啟復原缺口**：`CopilotAnalysisState` 只由 `join.post.ts` 建立，
-      而平台側的 JOIN 是持久的。伺服器重啟後客服畫面仍顯示「已接手」、面板照常展開，
-      但 `runIncremental()` 卡在 `if (!state) return` → **面板永遠空白、無日誌、不報錯**。
-      ⚠️ **開發時每次重啟 dev server 都要 LEAVE 再 JOIN**，否則面板不會有東西。
-      M4 換 Redis 後自然消失，在那之前每次部署都會讓所有已接手對話的面板變空白
+- [x] **`runColdStart()` 重啟復原缺口已修**（2026-08-29）：`CopilotAnalysisState` 原本只由
+      `join.post.ts` 建立，而平台側的 JOIN 是持久的。伺服器重啟後客服畫面仍顯示「已接手」、
+      面板照常展開，但 `runIncremental()` 卡在 `if (!state) return` → **面板永遠空白、無日誌、
+      不報錯**，唯一復原方式是客服自己想到 LEAVE 再 JOIN。
+      修法：`sendAnalysisSnapshotAndResume()` 發現沒有狀態時補跑冷啟動（`recoverColdStart()`，
+      限已 JOIN 的連線）。代價是重啟後每個已 JOIN 且有連線的對話各跑一次冷啟動，
+      刻意接受——它換回的正是 JOIN 當初承諾的東西。M4 換 Redis 後此路徑不再觸發
 - [ ] **第一層清單輪詢會在同一個程序生命週期內安靜地停止偵測**（2026-08-29 由 `smoke:realtime`
       ⑤／⑥ 定位）：同一支 smoke 前段（①）客戶訊息 3007ms 被偵測到，到 ⑤ 時同樣的推送要
       **15019ms**——分毫不差等於 `POLL_BACKGROUND_JOINED_MS`，即第二層自己的計時器，
@@ -1944,9 +1946,10 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       ⚠️ **MUST NOT 靠放寬測試門檻收掉**：若真實環境亦然，客服會從 3 秒變 15 秒看到訊息且無任何錯誤，
       §18 M1 的「4 秒內看到」會在無人察覺下失效。⚠️ 早於 004（已在 `dcabc18` 重建重跑，症狀相同）；
       連帶使 `smoke:realtime` 跑不完，004 新增的場景 ⑦ 排在 ⑤ 之後而執行不到
-- [ ] **`SentimentGauge.vue` 恰好 1 點時畫出無說明的空白框**：`hasContent` 用 `timeline.length > 0`
-      決定是否渲染，折線卻要 `pointsOnly.length > 1`。恰好 1 點時走進繪圖分支卻畫不出線，
-      呈現一個 64px 高、無數字無文字的空白框。缺少「有資料但不足以繪圖」這個狀態
+- [x] **`SentimentGauge.vue` 恰好 1 點的空白框已修**（2026-08-29）：`hasContent` 用
+      `timeline.length > 0` 決定是否渲染，折線卻要 `pointsOnly.length > 1`；恰好 1 點時走進
+      繪圖分支卻畫不出線，呈現一個 64px 高、無數字無文字的空白框。補上「有資料但不足以繪圖」
+      這個狀態——以圓點呈現那一個分數（分數本身仍是資訊，不該留白）＋一行說明
 - [ ] **自動恢復不補算先前失敗的批次**：故障排除後由新發言觸發的恢復走 `runIncremental()`，
       只拿到新訊息，先前失敗那批的情緒點永久缺席（除非重新 JOIN 走冷啟動）。
       `SENTIMENT_CHUNK_SIZE` 的註解只承諾了手動 `retryBlock()` 會全部重算，未涵蓋這條路徑。

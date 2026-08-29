@@ -1325,6 +1325,52 @@ export async function runColdStart(conversationId: string, history: Message[], a
 }
 
 /**
+ * 程序重啟後的冷啟動復原 —— 目前進行中的對話（避免同一個對話被多條連線同時復原）。
+ * ⚠️ 只是「省下重複的那一次」，不是保證層：真正讓它收斂的是 `runColdStart()` 一開始就
+ *    `ensureState()`，狀態一旦建立，後續 attach 就不會再走到這條路。
+ */
+const coldStartRecoveries = new Set<string>()
+
+/**
+ * **重啟復原**：已 JOIN 但沒有 `CopilotAnalysisState` 的對話，補跑一次冷啟動。
+ *
+ * ⚠️ **為什麼需要它**：`CopilotAnalysisState` 原本只由 `join.post.ts` 建立，而**平台側的
+ *    JOIN 是持久的**。伺服器重啟會清空 `MemoryStateStore`，客服重新連上後畫面仍顯示
+ *    「已接手」、面板照常展開，但 `runIncremental()` 卡在開頭的 `if (!state) return` ——
+ *    **面板永遠空白、沒有日誌、不報錯**，唯一的復原方式是客服自己想到要 LEAVE 再 JOIN。
+ *    開發時每次重啟 dev server 都會遇到（2026-08-28 一個晚上撞到四次）。
+ *
+ * ⚠️ **代價**：重啟後每個「已 JOIN 且有連線」的對話都會重跑一次冷啟動（三個區塊各一次
+ *    AI 呼叫）。這是刻意接受的——它換回的正是 JOIN 當初承諾的東西，且量級受限於
+ *    「客服實際接手的對話數」。M4 換上 Redis 後狀態跨重啟保留，這條路徑自然不再觸發。
+ *
+ * ⚠️ 呼叫端 MUST 先確認**這條連線對該對話已 JOIN**（003 FR-003／FR-016a）——
+ *    未 JOIN 的對話不該為此付出任何 AI 成本。
+ */
+export async function recoverColdStart(
+  conversationId: string,
+  history: Message[],
+  aiReplies: boolean,
+): Promise<void> {
+  if (coldStartRecoveries.has(conversationId)) return
+  // ⚠️ 佔位 MUST 在**任何 `await` 之前**：下面那行狀態檢查是 async，會讓出 microtask，
+  //    先查再佔位的話，同一客服的兩個分頁會雙雙通過檢查、各跑一次完整冷啟動
+  //    （三個區塊各一次 AI 呼叫）。`runBlockDeduped()` 擋不住這個——它合併的是
+  //    「同一區塊的併發」，而這裡是兩份各自完整的冷啟動。
+  coldStartRecoveries.add(conversationId)
+  try {
+    // 取歷史那段時間內可能已經有別人建立了狀態 —— 再確認一次，這不是多餘的
+    if (await useStateStore().getAnalysisState(conversationId)) return
+
+    console.warn(`[copilot-analysis] ${conversationId} 沒有分析狀態但已 JOIN —— 補跑冷啟動（重啟復原）`)
+    await runColdStart(conversationId, history, aiReplies)
+  }
+  finally {
+    coldStartRecoveries.delete(conversationId)
+  }
+}
+
+/**
  * 背景並行節流（憲法 6.2、specs/002-suggestion-knowledge-search research.md #9）——
  * 同時進行背景重算的對話數量上限；globalThis-keyed 是為了比照既有單例的 HMR 安全模式，
  * 這份狀態本質類似 `debounceTimers`：純執行期狀態，程序重啟後全部中斷重來也無妨。
