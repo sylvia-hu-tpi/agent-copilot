@@ -231,6 +231,107 @@ async function runLeaveStopsAnalysis(a: HttpClient, gateway: NitroHarness['gatew
   stream.close()
 }
 
+/**
+ * ⑦ 建議卡的漸進式引用：SSE 上依序收到 `ready/pending` 與 `ready/cited`
+ * （specs/004-progressive-citations US1／US2、SC-001／SC-002）。
+ *
+ * 獨立起一份 server 並以 `AC_SMOKE_KNOWLEDGE_DELAY_MS` 給檢索一個人為延遲 ——
+ * Mock 檢索本身是零延遲的，不拉開就看不到中間狀態，這條序列會退化成一則事件。
+ *
+ * ⚠️ **這裡驗的是 HTTP／SSE 這一層的序列**，兩段之間的交錯規則（誰不得蓋誰、呼叫幾次）
+ *    已由 `test/copilot-analysis.test.ts` 的 `describe('兩段式（004 US1）')` 涵蓋，不重複。
+ *
+ * ⚠️ **SC-003（第二段更新時 Composer 一字不變）在這一層驗不到，MUST NOT 寫成已驗證。**
+ *    本 harness 不含瀏覽器，看不到 Composer 的實際內容。它由
+ *    `test/contract-guards.test.ts` 的原始碼守衛（`useCopilotSession` 不得 import `useDraft`）
+ *    與 quickstart US2 的手動場景各守一半。
+ *
+ *    ⚠️ **2026-08-29 實測推翻了兩種「弱代理」寫法**，記錄於此以免有人再寫一次：
+ *      ① 「兩則事件之間不存在任何非 `suggestion.updated` 的對話事件」—— `messages.appended`
+ *         （正常訊息流量）與冷啟動的 `summary.updated`／`sentiment.updated` 本來就會落在
+ *         中間，而它們與 Composer 無關；
+ *      ② 「兩則之間恰好只有一則 `suggestion.updated`」—— 第二層輪詢在這 2 秒內會為新訊息
+ *         另起一輪分析，中間本來就會多出 `analyzing`／`pending`。
+ *    兩者都恆紅，而且驗的都不是 SC-003。**寧可不驗，也不要留一個看起來像驗過的假斷言。**
+ */
+async function runProgressiveCitationScenario(): Promise<void> {
+  console.log('\n── ⑦ 建議卡漸進式引用：ready/pending → ready/cited（004 US1）──────')
+
+  let harness: NitroHarness | undefined
+  try {
+    harness = await startNitro({
+      port: 3126,
+      env: { AC_SMOKE_KNOWLEDGE_DELAY_MS: '2000' },
+    })
+    const a = harness.client()
+    await a.signIn('agent@example.com')
+
+    await a.call(`/api/conversations/${CONV}`)
+    const joined = await a.call(`/api/conversations/${CONV}/join`, {
+      method: 'POST', body: JSON.stringify({ mode: 'manual' }),
+    })
+    check('⑦ A 成功 JOIN', joined.status === 200, `實際 ${joined.status}`)
+
+    const stream = await watch(a, 'browser-a-citation', true)
+
+    const pending = await stream.waitFor(
+      e => e.type === 'suggestion.updated' && e.suggestion.status === 'ready' && e.suggestion.citation === 'pending',
+      { label: '⑦ 第一段落地（ready/pending）', timeoutMs: 15_000 },
+    )
+    check(
+      '⑦ 第一段在檢索完成前就落地為 ready/pending（FR-001：先給可用的卡）',
+      pending.event.type === 'suggestion.updated' && pending.event.suggestion.citation === 'pending',
+    )
+    check(
+      '⑦ 第一段確實帶著卡片（`pending` 不是一個空狀態）',
+      pending.event.type === 'suggestion.updated' && pending.event.suggestion.cards.length > 0,
+      pending.event.type === 'suggestion.updated' ? `${pending.event.suggestion.cards.length} 張` : '',
+    )
+
+    const cursorAfterPending = stream.cursor()
+    const cited = await stream.waitFor(
+      e => e.type === 'suggestion.updated' && e.suggestion.status === 'ready' && e.suggestion.citation === 'cited',
+      { since: cursorAfterPending, label: '⑦ 第二段整批換上（ready/cited）', timeoutMs: 30_000 },
+    )
+    check(
+      '⑦ 第二段在第一段**之後**才落地，且標示為 cited（順序本身就是驗收項）',
+      cited.at >= pending.at
+      && cited.event.type === 'suggestion.updated'
+      && cited.event.suggestion.provenance.stage === 2,
+      cited.event.type === 'suggestion.updated' ? JSON.stringify(cited.event.suggestion.provenance) : '',
+    )
+    check(
+      '⑦ 第二段的 knowledgeSearch 記下真實命中數（憲法 6.2 的可稽核證據）',
+      cited.event.type === 'suggestion.updated'
+      && cited.event.suggestion.knowledgeSearch.ran
+      && cited.event.suggestion.knowledgeSearch.hitCount > 0,
+      cited.event.type === 'suggestion.updated' ? JSON.stringify(cited.event.suggestion.knowledgeSearch) : '',
+    )
+
+    // 整塊覆蓋（契約 §2、FR-010）：每一則 `suggestion.updated` 都帶著**完整**的 block，
+    // 不是 partial merge、更不是逐字串流的片段。這條在事件層級驗得到，而且恆真。
+    check(
+      '⑦ 第二段送的是完整 block（整塊覆蓋，非 partial merge／逐字串流）',
+      cited.event.type === 'suggestion.updated'
+      && cited.event.suggestion.cards.length > 0
+      && cited.event.suggestion.cards.every(c => typeof c.text === 'string' && c.text.length > 0)
+      && typeof cited.event.suggestion.updatedAt === 'string',
+    )
+
+    // ⚠️ **SC-003 在這一層驗不到**（見本函式開頭）。這行不是 check()，因為沒有可斷言的東西 ——
+    //    寫成 check() 只會製造「已經驗過了」的錯覺，那比沒有驗更糟。
+    console.log('  ℹ️  SC-003（更新時 Composer 一字不變）不在本 harness 的涵蓋範圍：'
+      + '靜態面由 test/contract-guards.test.ts 守（useCopilotSession 不得 import useDraft），'
+      + '行為面由 quickstart US2 的手動場景驗')
+
+    stream.close()
+    await sleep(300)
+  }
+  finally {
+    await harness?.close()
+  }
+}
+
 async function main(): Promise<void> {
   let harness: NitroHarness | undefined
 
@@ -590,6 +691,7 @@ async function main(): Promise<void> {
   }
 
   await runFaultInjectionScenario()
+  await runProgressiveCitationScenario()
 
   console.log(
     failures === 0
