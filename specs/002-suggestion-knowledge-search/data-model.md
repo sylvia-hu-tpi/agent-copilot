@@ -95,6 +95,7 @@ export interface KnowledgeProvider {
    *                       ⚠️ 建議卡生成的檢索 MUST 明確傳入 SUGGESTION_RETRIEVAL_TIMEOUT_MS，
    *                       MUST NOT 沿用這個預設 —— 那條路徑受 SC-001 的 10 秒約束，
    *                       沿用快查的長逾時會讓建議卡遲到（見該常數註解）。
+   *                       （⚠️ 2026-08-29：SC-001 已改為 20 秒，且 004 FR-003 以「第二段等檢索 30 秒」取代這個 8 秒短逾時；本段描述的是兩段式落地前的現況）
    */
   search(query: string, opts?: { topK?: number, fileId?: string, timeoutMs?: number }): Promise<KnowledgeHit[]>
 }
