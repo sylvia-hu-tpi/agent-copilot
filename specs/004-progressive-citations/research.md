@@ -65,10 +65,15 @@ detached promise（下稱**尾巴**，tail）在鎖外繼續跑，並登記在�
 
 ## #3 「命中已在手」的來源只有一個：上一世代的檢索備忘
 
-**決定**：FR-005 的「第一段尚未啟動而命中結果已在手」只在**同一對話、同一批次錨點**下成立，
+**決定**：FR-005 的「第一段尚未啟動而檢索結果已在手」只在**同一對話、同一批次錨點**下成立，
 來源是尾巴留下的備忘 `lastRetrieval: { anchor, hits, at }`（放在 `suggestionTails` 同一筆記錄）。
 新世代啟動時若 `anchor` 相同且備忘存在 → **不啟動第一段**，直接以備忘的 hits 跑單段（`citation` 依
-hits 是否 > 0 為 `'cited'`／`'none'`）。備忘在世代更替時被下一次的檢索結果覆蓋，不另設 TTL
+hits 是否 > 0 為 `'cited'`／`'none'`）。
+
+⚠️ **判準是「備忘存在」，不是「`hits.length > 0`」**（2026-08-29 第二輪 `/speckit-analyze` 裁決）：
+`hits` 為空陣列同樣走這條路——單段照樣重新生成一批卡（標示落定 `'none'`），但不再發一次檢索。
+理由：同一批訊息、同一個 query，知識庫在數十秒內不會改變，重查幾乎必然仍是 0 筆，
+卻要多花 9.4～20.1 秒把重試結果整輪拖慢；而客服按重試要的是「卡片生出來」，那件事照做。備忘在世代更替時被下一次的檢索結果覆蓋，不另設 TTL
 （它跟著 `suggestionTails` 這筆執行期狀態走），並在 `cancelPendingAnalysis()`（LEAVE）時
 連同整筆登記一起 `delete`——LEAVE 後沒有人能按重試，備忘從那一刻起就沒有意義，
 留著只是讓 Map 逐對話累積（2026-08-29 `/speckit-analyze` 補上，見 data-model.md §4）。
@@ -109,6 +114,13 @@ interface WithRetryOptions {
 `tailAbort` 在「新世代啟動」或「`cancelPendingAnalysis()`（LEAVE）」時被 abort。
 **abort 只在退避等待與「下一次呼叫送出前」生效**，已在飛的呼叫讓它跑完（spec Q2 決議：已付費的結果
 不丟；它落地後若第二段已到，由世代內的 `citedLanded` 旗標擋下不寫入）。
+
+⚠️ **`stage1Abort` 觸發後 MUST 有人負責收斂 `status`**（2026-08-29 第二輪 `/speckit-analyze` 補，
+spec FR-003a ②）。第一段的 `RetryAbortedError` 是**靜默返回、不改 `status`** 的——這在第二段成功時
+沒問題（第二段會寫 `ready/cited`），但第二段若接著失敗，`cards` 是空的而 `status` 停在
+`'analyzing'`／`'retrying'`，畫面永遠是「重試中 (n/2)」且不報錯。因此尾巴的 `settleNone()`
+在 `stage1Settled` 為 `'aborted'` 時 MUST `finishBlockError()`。這是「省一次第一段重試呼叫」
+這個最佳化的必要對價，不能只取好處。
 
 ⚠️ **兩個 signal MUST 分開**（2026-08-29 `/speckit-analyze` 修訂）。原設計只有一個 `abort`，
 於是第二段在成功路徑上先把它 abort 掉去擋第一段的重試，之後 LEAVE 再 abort 就是 no-op ——

@@ -76,7 +76,7 @@
 | **四、AI 輸出必須可驗證** | 兩段都是模型輸出 | ✅ 通過。兩段各自 Zod（4.2）→ 白名單整卡捨棄（4.3，第二段以第二段的 hits 為白名單）→ `confidence` 歸零（4.4）。**4.5 是本功能存在的理由**：第二段重新生成而非為第一段補掛來源，讓卡片文字與來源的因果關係真實成立（spec Clarifications Q1） |
 | **五、AI 產物寫入正式紀錄** | 不適用 | 不寫 Data Board |
 | **六、資源使用** | 6.2 的「MUST NOT 略過檢索」與背景節流 | ✅ 通過（**依 v3.0.2**）。每**批**恰好發出一次檢索、該批的兩段生成都建立在那次檢索的真實結果上（`knowledgeSearch.ran` 恆 `true`）；FR-005 的重試路徑沿用同一批次已完成的檢索備忘，同樣不是「略過」。⚠️ 憲法 6.2 原以「每一次**生成**」為量詞，兩段式在同一批內生成兩次會違反其字面——已於 **v3.0.2 澄清為「每一批至少一次」**（憲法附錄 C，2026-08-29，本規格的 `/speckit-analyze` 提出）。背景維持單段且沿用並行上限與 debounce；前景多一次呼叫是 spec 明示接受的成本，且有上限與稽核（FR-014／SC-005）。6.3（patch）：SSE 仍整塊覆蓋，是既有慣例，不新增違反 |
-| **七、協同與資料一致性** | 不動 JOIN／LEAVE／送出；FR-008 的 Composer 保護；7.2 的撞單保護 | ✅ 通過。`useCopilotSession` 只覆蓋 `suggestions` ref，Composer 草稿走 `useDraft()`（localStorage）與元件自身狀態，兩者無共用路徑；以契約守衛（不得 import `useDraft`）守住。LEAVE 時 `cancelPendingAnalysis()` abort 尾巴的 `tailAbort` 並移除該筆登記（003 FR-013 的延伸：沒人 JOIN 就不花第二段的錢）——**這條要成立，第二段的呼叫必須真的吃 `tailAbort.signal`**，否則只是一句沒有機制支撐的宣稱（見 Constraints 的兩個 controller）。7.2：第二段整批換卡 MUST 重新套用搶答標記（FR-015），否則同事已回覆過的建議會以未標記的新卡復活 |
+| **七、協同與資料一致性** | 不動 JOIN／LEAVE／送出；FR-008 的 Composer 保護；7.2 的撞單保護 | ✅ 通過。`useCopilotSession` 只覆蓋 `suggestions` ref，Composer 草稿走 `useDraft()`（localStorage）與元件自身狀態，兩者無共用路徑；以契約守衛（不得 import `useDraft`）守住。LEAVE 時 `cancelPendingAnalysis()` abort 尾巴的 `tailAbort` 並移除該筆登記（003 FR-013 的延伸：沒人 JOIN 就不花第二段的錢）——**這條要成立，第二段的呼叫必須真的吃 `tailAbort.signal`**，否則只是一句沒有機制支撐的宣稱（見 Constraints 的兩個 controller）。7.2：第二段整批換卡 MUST 重新套用搶答標記（FR-015），否則同事已回覆過的建議會以未標記的新卡復活——**這條要成立，判定用的回覆必須真的存得到**：由 `checkSuggestionsSuperseded()` 在訊息抵達當下寫進 `tail.repliesDuringTail`（2026-08-29 第二輪裁決；原寫「以當下歷史重跑」在分析函式手上的那份歷史裡找不到任何同事回覆，會靜默 no-op，本列的 ✅ 就只是一句沒有機制支撐的宣稱——與本表上一列曾犯的是同一種錯）。⚠️ 涵蓋範圍限於**前景第二段**：背景單段與「命中已在手」單段沒有尾巴、沒有留存位置，殘餘風險有界且已明列（data-model.md §8） |
 | **八、介面與無障礙** | 8.1／8.5 | ✅ 通過。更新提示與「檢索中」標頭皆為圖示＋文字，`role="status"`（8.1）；新文案入 i18n（8.5）；不新增互動元素（8.2 不受影響）；8.4 由 FR-008 反向保證（程式主動更新 MUST NOT 碰草稿） |
 | **九、渲染與部署** | `suggestionTails` 是單副本執行期狀態 | ✅ 通過，限制與 003 的 `analysisInFlight` 相同：9.2 換 Redis 前只有單副本，屆時尾巴登記需一併搬（已在 data-model.md §4 註明） |
 
@@ -93,6 +93,14 @@
 ② 第二段未吃 `signal`，第七條「LEAVE 不花第二段的錢」原本沒有機制支撐 → 拆兩個 `AbortController`；
 ③ 搶答標記會被第二段整批覆蓋抹掉 → 新增 FR-015（第七條 7.2 一列）；
 ④ `SUGGESTION_STAGE2_CALL_TIMEOUT_MS` 裁決為 20 秒。其餘十項為文件一致性與任務排序，見 tasks.md。
+
+**`/speckit-analyze` 第二輪後修訂（2026-08-29，仍在動工前）**：複查找出 13 項，影響本表的有兩項——
+① **新增 FR-003a 的兩條收斂規則**：落定「未引用」前 MUST 等第一段落定（否則檢索先回時標示會被寫回
+「尚未引用」而永遠卡住），以及第一段被取消且第二段又失敗時 MUST 轉錯誤狀態（否則永遠停在「重試中」）。
+兩者都不新增依賴、不新增持久化形狀，第三條的「靜默降級」精神不變——降級的前提本來就是「客服手上有可用的卡」，
+第二條處理的正是那個前提不成立的路徑；
+② **FR-015 的回覆來源定案**（見第七條該列）。其餘十一項為文件一致性、命名漂移（`mode`→`strategy`
+三處漏改）與測試補強，見 tasks.md「第二輪」。上表其餘結論不變。
 
 ## Project Structure
 
@@ -122,14 +130,17 @@ server/
 │   │   └── retry-policy.ts                 # MODIFIED — WithRetryOptions 加 maxRetries／signal；RetryAbortedError
 │   ├── knowledge/
 │   │   ├── agent-knowledge-provider.ts     # MODIFIED — 刪除 SUGGESTION_RETRIEVAL_TIMEOUT_MS 與其註解
-│   │   └── mock-knowledge-provider.ts      # MODIFIED — 讀 AC_SMOKE_KNOWLEDGE_DELAY_MS（僅 Mock 路徑）
-│   ├── knowledge/index.ts                  # MODIFIED — 裝配 Mock 時帶入 searchDelayMs
+│   │   └── mock-knowledge-provider.ts      # 不改 —— searchDelayMs 選項已存在（2026-08-29 訂正）
+│   ├── knowledge/index.ts                  # MODIFIED — 裝配 Mock 時讀 AC_SMOKE_KNOWLEDGE_DELAY_MS 帶入 searchDelayMs
 │   └── copilot-analysis.ts                 # MODIFIED（核心）——
 │                                            #   analyzeSuggestionsOnce(strategy) 兩段分岔、suggestionTails、
 │                                            #   世代計數、SUGGESTION_STAGE2_CALL_TIMEOUT_MS、
 │                                            #   awaitSuggestionTail()（測試用）、
-│                                            #   cancelPendingAnalysis() abort tailAbort ＋ 移除該筆登記、
-│                                            #   第二段落地後重跑 markSupersededCards()（FR-015）、
+│                                            #   cancelPendingAnalysis() abort tailAbort ＋ 移除該筆登記
+│                                            #     （MUST 在既有的 !pending 早退之前）、
+│                                            #   settleNone()：等 stage1Settled、必要時 finishBlockError（FR-003a）、
+│                                            #   第二段落地前重放 tail.repliesDuringTail 的搶答標記（FR-015）、
+│                                            #   checkSuggestionsSuperseded() 於訊息抵達當下把回覆寫進尾巴（FR-015）、
 │                                            #   initialState() 補新欄位預設
 └── api/
     └── stream.get.ts                       # MODIFIED — 重連快照：pending 且無尾巴 → 改送 none（契約 §4）

@@ -20,7 +20,7 @@ npm run build && npm run smoke     # 動到 server/api/**（stream.get.ts 的重
 
 | 檔案 | 涵蓋範圍 |
 |---|---|
-| `test/copilot-analysis.test.ts`（擴充） | 前景兩段序列（contracts §2 每一列各一個 case）；`suggest()` 呼叫次數上限（1 + 重試 + 1 ≤ 4，第二段 0 次重試）；檢索 0 筆／失敗／30 秒逾時 → `none` 且 cards 不動；第二段全數遭白名單捨棄 → `none`；新世代丟棄舊尾巴；第一段 retrying 中第二段先落地 → `cited` 且第一段後到不覆蓋；命中已在手 → 單段無 `pending`；背景 `runIncremental` → 單段、等滿檢索；**第二段整批換卡後搶答標記仍在（FR-015）**；**LEAVE 後尾巴不再送出第二段呼叫且登記被移除**；卡數上限 ≤ 5（FR-012）；`awaitSuggestionTail()` |
+| `test/copilot-analysis.test.ts`（擴充） | 前景兩段序列（contracts §2 每一列各一個 case）；`suggest()` 呼叫次數上限（1 + 重試 + 1 ≤ 4，第二段 0 次重試）；檢索 0 筆／失敗／30 秒逾時 → `none` 且 cards 不動；第二段全數遭白名單捨棄 → `none`；新世代丟棄舊尾巴；第一段 retrying 中第二段先落地 → `cited` 且第一段後到不覆蓋；命中已在手 → 單段無 `pending`（**含備忘 hits 為 0 筆的情況：不再檢索、仍重新生成卡**，FR-005）；背景 `runIncremental` → 單段、等滿檢索；**第二段整批換卡後搶答標記仍在（FR-015）**；**LEAVE 後尾巴不再送出第二段呼叫且登記被移除**；**檢索先回且 0 命中時 `none` 不得早於 `pending`（FR-003a ①）**；**第一段被取消＋第二段失敗 → `error`，不得停在 `retrying`（FR-003a ②）**；卡數上限 ≤ 5（FR-012）；`awaitSuggestionTail()` |
 | `test/ai-retry-policy.test.ts`（擴充） | `maxRetries: 0` 不重試且不觸發 `onRetry`；`signal` 在退避等待中 abort → `RetryAbortedError`；已在飛的呼叫不受 abort 影響；三個既定數值不變 |
 | `test/contract-guards.test.ts`（擴充） | `server/` 不得出現 `SUGGESTION_RETRIEVAL_TIMEOUT_MS`；`shared/` 不得出現 `suggestionTails`／`citedLanded`；`useCopilotSession.ts` 不得 import `useDraft`（FR-008） |
 | `test/stream-analysis-visibility.test.ts`（擴充） | 重連快照：`pending` 且無尾巴 → 改送 `none`；有尾巴 → 照送 `pending` |
@@ -46,7 +46,8 @@ npm run build && npm run smoke     # 動到 server/api/**（stream.get.ts 的重
    （圖示＋文字，約 5 秒淡出），卡片整批換成帶 `sopTitle` 的版本；EventStream 上看到
    `ready/pending` → `ready/cited` 兩則。
 4. 重複 JOIN 10 段不同對話，統計拿到 `cited` 的比例 → SC-002 要求 ≥ 90%（知識庫有內容的前提下）。
-5. 換一段**知識庫沒有相關內容**的對話重做 1～2：第一批卡出現後，標頭在檢索回來時由「檢索中」消失、
+5. 換一段**知識庫沒有相關內容**的對話重做 1～2：第一批卡出現後，標頭在**第一批卡與檢索兩者都完成後**
+   由「檢索中」消失（FR-003a ①——檢索可能比第一批卡先回來，此時標示要等卡片落地才落定）、
    卡片來源列變為「未引用知識庫」，**卡片內容一字不變**（EventStream 上 `ready/none` 的 `cards`
    與前一則相同）。MUST NOT 出現錯誤狀態、MUST NOT 出現重試按鈕。
 
@@ -68,10 +69,19 @@ npm run build && npm run smoke     # 動到 server/api/**（stream.get.ts 的重
 
 ### 邊界：第一段失敗、檢索仍在等
 
+⚠️ **這一段在本機只能驗到前半**（2026-08-29 訂正）。`AC_SMOKE_FORCE_SUGGEST_FAILURE` 在 provider
+**組裝時**讀取（`server/services/ai/index.ts`），要移除它必須重啟 server；而 `suggestionTails`
+是模組層級的執行期狀態，重啟就清空、檢索備忘一併消失，「命中已在手」的條件因此永遠不會成立。
+本文件原本寫「先把該環境變數移除再按重試」，那個步驟**做不到它宣稱要驗的事**。
+
 1. 用 Mock：`AC_SMOKE_FORCE_SUGGEST_FAILURE=1 AC_SMOKE_KNOWLEDGE_DELAY_MS=5000` 啟動，JOIN。
-2. **預期**：區塊轉 error＋重試按鈕（第一段用盡）。等 5 秒以上再按重試。
-3. **預期**（先把 `AC_SMOKE_FORCE_SUGGEST_FAILURE` 移除再按）：直接出現 `cited` 的卡，
-   **沒有** `pending`（命中已在手，research.md #3）。
+2. **預期**：區塊轉 error＋重試按鈕。⚠️ 若檢索恰好在第一段的退避等待中回來（延遲 5 秒、退避是
+   1 秒與 4 秒，很容易撞上），第一段會被 `stage1Abort` 取消而**不是**用盡重試——此時第二段也會失敗
+   （同一個注入），依 FR-003a ② 一樣落在 error＋重試按鈕。兩條路徑的畫面結果相同，
+   但 EventStream 上的 `retrying` 次數不同，這是預期的。**MUST NOT** 看到停在「重試中」不動，
+   也 MUST NOT 看到 `cards` 為空的 `ready`。
+3. 按下重試：仍是 error（注入還在）。「命中已在手 → 直接出現 `cited`、沒有 `pending`」這條
+   **由 T017 ⑩ 與 ⑯ 的自動化涵蓋**（research.md #3），本機手動場景不做。
 
 ## 延遲基準（plan 前已量，不需重量）
 
