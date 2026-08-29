@@ -20,16 +20,26 @@
  *    需要先想清楚是依對話記住還是全域記住。在有規格之前不猜。
  */
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 標題徽章的文字 */
   title: string
   /** 右側 tag（畫布：情緒「近 N 輪」、建議「N 則建議」）。快查區塊在畫布上沒有 tag */
   tag?: string | null
-  /** 預設是否展開 —— 目前五塊都是展開 */
+  /** 預設是否展開 —— 畫布五塊都是展開 */
   defaultOpen?: boolean
-}>()
+}>(), {
+  tag: null,
+  /**
+   * ⚠️ **這個預設值 MUST 明寫，不能靠 `props.defaultOpen ?? true` 兜。**
+   *    Vue 對宣告為 boolean 的 prop 有「boolean casting」：沒有傳值時它是 **`false`**
+   *    而不是 `undefined`，於是 `?? true` 永遠不會生效 —— 結果是五個區塊
+   *    **全部預設收合**，而型別檢查與測試都不會有任何反應。
+   *    2026-08-29 首次交付時就是這樣，由使用者在畫面上發現。
+   */
+  defaultOpen: true,
+})
 
-const open = ref(props.defaultOpen ?? true)
+const open = ref(props.defaultOpen)
 const { t } = useI18n()
 
 const toggleLabel = computed(() =>
