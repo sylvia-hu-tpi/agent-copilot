@@ -13,6 +13,10 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  awaitSuggestionTail,
+  cancelPendingAnalysis,
+  checkSuggestionsSuperseded,
+  hasSuggestionTail,
   lastCoveredMessageId,
   newCustomerMessagesSince,
   retryBlock,
@@ -32,7 +36,7 @@ import { isSentimentAlerting } from '../shared/types/copilot.js'
 import type { CopilotEvent } from '../shared/types/events.js'
 import type { ConversationSummary, SuggestionCard } from '../shared/types/copilot.js'
 import type { Message } from '../shared/types/conversation.js'
-import type { KnowledgeHit } from '../shared/types/knowledge.js'
+import type { KnowledgeHit, KnowledgeProvider } from '../shared/types/knowledge.js'
 
 let seq = 0
 function customerText(convId: string, text: string, minutesAgo = 1): Message {
@@ -858,9 +862,494 @@ describe('FR-009：同一 (對話, 區塊) 的併發觸發合併為一次 rerun'
     const running = runIncremental(id, [customerText(id, '新的一句', 5)], 'foreground', false)
     // 三個區塊 MUST 同時在飛 —— 用對話粒度去重會把它們串成序列，
     // 直接拖慢 002 SC-001 的 3 秒／10 秒門檻
-    await vi.waitFor(() => expect(started.sort()).toEqual(['sentiment', 'suggestions', 'summary']))
+    //
+    // ⚠️ 斷言的是**相異區塊**，不是呼叫次數（2026-08-29，004）：前景建議卡改成兩段式後，
+    //    同一輪會有第一段與第二段兩次 `suggest()`，`started` 裡本來就會有兩筆 'suggestions'。
+    //    呼叫次數的上限由 `describe('兩段式（004 US1）')` 的 ⑨ 直接斷言，不歸這一項管。
+    await vi.waitFor(() => expect([...new Set(started)].sort()).toEqual(['sentiment', 'suggestions', 'summary']))
 
     releaseGate?.()
     await running
+  })
+})
+
+// ── 004 US1：建議卡的漸進式知識庫引用 ──────────────────────────────────
+//
+// 本節守的是**兩段之間的交錯順序與覆蓋規則**（誰先落地、誰不得蓋誰、呼叫幾次）。
+// 這些全是「靜默失效」型：順序錯了畫面看起來還是有卡，只是引用悄悄消失或成本悄悄翻倍。
+//
+// ⚠️ 一律用假時鐘控制交錯。真實時鐘下第一段與檢索誰先回來是機率問題，
+//    而本規格最貴的兩個 bug（FR-003a 的兩條收斂規則）正好只在特定順序下才出現。
+
+/** 測試用知識庫 provider：延遲、命中內容、是否拋錯都由呼叫端指定，並記錄呼叫次數 */
+class StubKnowledgeProvider implements KnowledgeProvider {
+  calls = 0
+  /** 檢索回來的那一刻，事件序列已經有幾則 —— 用來斷言「pending 早於檢索完成」 */
+  eventCountAtResolve = -1
+
+  constructor(private readonly plan: {
+    hits?: KnowledgeHit[]
+    delayMs?: number
+    fail?: boolean
+    events?: CopilotEvent[]
+  } = {}) {}
+
+  async search(): Promise<KnowledgeHit[]> {
+    this.calls++
+    if (this.plan.delayMs) await new Promise(resolve => setTimeout(resolve, this.plan.delayMs))
+    this.eventCountAtResolve = this.plan.events?.length ?? -1
+    if (this.plan.fail) throw new Error('模擬檢索失敗／逾時')
+    return this.plan.hits ?? []
+  }
+}
+
+const STUB_HITS: KnowledgeHit[] = [
+  {
+    id: 'sop-1',
+    title: '退貨處理 SOP',
+    snippet: '七日內可辦理退貨',
+    score: null,
+    updatedAt: null,
+    sourceRef: { type: 'knowledge', ref: 'sop-1' },
+  },
+]
+
+/**
+ * 測試用 AIProvider：以 `knowledgeHits` 是否為空分辨兩段。
+ *
+ * ⚠️ 這個判別式只在測試裡成立（第一段恆為空集合）；正式路徑分辨兩段靠的是 `provenance.stage`。
+ */
+class StageAIProvider extends MockAIProvider {
+  suggestCalls = 0
+  hitsSeen: KnowledgeHit[][] = []
+  aiRepliesSeen: boolean[] = []
+
+  constructor(private readonly plan: {
+    delayMs?: (isStage2: boolean) => number
+    failure?: (ctx: { call: number, isStage2: boolean }) => Error | null
+    cards?: (ctx: { isStage2: boolean, hits: KnowledgeHit[] }) => SuggestionCard[] | undefined
+  } = {}) {
+    super()
+  }
+
+  override async suggest(input: Parameters<MockAIProvider['suggest']>[0]): Promise<SuggestionCard[]> {
+    this.suggestCalls++
+    const call = this.suggestCalls
+    const isStage2 = input.knowledgeHits.length > 0
+    this.hitsSeen.push(input.knowledgeHits)
+    this.aiRepliesSeen.push(input.aiReplies)
+
+    const delay = this.plan.delayMs?.(isStage2)
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay))
+
+    const failure = this.plan.failure?.({ call, isStage2 })
+    if (failure) throw failure
+
+    return this.plan.cards?.({ isStage2, hits: input.knowledgeHits }) ?? super.suggest(input)
+  }
+}
+
+/** 只取建議卡事件，壓成 status/citation 序列 —— 契約 §2 的那張表就是照這個形狀寫的 */
+function suggestionSeq(events: CopilotEvent[]): string[] {
+  return events
+    .filter(e => e.type === 'suggestion.updated')
+    .map(e => `${e.suggestion.status}/${e.suggestion.citation}`)
+}
+
+function suggestionEvents(events: CopilotEvent[]) {
+  return events.filter(e => e.type === 'suggestion.updated').map(e => e.suggestion)
+}
+
+async function suggestionState(id: string) {
+  return (await useStateStore().getAnalysisState(id))!.suggestionBlock
+}
+
+describe('兩段式（004 US1）', () => {
+  it('① 正常序列 analyzing → ready/pending → ready/cited，且 pending 早於檢索完成', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-happy')
+    const events = collect(id)
+    const knowledge = new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 1_000, events })
+    const ai = new StageAIProvider()
+    setKnowledgeProvider(knowledge)
+    setAIProvider(ai)
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], true)
+    await running
+    // ⚠️ 第一段必須在檢索回來**之前**就已經發布 —— 這正是兩段式存在的理由（FR-001）
+    const pendingIndex = events.findIndex(e => e.type === 'suggestion.updated' && e.suggestion.citation === 'pending')
+    expect(pendingIndex).toBeGreaterThanOrEqual(0)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    expect(pendingIndex).toBeLessThan(knowledge.eventCountAtResolve)
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/pending', 'ready/cited'])
+
+    const block = await suggestionState(id)
+    expect(block.citation).toBe('cited')
+    expect(block.knowledgeSearch).toEqual({ ran: true, hitCount: 1 })
+    expect(block.provenance).toEqual({ stage: 2, stage1RetryAttempt: 0 })
+    expect(block.cards[0]?.sopId).toBe('sop-1')
+
+    // 動工前必讀 #6：aiReplies 兩段都要帶，漏了 Hybrid 的補位提示會在第二段消失
+    expect(ai.aiRepliesSeen).toEqual([true, true])
+    // 第一段的白名單集合是空集合、第二段是第二段呼叫當下的 hits（data-model.md §7）
+    expect(ai.hitsSeen[0]).toEqual([])
+    expect(ai.hitsSeen[1]).toEqual(STUB_HITS)
+  })
+
+  it('② 檢索 0 筆 → ready/none，且 cards 與 pending 那則完全相同（FR-003）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-zero-hit')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: [], delayMs: 1_000 }))
+    setAIProvider(new StageAIProvider())
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await running
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/pending', 'ready/none'])
+    const published = suggestionEvents(events)
+    // 落定「未引用」時**一張卡都不動** —— 只有標示與 updatedAt 改變
+    expect(published[2]!.cards).toEqual(published[1]!.cards)
+    expect(published[2]!.knowledgeSearch).toEqual({ ran: true, hitCount: 0 })
+  })
+
+  it('③ 檢索拋錯／逾時 → 同 ②（誠實降級，不轉 error）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-search-fail')
+    const events = collect(id)
+    // ⚠️ Mock 不自行實作 timeoutMs，逾時與拋錯在這裡是同一條程式碼路徑（真實 provider 才會計時）
+    setKnowledgeProvider(new StubKnowledgeProvider({ fail: true, delayMs: 1_000 }))
+    setAIProvider(new StageAIProvider())
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await running
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/pending', 'ready/none'])
+    expect((await suggestionState(id)).status).toBe('ready')
+  })
+
+  it('④ 第二段失敗 → none、suggest() 恰 2 次、事件中無 retrying、狀態非 error（FR-003／FR-014）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-stage2-fail')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 1_000 }))
+    const ai = new StageAIProvider({
+      failure: ({ isStage2 }) => (isStage2 ? new AIProviderHttpError('server error', 500) : null),
+    })
+    setAIProvider(ai)
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await running
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    // 500 是 transient —— 沒有 maxRetries: 0 的話這裡會是 4 次（FR-014 破功）
+    expect(ai.suggestCalls).toBe(2)
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/pending', 'ready/none'])
+    // 第二段失敗是**靜默**的：MUST NOT 閃出「重試中」，也 MUST NOT 轉 error
+    expect(events.some(e => e.type === 'suggestion.updated' && e.suggestion.status === 'retrying')).toBe(false)
+    expect((await suggestionState(id)).status).toBe('ready')
+    // hitCount 記真實命中數 —— 「有命中卻沒引用」在事後稽核時才分辨得出來
+    expect((await suggestionState(id)).knowledgeSearch).toEqual({ ran: true, hitCount: 1 })
+  })
+
+  it('⑤ 第二段的卡 sopId 全不在 hits（模型杜撰引用）→ none 且 cards 維持第一段', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-whitelist-drop')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 1_000 }))
+    setAIProvider(new StageAIProvider({
+      cards: ({ isStage2 }) => (isStage2
+        ? [{
+            id: 'fabricated',
+            sopId: 'sop-does-not-exist',
+            sopTitle: '不存在的來源',
+            text: '這張卡引用了不存在的 SOP',
+            confidence: null,
+            rationale: 'r',
+            tone: 'informative' as const,
+            requiresData: [],
+            supersededBy: null,
+          }]
+        : undefined),
+    }))
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await running
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/pending', 'ready/none'])
+    const published = suggestionEvents(events)
+    expect(published[2]!.cards).toEqual(published[1]!.cards)
+  })
+
+  it('⑥ 新批次啟動後舊尾巴落地 → 一個字都不寫回（世代計數）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-generation')
+    const first = customerText(id, '第一批', 10)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 5_000 }))
+    setAIProvider(new StageAIProvider())
+
+    await runColdStart(id, [first], false)
+    const events = collect(id) // 從第二批才開始收，避免第一批的事件混入
+
+    const second = customerText(id, '第二批', 1)
+    const running = runIncremental(id, [second], 'foreground', false)
+    await running
+    await vi.advanceTimersByTimeAsync(5_000)
+    await awaitSuggestionTail(id)
+
+    // 新世代啟動後，舊世代的尾巴 MUST NOT 再發布任何**落地**結果。
+    // ⚠️ 判準只看 `ready`／`error`：`analyzing` 那則會沿用上一輪的 `basedOnMessageId`
+    //    （`beginAnalyzing()` 是 spread，保留舊卡與其標示是刻意的行為，見 data-model.md §2），
+    //    把它一起算進來會誤判成「舊世代又寫了一次」。
+    const landed = suggestionEvents(events).filter(b => b.status === 'ready' || b.status === 'error')
+    expect(landed.length).toBeGreaterThan(0)
+    expect(landed.every(b => b.basedOnMessageId === second.id)).toBe(true)
+    expect((await suggestionState(id)).basedOnMessageId).toBe(second.id)
+  })
+
+  it('⑦ 第一段在退避中、第二段先落地 → ready/cited，第一段的重試被 abort（FR-006a）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-abort-stage1')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 100 }))
+    const ai = new StageAIProvider({
+      failure: ({ call }) => (call === 1 ? new AIProviderHttpError('server error', 500) : null),
+    })
+    setAIProvider(ai)
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await vi.advanceTimersByTimeAsync(2_000)
+    await running
+    await awaitSuggestionTail(id)
+
+    // 第一段失敗一次進 1 秒退避 → 檢索在 100ms 回來且有命中 → abort 掉還沒送出的那次重試
+    expect(ai.suggestCalls).toBe(2)
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'retrying/none', 'ready/cited'])
+    // 第一段從未發布，因此整條序列裡不該出現 pending
+    expect(events.some(e => e.type === 'suggestion.updated' && e.suggestion.citation === 'pending')).toBe(false)
+  })
+
+  it('⑧ 第一段在飛時第二段落地，第一段後到 → MUST NOT 覆蓋（citedLanded）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-late-stage1')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 100 }))
+    setAIProvider(new StageAIProvider({ delayMs: isStage2 => (isStage2 ? 0 : 3_000) }))
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await running
+    await awaitSuggestionTail(id)
+
+    // 第一段的呼叫已經送出去了（abort 擋不住在飛的呼叫），它回來時 MUST 認出第二段已落地
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/cited'])
+    expect((await suggestionState(id)).citation).toBe('cited')
+  })
+
+  it('⑨ 呼叫次數上限：第一段重試兩次後成功 ＋ 第二段 → suggest() 恰 4 次（FR-014／SC-005）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-call-budget')
+    // 檢索故意慢到第一段整輪跑完 —— 否則第二段會提前 abort 掉第一段的重試
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 10_000 }))
+    const ai = new StageAIProvider({
+      failure: ({ call }) => (call <= 2 ? new AIProviderHttpError('server error', 500) : null),
+    })
+    setAIProvider(ai)
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await vi.advanceTimersByTimeAsync(20_000)
+    await running
+    await awaitSuggestionTail(id)
+
+    // 1（首次）＋ 2（重試）＋ 1（第二段）＝ 4，這是前景每批的最壞值
+    expect(ai.suggestCalls).toBe(4)
+    const block = await suggestionState(id)
+    expect(block.citation).toBe('cited')
+    // 「這批訊息總共呼叫幾次」＝ 1 + n + 1，可從單一 block 讀出
+    expect(block.provenance).toEqual({ stage: 2, stage1RetryAttempt: 2 })
+  })
+
+  it('⑩ 命中已在手：手動重試走單段，不再發檢索、無 pending（FR-005）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-hits-in-hand')
+    const history = [customerText(id, '我要退貨')]
+    const knowledge = new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 100 })
+    const ai = new StageAIProvider()
+    setKnowledgeProvider(knowledge)
+    setAIProvider(ai)
+
+    const running = runColdStart(id, history, false)
+    await vi.advanceTimersByTimeAsync(200)
+    await running
+    await awaitSuggestionTail(id)
+    const callsAfterRound1 = ai.suggestCalls
+
+    const events = collect(id)
+    const retry = retryBlock(id, 'suggestions', history, false)
+    await vi.advanceTimersByTimeAsync(200)
+    await retry
+    await awaitSuggestionTail(id)
+
+    // 同一批訊息、同一個 query —— 重查幾乎必然仍是同一批結果，卻要多花 9.4～20.1 秒
+    expect(knowledge.calls).toBe(1)
+    expect(ai.suggestCalls).toBe(callsAfterRound1 + 1)
+    expect(suggestionSeq(events)).toEqual(['analyzing/cited', 'ready/cited'])
+    expect(events.some(e => e.type === 'suggestion.updated' && e.suggestion.citation === 'pending')).toBe(false)
+  })
+
+  it('⑪ 第二段整批換卡前 MUST 重放搶答標記（FR-015、憲法 7.2）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-superseded')
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 1_000 }))
+    setAIProvider(new StageAIProvider())
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await running // 第一段已落地
+    expect((await suggestionState(id)).cards[0]?.supersededBy).toBeNull()
+
+    // 尾巴飛行期間同事搶先回覆了同樣的內容
+    const reply = agentText(id, '建議先向客戶致歉，並確認目前的處理進度')
+    await checkSuggestionsSuperseded(id, [reply])
+    expect((await suggestionState(id)).cards[0]?.supersededBy).toEqual({ kind: 'agent', messageId: reply.id })
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    // 第二段換上的是**新的一批卡**；漏了重放，這張卡會以「未標記」復活，客服可能再回一次
+    const block = await suggestionState(id)
+    expect(block.citation).toBe('cited')
+    expect(block.cards[0]?.supersededBy).toEqual({ kind: 'agent', messageId: reply.id })
+  })
+
+  it('⑫ LEAVE 取消尾巴：第二段不送出、登記一併移除（003 FR-013 的延伸）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-leave')
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 1_000 }))
+    const ai = new StageAIProvider()
+    setAIProvider(ai)
+
+    // ⚠️ 本 case MUST **不**先排任何 debounce：cancelPendingAnalysis() 的兩步若寫在
+    //    「有沒有 pending 排程」的早退之後，先排了 debounce 會讓早退不成立、bug 就漏掉。
+    //    JOIN 冷啟動觸發的尾巴正是**沒有** debounce 排程的那一種。
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await running
+    const callsBeforeLeave = ai.suggestCalls
+
+    cancelPendingAnalysis(id)
+    expect(hasSuggestionTail(id)).toBe(false)
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    expect(ai.suggestCalls).toBe(callsBeforeLeave)
+    expect((await suggestionState(id)).citation).toBe('pending')
+  })
+
+  it('⑬ 兩段落地的卡數皆不超過上限（FR-012：MUST NOT 事後截斷，上限在生成階段落實）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-card-cap')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 100 }))
+    setAIProvider(new StageAIProvider())
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await vi.advanceTimersByTimeAsync(200)
+    await running
+    await awaitSuggestionTail(id)
+
+    // ⚠️ 只斷言上界：「3–5 張」的下界是 002 在**生成階段**（prompt）落實的既有約束，
+    //    以 Mock 的固定回傳斷言 >= 3 等於在測 Mock，不是在測本規格。
+    for (const block of suggestionEvents(events)) expect(block.cards.length).toBeLessThanOrEqual(5)
+  })
+
+  it('⑭ 檢索先回且 0 命中時，none MUST NOT 早於 pending（FR-003a ①）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-none-after-pending')
+    const events = collect(id)
+    // 檢索比第一段**快**——實測不罕見（檢索最快 9.4 秒 vs 第一段中位 9.2 秒），不是理論邊界
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: [], delayMs: 100 }))
+    setAIProvider(new StageAIProvider({ delayMs: isStage2 => (isStage2 ? 0 : 3_000) }))
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await vi.advanceTimersByTimeAsync(5_000)
+    await running
+    await awaitSuggestionTail(id)
+
+    // 不等第一段落定就寫 none 的話，第一段隨後落地會把標示寫回 pending，
+    // 而該輪檢索已結束、沒有任何路徑再落定它 —— 客服永遠看到「檢索中」，且沒有錯誤跡象
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/pending', 'ready/none'])
+    expect((await suggestionState(id)).citation).toBe('none')
+  })
+
+  it('⑮ 第一段被取消且第二段又失敗 → MUST 收斂為 error（FR-003a ②）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-both-fail')
+    const events = collect(id)
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 100 }))
+    setAIProvider(new StageAIProvider({
+      // 第一段第一次失敗進退避（隨後被第二段 abort）；第二段也失敗
+      failure: ({ call, isStage2 }) => (call === 1 || isStage2 ? new AIProviderHttpError('server error', 500) : null),
+    }))
+
+    const running = runColdStart(id, [customerText(id, '我要退貨')], false)
+    await vi.advanceTimersByTimeAsync(2_000)
+    await running
+    await awaitSuggestionTail(id)
+
+    // 第一段從未發布、客服手上沒有卡：停在「重試中」是永久的謊，MUST 給錯誤狀態＋重試按鈕
+    const seq = suggestionSeq(events)
+    expect(seq[seq.length - 1]).toBe('error/none')
+    expect((await suggestionState(id)).status).toBe('error')
+    // MUST NOT 送出 cards 為空的 ready
+    expect(events.some(e =>
+      e.type === 'suggestion.updated' && e.suggestion.status === 'ready' && e.suggestion.cards.length === 0,
+    )).toBe(false)
+  })
+
+  it('⑯ FR-005 的判準含 0 筆：備忘存在即成立，重試仍 MUST NOT 再發檢索', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-memo-zero')
+    const history = [customerText(id, '我要退貨')]
+    const knowledge = new StubKnowledgeProvider({ hits: [], delayMs: 100 })
+    let stage1ShouldFail = true
+    const ai = new StageAIProvider({
+      failure: () => (stage1ShouldFail ? new AIProviderHttpError('bad request', 400) : null),
+    })
+    setKnowledgeProvider(knowledge)
+    setAIProvider(ai)
+
+    const running = runColdStart(id, history, false)
+    await vi.advanceTimersByTimeAsync(200)
+    await running
+    await awaitSuggestionTail(id)
+    expect((await suggestionState(id)).status).toBe('error')
+    const callsAfterRound1 = ai.suggestCalls
+
+    stage1ShouldFail = false
+    const events = collect(id)
+    const retry = retryBlock(id, 'suggestions', history, false)
+    await vi.advanceTimersByTimeAsync(200)
+    await retry
+    await awaitSuggestionTail(id)
+
+    // hits 為空陣列同樣算「命中已在手」：重查幾乎必然仍是 0 筆，卻要把重試整輪拖慢
+    expect(knowledge.calls).toBe(1)
+    expect(ai.suggestCalls).toBe(callsAfterRound1 + 1)
+    expect(events.some(e => e.type === 'suggestion.updated' && e.suggestion.citation === 'pending')).toBe(false)
+    const block = await suggestionState(id)
+    expect(block.status).toBe('ready')
+    expect(block.citation).toBe('none')
+    // 重試確實重新生成了卡，不是 no-op
+    expect(block.cards.length).toBeGreaterThan(0)
   })
 })

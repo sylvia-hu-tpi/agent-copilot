@@ -20,6 +20,17 @@
 
 import { describe, expect, it, vi } from 'vitest'
 import { createWatchRegistry, shouldForwardToConnection } from '../server/utils/stream-control.js'
+import {
+  awaitSuggestionTail,
+  hasSuggestionTail,
+  runColdStart,
+  settleOrphanedPendingCitation,
+} from '../server/services/copilot-analysis.js'
+import { setAIProvider } from '../server/services/ai/index.js'
+import { MockAIProvider } from '../server/services/ai/mock-ai-provider.js'
+import { setKnowledgeProvider } from '../server/services/knowledge/index.js'
+import { MockKnowledgeProvider } from '../server/services/knowledge/mock-knowledge-provider.js'
+import { useStateStore } from '../server/state/index.js'
 import type { CopilotEvent } from '../shared/types/events.js'
 
 const ANALYSIS_EVENTS: Array<CopilotEvent['type']> = [
@@ -171,5 +182,76 @@ describe('兩條路徑都擋才算數（只擋一條等於沒擋）', () => {
     for (let i = 0; i < 10; i++) await watchers.watch('conv_x', 'foreground', true)
 
     expect(attach).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * 契約 §4（004）：重連快照對 `citation: 'pending'` 的補正。
+ *
+ * ⚠️ `'pending'` 的意思是「第二段還在跑」，而尾巴是**執行期**狀態（`suggestionTails`），
+ *    程序重啟就消失；`CopilotAnalysisState` 卻有 2 小時 sliding TTL 會活下來。
+ *    重啟後那個 `'pending'` 沒有任何路徑會再落定它 —— 客服永遠看到「檢索中」，
+ *    而 `status` 是 `ready`、卡片可用，**沒有任何錯誤跡象**。
+ *
+ * ⚠️ 修正 MUST 放在快照路徑，不是 `forward()`：快照走 `send()`、不經即時推播那條路，
+ *    放錯地方對快照完全無效（003 踩過同一個陷阱，見本檔開頭）。
+ */
+describe('契約 §4：重連快照不得送出無人接手的 pending（004 T018）', () => {
+  /** `sendAnalysisSnapshotAndResume()` 裡與 `citation` 有關的那一段 */
+  async function snapshotSuggestion(conversationId: string) {
+    let state = (await useStateStore().getAnalysisState(conversationId))!
+    if (state.suggestionBlock.citation === 'pending' && !hasSuggestionTail(conversationId)) {
+      state = await settleOrphanedPendingCitation(conversationId)
+    }
+    return state.suggestionBlock
+  }
+
+  it('pending 且無尾巴（程序重啟後的孤兒）→ 送出的是 none，且已寫回狀態', async () => {
+    const id = `conv-orphan-pending-${Date.now()}`
+    await useStateStore().setAnalysisState({
+      conversationId: id,
+      summaryBlock: { status: 'empty', summary: null, updatedAt: '' },
+      sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' },
+      suggestionBlock: {
+        status: 'ready',
+        cards: [],
+        knowledgeSearch: { ran: true, hitCount: 0 },
+        citation: 'pending',
+        basedOnMessageId: 'm_1',
+        provenance: { stage: 1, stage1RetryAttempt: 0 },
+        updatedAt: '',
+      },
+    }, 60_000)
+
+    expect(hasSuggestionTail(id)).toBe(false)
+    expect((await snapshotSuggestion(id)).citation).toBe('none')
+
+    // ⚠️ MUST 真的寫回：只在送出前改一份複本的話，下一次重連又會是 pending
+    const persisted = await useStateStore().getAnalysisState(id)
+    expect(persisted!.suggestionBlock.citation).toBe('none')
+    // 卡片不動 —— 它們是第一段的真實產出，只是永遠不會有第二段了
+    expect(persisted!.suggestionBlock.cards).toEqual([])
+  })
+
+  it('有尾巴在跑 → 照送 pending（尾巴落地時會再推一次）', async () => {
+    vi.useFakeTimers()
+    const id = `conv-live-pending-${Date.now()}`
+    setKnowledgeProvider(new MockKnowledgeProvider({ searchDelayMs: 5_000 }))
+    setAIProvider(new MockAIProvider())
+
+    await runColdStart(id, [{
+      id: 'm_live_1',
+      conversationId: id,
+      at: new Date().toISOString(),
+      sender: { type: 'customer', id: 'con_1' },
+      text: '我要退貨',
+    }], false)
+
+    expect(hasSuggestionTail(id)).toBe(true)
+    expect((await snapshotSuggestion(id)).citation).toBe('pending')
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    await awaitSuggestionTail(id)
+    vi.useRealTimers()
   })
 })
