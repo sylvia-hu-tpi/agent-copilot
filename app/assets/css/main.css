@@ -138,125 +138,141 @@ button:disabled {
 
 /* ── 共用元件樣式 ──────────────────────────────────────────────────── */
 
-.ac-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: var(--shadow);
-}
-
 /*
- * Eyebrow 徽章：AGENTCOPILOT / 選擇組織。
+ * ⚠️ **這一整段 MUST 包在 `@layer components` 裡。**
  *
- * ⚠️ 2026-08-26 修正：畫布截圖（docs/wireframe/01-login_*.png、02-organization_*.png）
- *    是藍底白字的實心徽章，先前這裡只抄到字級，漏了背景色 —— DESIGN_TOKENS.md §2 的
- *    表格同樣只列字級，一併補正。
+ * Tailwind v4 的 `@import "tailwindcss"` 把 utilities 放進 `@layer utilities`，
+ * 而 CSS 規範裡**未分層的樣式一律勝過任何 layer**——與檔案先後順序無關。
+ * 因此把 `.ac-*` 寫在 layer 之外，會讓元素上的 Tailwind utility **被靜默忽略**：
+ *
+ *     class="ac-btn-primary h-8 rounded-r-none text-[0.9375rem]"
+ *       → 實際仍是 height:40px、border-radius:8px、font-size:1rem
+ *
+ * 不會有警告、不會有型別錯誤，只是畫面對不上設計稿而查不出原因。
+ * 2026-08-29 由「接手對話」按鈕的多餘圓角查出，當時已影響 6 個按鈕的高度與字級。
  */
-.ac-eyebrow {
-  display: inline-flex;
-  align-items: center;
-  font-size: 0.84375rem; /* 13.5px */
-  font-weight: 700;
-  letter-spacing: .06em;
-  color: var(--navy-fg);
-  background: var(--navy);
-  padding: 3px 8px;
-  border-radius: 6px;
-}
+@layer components {
 
-.ac-mono {
-  font-family: var(--font-mono);
-}
+  .ac-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+  }
 
-.ac-title {
-  font-size: 1.34375rem; /* 21.5px */
-  font-weight: 700;
-  color: var(--text);
-}
+  /*
+   * Eyebrow 徽章：AGENTCOPILOT / 選擇組織。
+   *
+   * ⚠️ 2026-08-26 修正：畫布截圖（docs/wireframe/01-login_*.png、02-organization_*.png）
+   *    是藍底白字的實心徽章，先前這裡只抄到字級，漏了背景色 —— DESIGN_TOKENS.md §2 的
+   *    表格同樣只列字級，一併補正。
+   */
+  .ac-eyebrow {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.84375rem; /* 13.5px */
+    font-weight: 700;
+    letter-spacing: .06em;
+    color: var(--navy-fg);
+    background: var(--navy);
+    padding: 3px 8px;
+    border-radius: 6px;
+  }
 
-.ac-subtitle {
-  font-size: 0.9375rem; /* 15px */
-  line-height: 1.6;
-  color: var(--text-2);
-}
+  .ac-mono {
+    font-family: var(--font-mono);
+  }
 
-.ac-label {
-  font-size: 0.90625rem; /* 14.5px */
-  font-weight: 500;
-  color: var(--text-2);
-}
+  .ac-title {
+    font-size: 1.34375rem; /* 21.5px */
+    font-weight: 700;
+    color: var(--text);
+  }
 
-.ac-status-label {
-  font-size: 0.8125rem; /* 13px */
-  font-weight: 700;
-  letter-spacing: .08em;
-  color: var(--text-3);
-}
+  .ac-subtitle {
+    font-size: 0.9375rem; /* 15px */
+    line-height: 1.6;
+    color: var(--text-2);
+  }
 
-.ac-input {
-  height: 40px;
-  border-radius: 8px;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 1rem; /* 16px */
-}
+  .ac-label {
+    font-size: 0.90625rem; /* 14.5px */
+    font-weight: 500;
+    color: var(--text-2);
+  }
 
-.ac-input:focus {
-  outline: none;
-  border-color: var(--navy-2);
-  background: var(--surface);
-}
+  .ac-status-label {
+    font-size: 0.8125rem; /* 13px */
+    font-weight: 700;
+    letter-spacing: .08em;
+    color: var(--text-3);
+  }
 
-.ac-btn-primary {
-  height: 40px;
-  border-radius: 8px;
-  background: var(--navy);
-  color: var(--navy-fg);
-  font-size: 1rem; /* 16px */
-  font-weight: 500;
-}
+  .ac-input {
+    height: 40px;
+    border-radius: 8px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 1rem; /* 16px */
+  }
 
-.ac-btn-primary:hover:not(:disabled) {
-  background: var(--navy-2);
-}
+  .ac-input:focus {
+    outline: none;
+    border-color: var(--navy-2);
+    background: var(--surface);
+  }
 
-.ac-btn-primary:disabled {
-  opacity: .6;
-  cursor: not-allowed;
-}
+  .ac-btn-primary {
+    height: 40px;
+    border-radius: 8px;
+    background: var(--navy);
+    color: var(--navy-fg);
+    font-size: 1rem; /* 16px */
+    font-weight: 500;
+  }
 
-/*
- * ⚠️ 2026-08-26：這裡原本漏掉，沒跟上第一輪的字級調整 —— 補上，
- *    對齊 .ac-label 同樣源自原始 12px 的字級（12 → 13.5 → 14.5px）。
- */
-.ac-alert-warn {
-  background: var(--warn-bg);
-  border: 1px solid var(--warn-bd);
-  color: var(--warn);
-  border-radius: 8px;
-  font-size: 0.90625rem; /* 14.5px */
-}
+  .ac-btn-primary:hover:not(:disabled) {
+    background: var(--navy-2);
+  }
 
-/* 骨架屏 shimmer —— 1b 載入中狀態 */
-.ac-skel {
-  background: var(--skel);
-  border-radius: 6px;
-}
+  .ac-btn-primary:disabled {
+    opacity: .6;
+    cursor: not-allowed;
+  }
 
-.ac-skel-shimmer {
-  background: linear-gradient(90deg, var(--skel) 25%, var(--skel-hi) 37%, var(--skel) 63%);
-  background-size: 400% 100%;
-  animation: ac-shimmer 1.4s ease-in-out infinite;
-}
+  /*
+   * ⚠️ 2026-08-26：這裡原本漏掉，沒跟上第一輪的字級調整 —— 補上，
+   *    對齊 .ac-label 同樣源自原始 12px 的字級（12 → 13.5 → 14.5px）。
+   */
+  .ac-alert-warn {
+    background: var(--warn-bg);
+    border: 1px solid var(--warn-bd);
+    color: var(--warn);
+    border-radius: 8px;
+    font-size: 0.90625rem; /* 14.5px */
+  }
 
-@keyframes ac-shimmer {
-  0% { background-position: 100% 50%; }
-  100% { background-position: 0 50%; }
-}
+  /* 骨架屏 shimmer —— 1b 載入中狀態 */
+  .ac-skel {
+    background: var(--skel);
+    border-radius: 6px;
+  }
 
-@media (prefers-reduced-motion: reduce) {
   .ac-skel-shimmer {
-    animation: none;
+    background: linear-gradient(90deg, var(--skel) 25%, var(--skel-hi) 37%, var(--skel) 63%);
+    background-size: 400% 100%;
+    animation: ac-shimmer 1.4s ease-in-out infinite;
+  }
+
+  @keyframes ac-shimmer {
+    0% { background-position: 100% 50%; }
+    100% { background-position: 0 50%; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ac-skel-shimmer {
+      animation: none;
+    }
   }
 }
