@@ -43,14 +43,14 @@
 
 **決定**：`runBlockDeduped()` 的鎖只涵蓋**第一段**（前景）或**整段**（背景）。前景的第二段以
 detached promise（下稱**尾巴**，tail）在鎖外繼續跑，並登記在模組層級的
-`suggestionTails: Map<conversationId, { generation, abort, done, lastRetrieval }>`。
+`suggestionTails: Map<conversationId, { generation, stage1Abort, tailAbort, citedLanded, done, lastRetrieval }>`。
 每次 `analyzeSuggestionsOnce()` 啟動即 `generation++`；尾巴落地前比對世代，不符即**丟棄不寫入**
-（FR-006）。新世代啟動時對前一個尾巴 `abort()`（讓它在還沒送出第二段呼叫時就停，省一次成本；
+（FR-006）。新世代啟動時對前一個尾巴 `tailAbort.abort()`（讓它在還沒送出第二段呼叫時就停，省一次成本；
 已在飛的呼叫跑完後被世代比對擋下）。
 
 **理由**：
-- 若整個兩段式都待在鎖內，鎖會被握到第二段落地（最壞 JOIN 後 45 秒）。期間新的客戶發言只能排成
-  `analysisRerunPending`，等於**新一輪分析被舊的第二段拖慢 45 秒** —— 那正是 FR-006 想避免的方向。
+- 若整個兩段式都待在鎖內，鎖會被握到第二段落地（最壞 JOIN 後 50 秒）。期間新的客戶發言只能排成
+  `analysisRerunPending`，等於**新一輪分析被舊的第二段拖慢 50 秒** —— 那正是 FR-006 想避免的方向。
 - 世代計數而非比對 `basedOnMessageId`：手動重試會用**同一個**錨點再跑一次（`retryBlock()` 用全量歷史，
   錨點不變），錨點比對會放行舊尾巴覆蓋新結果。世代計數是「哪一次啟動」的身分，沒有這個漏洞。
   `basedOnMessageId` 仍寫進 `SuggestionBlock` 供稽核與 UI（見 data-model.md），但**不拿來做控制判斷**。
@@ -59,7 +59,7 @@ detached promise（下稱**尾巴**，tail）在鎖外繼續跑，並登記在�
 
 **否決的替代方案**：
 - *尾巴也進鎖，但新觸發時 abort 舊尾巴以提早釋放鎖*：abort 只能擋「還沒送出」的呼叫，已在飛的
-  HTTP 沒辦法取消，鎖仍會被握到那次呼叫結束（最多 15 秒）。世代比對在鎖外解決同一個問題，且不阻塞。
+  HTTP 沒辦法取消，鎖仍會被握到那次呼叫結束（第一段最多 15 秒、第二段最多 20 秒）。世代比對在鎖外解決同一個問題，且不阻塞。
 - *用 `AbortController` 取消檢索 HTTP*：SDK 的 `streamChat()` 未暴露 signal（`docs/SDK_FINDINGS.md`），
   且 `withTimeout()` 只是 `Promise.race`。不做。
 
@@ -69,7 +69,14 @@ detached promise（下稱**尾巴**，tail）在鎖外繼續跑，並登記在�
 來源是尾巴留下的備忘 `lastRetrieval: { anchor, hits, at }`（放在 `suggestionTails` 同一筆記錄）。
 新世代啟動時若 `anchor` 相同且備忘存在 → **不啟動第一段**，直接以備忘的 hits 跑單段（`citation` 依
 hits 是否 > 0 為 `'cited'`／`'none'`）。備忘在世代更替時被下一次的檢索結果覆蓋，不另設 TTL
-（它跟著 `suggestionTails` 這筆執行期狀態走）。
+（它跟著 `suggestionTails` 這筆執行期狀態走），並在 `cancelPendingAnalysis()`（LEAVE）時
+連同整筆登記一起 `delete`——LEAVE 後沒有人能按重試，備忘從那一刻起就沒有意義，
+留著只是讓 Map 逐對話累積（2026-08-29 `/speckit-analyze` 補上，見 data-model.md §4）。
+
+⚠️ **憲法 6.2 的相容性**：沿用備忘不等於「略過檢索」——那次檢索確實跑過，備忘就是它的結果，
+且錨點相同保證是**同一批訊息**。憲法 6.2 已於 **v3.0.2** 把量詞由「每一次生成」澄清為
+「每一批至少一次，且該批的重新生成 MUST 建立在那次檢索的真實結果上」，正是為了涵蓋這條路徑
+與兩段式本身（憲法附錄 C）。跨批次仍是每批一次。
 
 觸發得到這條路的實際情境只有兩個：① 第一段失敗轉 `error`、客服按重試時檢索已回來（spec Edge Cases）；
 ② 第一段在退避等待、檢索回來了（FR-006a）—— 後者由 #4 的 abort 機制把「重試」變成「不啟動」，
@@ -96,10 +103,17 @@ interface WithRetryOptions {
 }
 ```
 
-第二段呼叫 `withRetry(fn, { maxRetries: 0 })`；第一段呼叫 `withRetry(fn, { onRetry, signal })`，
-`signal` 在「檢索回來且有命中」或「第二段已落地」時被 abort（FR-006a）。
+第二段呼叫 `withRetry(fn, { maxRetries: 0, signal: tail.tailAbort.signal })`；
+第一段呼叫 `withRetry(fn, { onRetry, signal: tail.stage1Abort.signal })`。
+`stage1Abort` 在「檢索回來且有命中」或「第二段已落地」時被 abort（FR-006a）；
+`tailAbort` 在「新世代啟動」或「`cancelPendingAnalysis()`（LEAVE）」時被 abort。
 **abort 只在退避等待與「下一次呼叫送出前」生效**，已在飛的呼叫讓它跑完（spec Q2 決議：已付費的結果
 不丟；它落地後若第二段已到，由世代內的 `citedLanded` 旗標擋下不寫入）。
+
+⚠️ **兩個 signal MUST 分開**（2026-08-29 `/speckit-analyze` 修訂）。原設計只有一個 `abort`，
+於是第二段在成功路徑上先把它 abort 掉去擋第一段的重試，之後 LEAVE 再 abort 就是 no-op ——
+plan 憲法檢核表第七條那句「沒人 JOIN 就不花第二段的錢」變成一句沒有機制支撐的宣稱，
+而且不會有任何錯誤。詳見 data-model.md §4。
 
 **理由**：
 - `withRetry()` 集中了逾時、失敗分類（`classifyFailure`）、憲法 1.5 的日誌內容約束。第二段若直接呼叫
@@ -109,15 +123,17 @@ interface WithRetryOptions {
 - 這是 001 FR-014「暫時性失敗 MUST 自動重試」的明確例外，004 FR-014 已宣告；需在 001 spec 的
   FR-014 加一行指向 004（CLAUDE.md 的 grep 規則：例外不能只寫在例外那一邊）。
 
-**否決的替代方案**：*第二段也重試但 budget 縮短*（例如 20 秒）—— 仍會多一次 15 秒呼叫，落地時間推到
-JOIN 後 60 秒以上；spec Q5 已否決。
+**否決的替代方案**：*第二段也重試但 budget 縮短* —— 仍會多一次完整的第二段呼叫（20 秒，見 #5），
+落地時間推到 JOIN 後 70 秒以上；spec Q5 已否決。
 
-## #5 第二段的單次逾時：沿用 15 秒，但用獨立常數承載，讓「放寬」是一行 diff
+## #5 第二段的單次逾時：**20 秒**（2026-08-29 裁決），以獨立常數承載
 
 **決定**：第二段呼叫 `withRetry(fn, { maxRetries: 0, callTimeoutMs: SUGGESTION_STAGE2_CALL_TIMEOUT_MS })`，
-常數初值 `= 15_000`（與 001 FR-014 相同，**spec FR-003 的字面**）。
+常數 `= 20_000`。
 
-**⚠️ 這是本 plan 唯一要請使用者再看一眼的裁決**，理由如下：
+✅ **2026-08-29 已裁決為 20 秒**（本文件原建議、spec 原字面為 15 秒）。spec FR-003、
+Clarifications Q3／Q5、已知限制的「50 秒」、plan Constraints 與 data-model §5 皆已同步改寫。
+下表是裁決依據，保留原貌：
 
 | | 15 秒（spec 字面） | 20 秒（本文件建議考慮） |
 |---|---|---|
@@ -131,9 +147,10 @@ JOIN 後 60 秒以上；spec Q5 已否決。
 
 §8.2b 明文「FR-014 的裁決 MUST 在 004 的設計定案後才做，判準應以第二段為準」——設計現在定了：
 第二段是**單發、無人等待、失敗靜默**的呼叫，它跟 001 那個「有人在等、失敗會轉 error、有退避預算」的
-迴圈是兩種東西，用同一個數字只是巧合而非耦合。**本文件建議第二段改 20 秒、第一段維持 15 秒不動**；
-但 spec 剛在同一天寫死 15 秒，本 plan **不自行推翻**，以常數承載，tasks.md 把「是否改 20 秒」列為
-實作前的一個確認項。
+迴圈是兩種東西，用同一個數字只是巧合而非耦合。**本文件建議第二段改 20 秒、第一段維持 15 秒不動**
+—— ✅ 該建議已於 2026-08-29 採納，`SUGGESTION_STAGE2_CALL_TIMEOUT_MS = 20_000`。
+**001 FR-014 的 15s／1s→4s／40s 三數一字不動**，退避預算不需重議（綁定只存在於重試迴圈，
+第二段 `maxRetries: 0` 不進迴圈）。`docs/ARCHITECTURE.md` §8.2b「FR-014 的裁決」段由 tasks T027 落定。
 
 ## #6 `SuggestionBlock` 新增三個欄位，`status` 五態機不變
 
@@ -177,9 +194,9 @@ JOIN 後 60 秒以上；spec Q5 已否決。
 **理由**：留一個 `= KNOWLEDGE_SEARCH_TIMEOUT_MS` 的別名會讓兩者日後又各自漂移，回到 002 那個「兩個數字」
 的狀態；FR-003 的意思是「同一個數字」，程式碼就該只有一個識別項。
 
-## #9 背景路徑的實作：同一支函式、一個 `mode` 參數
+## #9 背景路徑的實作：同一支函式、一個 `strategy` 參數
 
-**決定**：`analyzeSuggestionsOnce(conversationId, input, mode: 'progressive' | 'single')`。
+**決定**：`analyzeSuggestionsOnce(conversationId, input, strategy: 'progressive' | 'single')`。
 `runIncremental()` 的背景分支傳 `'single'`；冷啟動（JOIN 者必為前景）、前景增量、手動重試傳
 `'progressive'`；`'single'` 也是 #3「命中已在手」時的執行路徑。函式開頭的註解 MUST 寫明
 FR-013 的理由（背景沒有人在等、第一段沒有人會看到、省的是背景並行上限 10 個對話份的呼叫），

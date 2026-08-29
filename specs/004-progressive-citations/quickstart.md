@@ -20,12 +20,18 @@ npm run build && npm run smoke     # 動到 server/api/**（stream.get.ts 的重
 
 | 檔案 | 涵蓋範圍 |
 |---|---|
-| `test/copilot-analysis.test.ts`（擴充） | 前景兩段序列（contracts §2 每一列各一個 case）；`suggest()` 呼叫次數上限（1 + 重試 + 1 ≤ 4，第二段 0 次重試）；檢索 0 筆／失敗／30 秒逾時 → `none` 且 cards 不動；第二段全數遭白名單捨棄 → `none`；新世代丟棄舊尾巴；第一段 retrying 中第二段先落地 → `cited` 且第一段後到不覆蓋；命中已在手 → 單段無 `pending`；背景 `runIncremental` → 單段、等滿檢索；`awaitSuggestionTail()` |
+| `test/copilot-analysis.test.ts`（擴充） | 前景兩段序列（contracts §2 每一列各一個 case）；`suggest()` 呼叫次數上限（1 + 重試 + 1 ≤ 4，第二段 0 次重試）；檢索 0 筆／失敗／30 秒逾時 → `none` 且 cards 不動；第二段全數遭白名單捨棄 → `none`；新世代丟棄舊尾巴；第一段 retrying 中第二段先落地 → `cited` 且第一段後到不覆蓋；命中已在手 → 單段無 `pending`；背景 `runIncremental` → 單段、等滿檢索；**第二段整批換卡後搶答標記仍在（FR-015）**；**LEAVE 後尾巴不再送出第二段呼叫且登記被移除**；卡數上限 ≤ 5（FR-012）；`awaitSuggestionTail()` |
 | `test/ai-retry-policy.test.ts`（擴充） | `maxRetries: 0` 不重試且不觸發 `onRetry`；`signal` 在退避等待中 abort → `RetryAbortedError`；已在飛的呼叫不受 abort 影響；三個既定數值不變 |
 | `test/contract-guards.test.ts`（擴充） | `server/` 不得出現 `SUGGESTION_RETRIEVAL_TIMEOUT_MS`；`shared/` 不得出現 `suggestionTails`／`citedLanded`；`useCopilotSession.ts` 不得 import `useDraft`（FR-008） |
 | `test/stream-analysis-visibility.test.ts`（擴充） | 重連快照：`pending` 且無尾巴 → 改送 `none`；有尾巴 → 照送 `pending` |
 | `test/nuxt/suggestion-citation-cue.test.ts`（新） | `pending → cited` 轉移觸發提示（圖示＋文字、`role="status"`）、5 秒淡出、快照不觸發、切換對話清除；`pending` 標頭與卡片文案 |
-| `test/realtime-http.ts`（擴充，`npm run smoke:realtime`） | 在 `AC_SMOKE_KNOWLEDGE_DELAY_MS` 下，SSE 觀察到 `ready/pending` 早於 `ready/cited`，且 Composer 的草稿在兩者之間不變（SC-003） |
+| `test/realtime-http.ts`（擴充，`npm run smoke:realtime`） | 在 `AC_SMOKE_KNOWLEDGE_DELAY_MS` 下，SSE 觀察到 `ready/pending` 早於 `ready/cited`；⚠️ **不含 SC-003 的行為驗證**——此 harness 沒有瀏覽器，量不到 Composer，只能斷言「兩則事件之間不存在任何非 `suggestion.updated` 的對話事件」這個**弱代理** |
+
+> ⚠️ **SC-003（Composer 100% 不被更動）沒有端到端自動化**，這是刻意取捨，不是漏做。
+> 現有的三層防護是：① `test/contract-guards.test.ts` 的**靜態**守衛（`useCopilotSession.ts` 不得
+> import `useDraft`）；② `test/realtime-http.ts` 的弱代理（上表）；③ **quickstart US2 的手動場景**——
+> 唯一真正驗到「帶入後多打字、第二段到達、Composer 一字不變」的地方。
+> 本文件原本在上表宣稱 smoke 涵蓋 SC-003，與 tasks.md T024 的自陳互相矛盾，2026-08-29 訂正。
 
 ## 手動驗證場景（對照 spec.md Acceptance Scenarios）
 
@@ -36,7 +42,7 @@ npm run build && npm run smoke     # 動到 server/api/**（stream.get.ts 的重
 2. **預期**：3 秒內建議卡區塊出現並標示產生中；**20 秒內**（90 百分位）第一批卡完整呈現，
    區塊標頭顯示「尚未引用知識庫・檢索中」，每張卡的來源列為「尚未引用知識庫」。
    → 這一步就是 SC-001 的驗收本身，刻意不進自動化（Mock 量不到真延遲，同 002 的取捨）。
-3. **預期**：JOIN 後最晚 45 秒內（實測多半 20～30 秒）區塊閃現「已更新為有 SOP 依據的版本」提示
+3. **預期**：JOIN 後最晚 50 秒內（實測多半 20～30 秒）區塊閃現「已更新為有 SOP 依據的版本」提示
    （圖示＋文字，約 5 秒淡出），卡片整批換成帶 `sopTitle` 的版本；EventStream 上看到
    `ready/pending` → `ready/cited` 兩則。
 4. 重複 JOIN 10 段不同對話，統計拿到 `cited` 的比例 → SC-002 要求 ≥ 90%（知識庫有內容的前提下）。

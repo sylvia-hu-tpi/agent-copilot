@@ -25,8 +25,12 @@
 | 第一段用盡轉 error | `analyzing` → `retrying`×n → `error`；尾巴若之後有命中，MUST NOT 自行把 `error` 改成 `ready`（那要等客服按重試；重試時走「命中已在手」單段） |
 | 新一批訊息到達、舊尾巴仍在飛 | 新世代的 `analyzing` 之後，舊世代的任何事件 MUST NOT 再出現 |
 
-**時序上限**（前景，自 `analyzing` 起算）：`pending` 最晚 15 秒 × (1 + 重試次數)；
-`cited`／`none` 最晚 30 秒（檢索）＋ `SUGGESTION_STAGE2_CALL_TIMEOUT_MS`。
+**時序上限**（前景，自 `analyzing` 起算）：
+- `pending`：**最晚約 40 秒**——由 001 FR-014 的 `BUDGET_MS = 40_000` **總預算**截斷，
+  不是「15 秒 × 次數」。實際序列是 15（首次逾時）＋1（退避）＋15＋4＋15 ＝ 50 秒 > 預算，
+  因此第三次呼叫在最壞情境下發不完就被預算切掉。⚠️ 本行原寫「15 秒 × (1 + 重試次數)」，
+  忽略了退避等待與總預算兩者，2026-08-29 `/speckit-analyze` 訂正。
+- `cited`／`none`：最晚 30 秒（檢索）＋ `SUGGESTION_STAGE2_CALL_TIMEOUT_MS`（20 秒）＝ **50 秒**。
 沒有「`pending` 永久不落定」的合法序列——唯一會造成它的路徑（程序重啟、尾巴消失）由重連快照修正（§4）。
 
 ## 3. 消費端保證（`app/composables/useCopilotSession.ts`、`SuggestionList.vue`）
@@ -49,7 +53,15 @@
 - **重試按鈕**：規則不變——只在 `status === 'error'` 可按。`pending` 期間與期滿後都不是 error，
   因此 MUST NOT 出現可按的重試（spec Edge Cases）。
 - **Composer**：本 composable MUST NOT import `useDraft`／觸碰 Composer 狀態（FR-008）。
-  `test/contract-guards.test.ts` 以原始碼掃描守住。
+  `test/contract-guards.test.ts` 以原始碼掃描守住。⚠️ 這是**靜態**守衛，不是 SC-003 的行為驗證——
+  「第二段更新時 Composer 一字不變」目前只有 quickstart US2 的手動場景在驗（見 quickstart 覆蓋表註記）。
+
+## 6. 第二段整批換卡時的搶答標記（FR-015）
+
+`cards` 有第三個寫入者 `checkSuggestionsSuperseded()`，它由訊息到達驅動、不受世代管轄
+（data-model.md §8）。伺服器在**任何整批覆蓋 `cards` 的路徑**（第二段、背景單段、命中已在手單段）
+發布前，MUST 以當下歷史重新套用搶答標記，順序在白名單與 `confidence` 歸零之後。
+消費端不需要知道這件事——它收到的仍是一個已標記完成的 block。
 
 ## 4. 重連快照的補充
 

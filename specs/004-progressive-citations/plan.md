@@ -13,7 +13,8 @@
 
 技術路徑只有一條主線：在既有 `analyzeSuggestionsOnce()` 內分岔（research.md #1），第二段以鎖外的
 「尾巴」執行並用世代計數擋過期結果（#2）；`withRetry()` 加 `maxRetries`／`signal` 兩個選項讓第二段
-「不重試」與第一段「被第二段取消」都是明示的呼叫端選擇，001 FR-014 的三個數字不動（#4）。
+「不重試」、第一段「被第二段取消」、第二段「被 LEAVE 取消」都是明示的呼叫端選擇，
+001 FR-014 的三個數字不動（#4）。第二段整批換卡後 MUST 重新套用搶答標記（FR-015）。
 `SuggestionBlock` 加 `citation`／`basedOnMessageId`／`provenance` 三欄，`status` 五態機與 SSE 事件型別
 都不變（#6、#7）。**不新增 provider、不改 `AIProvider`／`KnowledgeProvider` 介面、不新增持久化形狀。**
 
@@ -38,22 +39,26 @@
 
 **Performance Goals**: 第一批卡 JOIN 後 90% 在 **20 秒**內（002 SC-001 建議卡門檻，2026-08-29 由 10 秒
 修訂；3 秒骨架不變）；且第一段 p90 不比實作前差（004 SC-001）——第一段的輸入與現況相同
-（`knowledgeHits: []`），差別只在不再等 8 秒檢索，理論上只會更快。第二段最晚 JOIN 後 45 秒
-（30 秒檢索 ＋ 15 秒生成）；SC-002 知識庫有內容時 ≥ 90% 最終取得 `cited`
+（`knowledgeHits: []`），差別只在不再等 8 秒檢索，理論上只會更快。第二段最晚 JOIN 後 **50 秒**
+（30 秒檢索 ＋ 20 秒生成）；SC-002 知識庫有內容時 ≥ 90% 最終取得 `cited`
 
 **Constraints**:
 - **001 FR-014 的 15s／1s→4s／40s 三數不動**；第一段沿用，第二段 `maxRetries: 0`（004 FR-014）。
-  第二段的單次逾時以獨立常數 `SUGGESTION_STAGE2_CALL_TIMEOUT_MS = 15_000` 承載——
-  ⚠️ **research.md #5 建議改為 20 秒**（第二段不進重試迴圈，改它不牽動退避預算；15 秒對實測最慢
-  13.0 秒只剩 13% 餘裕，平台漂移 36% 即逾時且**靜默**落成 `none`，直接侵蝕 SC-002）。
-  spec 字面是 15 秒，本 plan 不自行推翻，tasks.md 列為實作前確認項。
+  第二段的單次逾時以獨立常數 `SUGGESTION_STAGE2_CALL_TIMEOUT_MS = 20_000` 承載
+  （✅ **2026-08-29 裁決：20 秒**，依 research.md #5 的對照表。第二段不進重試迴圈，改它不牽動
+  退避預算；15 秒對實測最慢 13.0 秒只剩 13% 餘裕，平台漂移 36% 即逾時且**靜默**落成 `none`，
+  直接侵蝕 SC-002。spec FR-003 與 Clarifications 已同步改寫）。
 - 檢索逾時**只有一個數字** `KNOWLEDGE_SEARCH_TIMEOUT_MS = 30_000`；`SUGGESTION_RETRIEVAL_TIMEOUT_MS`
   刪除且以契約守衛防止復活（research.md #8）。
 - 建議卡 AI 呼叫次數：前景每批最壞 1 ＋ 2（第一段重試）＋ 1 ＝ 4，背景 1；以 `provenance` 可稽核（SC-005）。
-- `runBlockDeduped()` 的鎖只涵蓋第一段——第二段若在鎖內，新一批客戶發言的分析會被舊尾巴拖慢最多 45 秒
+- `runBlockDeduped()` 的鎖只涵蓋第一段——第二段若在鎖內，新一批客戶發言的分析會被舊尾巴拖慢最多 50 秒
   （research.md #2）。
+- **尾巴有兩個 `AbortController`，職責 MUST NOT 合併**（data-model.md §4）：`stage1Abort` 由第二段
+  在「檢索有命中」時觸發，用來擋第一段尚未送出的重試（FR-006a）；`tailAbort` 由新世代與
+  `cancelPendingAnalysis()`（LEAVE）觸發，用來擋尚未送出的**第二段**呼叫。共用一個會讓第二段
+  在成功路徑上先把它 abort 掉，之後 LEAVE 再 abort 就是 no-op —— 錢照付、結果無人看。
 - 建議卡內容 MUST NOT 逐字串流（FR-010，沿用 002 FR-026）；兩段各自整批驗證後才顯示。
-- 背景對話 `mode: 'single'`，程式碼註解 MUST 寫明刻意不一致的理由（FR-013）。
+- 背景對話 `strategy: 'single'`，程式碼註解 MUST 寫明刻意不一致的理由（FR-013）。
 - 「AI 是否正在自動回覆」一律 `controlFromMode(mode).aiReplies`（002 FR-016 的地雷，兩段都要帶）。
 
 **Scale/Scope**: 與 002 相同（客服所有已 JOIN 的對話）；前景兩段式讓每批訊息的建議卡呼叫最多翻倍
@@ -70,8 +75,8 @@
 | **三、Copilot 不得拖垮主線** | 第二段失敗／逾時的處置 | ✅ 通過且是 FR-003 的核心：第二段任何失敗都**靜默**維持第一段（3.2「知識庫失敗 → 降級為無引用版本並明確標示」）；不新增任何刻意阻斷情境（3.3 封閉集合不變） |
 | **四、AI 輸出必須可驗證** | 兩段都是模型輸出 | ✅ 通過。兩段各自 Zod（4.2）→ 白名單整卡捨棄（4.3，第二段以第二段的 hits 為白名單）→ `confidence` 歸零（4.4）。**4.5 是本功能存在的理由**：第二段重新生成而非為第一段補掛來源，讓卡片文字與來源的因果關係真實成立（spec Clarifications Q1） |
 | **五、AI 產物寫入正式紀錄** | 不適用 | 不寫 Data Board |
-| **六、資源使用** | 6.2 的「MUST NOT 略過檢索」與背景節流 | ✅ 通過。每批仍恰好發出一次檢索（`knowledgeSearch.ran` 恆 `true`）；背景維持單段且沿用並行上限與 debounce；前景多一次呼叫是 spec 明示接受的成本，且有上限與稽核（FR-014／SC-005）。6.3（patch）：SSE 仍整塊覆蓋，是既有慣例，不新增違反 |
-| **七、協同與資料一致性** | 不動 JOIN／LEAVE／送出；FR-008 的 Composer 保護 | ✅ 通過。`useCopilotSession` 只覆蓋 `suggestions` ref，Composer 草稿走 `useDraft()`（localStorage）與元件自身狀態，兩者無共用路徑；以契約守衛（不得 import `useDraft`）守住。LEAVE 時 `cancelPendingAnalysis()` 一併 abort 尾巴（003 FR-013 的延伸：沒人 JOIN 就不花第二段的錢） |
+| **六、資源使用** | 6.2 的「MUST NOT 略過檢索」與背景節流 | ✅ 通過（**依 v3.0.2**）。每**批**恰好發出一次檢索、該批的兩段生成都建立在那次檢索的真實結果上（`knowledgeSearch.ran` 恆 `true`）；FR-005 的重試路徑沿用同一批次已完成的檢索備忘，同樣不是「略過」。⚠️ 憲法 6.2 原以「每一次**生成**」為量詞，兩段式在同一批內生成兩次會違反其字面——已於 **v3.0.2 澄清為「每一批至少一次」**（憲法附錄 C，2026-08-29，本規格的 `/speckit-analyze` 提出）。背景維持單段且沿用並行上限與 debounce；前景多一次呼叫是 spec 明示接受的成本，且有上限與稽核（FR-014／SC-005）。6.3（patch）：SSE 仍整塊覆蓋，是既有慣例，不新增違反 |
+| **七、協同與資料一致性** | 不動 JOIN／LEAVE／送出；FR-008 的 Composer 保護；7.2 的撞單保護 | ✅ 通過。`useCopilotSession` 只覆蓋 `suggestions` ref，Composer 草稿走 `useDraft()`（localStorage）與元件自身狀態，兩者無共用路徑；以契約守衛（不得 import `useDraft`）守住。LEAVE 時 `cancelPendingAnalysis()` abort 尾巴的 `tailAbort` 並移除該筆登記（003 FR-013 的延伸：沒人 JOIN 就不花第二段的錢）——**這條要成立，第二段的呼叫必須真的吃 `tailAbort.signal`**，否則只是一句沒有機制支撐的宣稱（見 Constraints 的兩個 controller）。7.2：第二段整批換卡 MUST 重新套用搶答標記（FR-015），否則同事已回覆過的建議會以未標記的新卡復活 |
 | **八、介面與無障礙** | 8.1／8.5 | ✅ 通過。更新提示與「檢索中」標頭皆為圖示＋文字，`role="status"`（8.1）；新文案入 i18n（8.5）；不新增互動元素（8.2 不受影響）；8.4 由 FR-008 反向保證（程式主動更新 MUST NOT 碰草稿） |
 | **九、渲染與部署** | `suggestionTails` 是單副本執行期狀態 | ✅ 通過，限制與 003 的 `analysisInFlight` 相同：9.2 換 Redis 前只有單副本，屆時尾巴登記需一併搬（已在 data-model.md §4 註明） |
 
@@ -82,6 +87,12 @@
 **Phase 1 設計後複查**：`data-model.md`／`contracts/` 的決策（`citation` 三值與 `status` 正交、
 尾巴在鎖外＋世代計數、`withRetry` 加選項而非繞過、提示由消費端轉移推導、刪除短逾時常數）皆未新增
 外部依賴、未新增持久化形狀、未新增刻意阻斷情境、未繞過 Zod 或白名單。上表結論不變。
+
+**`/speckit-analyze` 後修訂（2026-08-29）**：交叉比對找出 14 項，其中影響本表的有四項——
+① 憲法 6.2 的量詞與兩段式牴觸 → 憲法 **v3.0.2** 澄清（第六條已改寫）；
+② 第二段未吃 `signal`，第七條「LEAVE 不花第二段的錢」原本沒有機制支撐 → 拆兩個 `AbortController`；
+③ 搶答標記會被第二段整批覆蓋抹掉 → 新增 FR-015（第七條 7.2 一列）；
+④ `SUGGESTION_STAGE2_CALL_TIMEOUT_MS` 裁決為 20 秒。其餘十項為文件一致性與任務排序，見 tasks.md。
 
 ## Project Structure
 
@@ -114,10 +125,11 @@ server/
 │   │   └── mock-knowledge-provider.ts      # MODIFIED — 讀 AC_SMOKE_KNOWLEDGE_DELAY_MS（僅 Mock 路徑）
 │   ├── knowledge/index.ts                  # MODIFIED — 裝配 Mock 時帶入 searchDelayMs
 │   └── copilot-analysis.ts                 # MODIFIED（核心）——
-│                                            #   analyzeSuggestionsOnce(mode) 兩段分岔、suggestionTails、
+│                                            #   analyzeSuggestionsOnce(strategy) 兩段分岔、suggestionTails、
 │                                            #   世代計數、SUGGESTION_STAGE2_CALL_TIMEOUT_MS、
 │                                            #   awaitSuggestionTail()（測試用）、
-│                                            #   cancelPendingAnalysis() 一併 abort 尾巴、
+│                                            #   cancelPendingAnalysis() abort tailAbort ＋ 移除該筆登記、
+│                                            #   第二段落地後重跑 markSupersededCards()（FR-015）、
 │                                            #   initialState() 補新欄位預設
 └── api/
     └── stream.get.ts                       # MODIFIED — 重連快照：pending 且無尾巴 → 改送 none（契約 §4）
