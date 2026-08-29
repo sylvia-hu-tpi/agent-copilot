@@ -913,6 +913,17 @@ export interface EventBus {
 > ⚠️ 仍要保留第二層的 `lastMessageId` 比對——`last_message_at` 只說「有新東西」，不說「新了幾則」。且**`last_message_at` 實測填充率僅 83%**，部分對話為 `(無)`，這些對話須退回逐對話輪詢。
 >
 > 輪詢仍不是瓶頸，AI 呼叫才是——實測 AI 單次呼叫中位數 5.0 秒、最慢 12.2 秒，見 §11.2。
+> ⚠️ **第一層的間隔在「排下一拍」的那一刻就固定了，之後不會自己重評。**
+> 而這一層只在「該組織有人連線」時才真的取數（沒人時 `borrowCredential()` 回 null，
+> 直接回空陣列且不報錯）——兩者相乘會生出一個安靜的空窗：runtime 由**最先到的請求**建立
+> （JOIN 這類寫入請求也會建），那一刻 SSE 連線往往還沒登記憑證，於是第一拍取不到數，
+> 並照**背景 30 秒**排下一拍。客服隨後連上線、分頁切回前景都不會讓它變快。
+>
+> 因此憑證登記與「切回前景」都必須叫醒第一層（`ConversationListPoller.wake()`，
+> 由 `credentials.ts` 的 `onCredentialUpgrade()` 通知）。
+> 2026-08-29 修復前的實測：`smoke:realtime` 整場 9.4 秒第一層只 tick 過一次、
+> `conversations.search()` **零筆**，全部偵測其實都由第二層完成——而兩層在前景都是 3 秒，
+> 症狀被完美掩蓋，直到對話轉背景（第二層降到 15 秒）才露出來。
 
 對應追問項見 `IMBRACE_QUESTIONS.md` B-1（有無推播機制、現行輪詢頻率是否可接受）與 G-2（rate limit 規格）。
 ⚠️ 原本並列的 B-2（增量拉取的正式參數）已於 2026-08-29 **撤回**——繞法已上線並通過驗收，
@@ -1909,14 +1920,19 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       已對照 `docs/wireframe/03-workspace_assignment01/02/_lightTheme.png`（003 T032）
 - [ ] Copilot 面板五大區塊（`SummaryCard.vue`、`SentimentGauge.vue`、建議卡、知識庫快查、
       對話紀錄／結案摘要——**後者尚未實作**）之圖示、色票、文案與 `error`／`retrying` 狀態，
-      已對照 Claude Design 畫布 artboard 2a（`CopilotPanel.dc.html`，見 `docs/DESIGN_TOKENS.md` §7）
-      逐一核實；有落差者已訂正或已記錄不採用的理由
+      已對照 Claude Design 畫布 artboard 2a（`docs/DESIGN_TOKENS.md` §7）逐一核實；
+      有落差者已訂正或已記錄不採用的理由。
+      ✅ 2026-08-29：§7 已由肉眼讀圖升級為**逐字規格**（元件原始檔在 artifact 的 manifest 裡，
+      解法見該文件附錄），先前「須向畫布擁有者索取 `CopilotPanel.dc.html`」的前置條件已消失。
+      ⚠️ 核對時特別注意 §7.5 訂正表的兩項：附件有**第三型**「舊型附件 · 僅有檔名，無法預覽」，
+      以及 `COPILOT` 徽章是 **10.5px** 而非 eyebrow 的 11px
 - [ ] 左側清單（`Sidebar.vue`）與中欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、
       `PresenceBar.vue`、`ModeSelect.vue`）已對照畫布 artboard 1c 核實。
       ⚠️ 1c **不只兩張**：另有 10 個狀態變體（未接手／兩欄收合／撞單／結案五態等），
       核對範圍 MUST 涵蓋全部；索引見 `DESIGN_TOKENS.md`「1c 的狀態變體」。
-      ⚠️ 1c 目前只有截圖、無逐字文字規格，核對前須先比對截圖或向畫布擁有者取得規格，
-      **不得憑既有 token 臨場判斷後就視為已核實**
+      ✅ 2026-08-29：1c 已有**逐字規格**（`DESIGN_TOKENS.md` §8，含版面尺寸、三欄各自的文案、
+      撞單攔截與結案各態），先前「只有截圖、須向畫布擁有者取得規格」的封鎖已解除。
+      **仍不得憑既有 token 臨場判斷後就視為已核實** —— 現在有逐字規格可比，這條只會更嚴格
 
 **未修的缺陷**（皆為真實環境挖出、皆不報錯；已決議另開 005 收，不阻塞 004）
 
@@ -1935,17 +1951,24 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       修法：`sendAnalysisSnapshotAndResume()` 發現沒有狀態時補跑冷啟動（`recoverColdStart()`，
       限已 JOIN 的連線）。代價是重啟後每個已 JOIN 且有連線的對話各跑一次冷啟動，
       刻意接受——它換回的正是 JOIN 當初承諾的東西。M4 換 Redis 後此路徑不再觸發
-- [ ] **第一層清單輪詢會在同一個程序生命週期內安靜地停止偵測**（2026-08-29 由 `smoke:realtime`
-      ⑤／⑥ 定位）：同一支 smoke 前段（①）客戶訊息 3007ms 被偵測到，到 ⑤ 時同樣的推送要
-      **15019ms**——分毫不差等於 `POLL_BACKGROUND_JOINED_MS`，即第二層自己的計時器，
-      代表第一層完全沒有 `poke()`。
-      **已排除**：① 非訂閱掉了（逾時拉到 75 秒後 ⑤ 全部通過，只是遲到）；② 非憑證被抹掉
-      （第二層用同一支 `borrowCredential()` 且成功取到訊息）；③ 非第一層拋錯（無任何 `[poll:list]` 記錄）。
-      **剩餘候選**：假 gateway 在某些操作後不再更新 `last_message_at`／`updated_at`；
-      或 `LIST_PAGE_SIZE` 分頁把該對話擠出視窗。
-      ⚠️ **MUST NOT 靠放寬測試門檻收掉**：若真實環境亦然，客服會從 3 秒變 15 秒看到訊息且無任何錯誤，
-      §18 M1 的「4 秒內看到」會在無人察覺下失效。⚠️ 早於 004（已在 `dcabc18` 重建重跑，症狀相同）；
-      連帶使 `smoke:realtime` 跑不完，004 新增的場景 ⑦ 排在 ⑤ 之後而執行不到
+- [x] **第一層清單輪詢從頭到尾沒有跑過已修**（2026-08-29 由 `smoke:realtime` ⑤ 定位並修復）：
+      症狀是 ⑤ 的客戶訊息要 **15019ms** 才被偵測到——分毫不差等於 `POLL_BACKGROUND_JOINED_MS`，
+      即第二層自己的計時器。
+      **根因（兩個缺陷相乘）**：① runtime 由最先到的請求建立（`join.post.ts` 也會建），
+      那一刻還沒有任何憑證，`fetchConversationList()` 靜默回空陣列；
+      ② `intervalMs()` 只在排下一拍時算一次，那一拍因此照**背景 30 秒**排，
+      之後客服上線、切回前景都不會讓它變快。整場 smoke（9.4 秒）第一層只 tick 過一次、
+      `conversations.search()` **零筆**，所有偵測其實都由第二層完成。詳見 §9.3.1 的警告。
+      **修法**：`ConversationListPoller.wake()` ＋ `credentials.ts` 的 `onCredentialUpgrade()`
+      通知（相依方向維持 `copilot-runtime → credentials`，不得反向 import）。
+      ⚠️ **先前記錄的兩個候選都已證偽**，留在此處以免有人重走：假 gateway 的 `_search` **有**
+      正確更新 `last_message_at` 與 `updated_at`（只是從沒被呼叫）；`LIST_PAGE_SIZE` 分頁也不成立
+      （假 gateway 只有 1 個對話、limit 是 100）。
+      ⚠️ **兩層在前景都是 3 秒**，所以 ① 的「3007ms」其實是第二層量到的——
+      這個巧合正是缺陷藏了那麼久的原因，改動任一層的頻率前要記得它。
+      ⚠️ 修復前一併發現：`test/nitro-harness.ts`／`test/smoke-http.ts` 只轉發伺服器的 stderr，
+      stdout 開了管線卻沒人讀——`console.log` 的探針完全看不到，而且緩衝區滿了會**阻塞伺服器程序**。
+      兩支都已補上排空
 - [x] **`SentimentGauge.vue` 恰好 1 點的空白框已修**（2026-08-29）：`hasContent` 用
       `timeline.length > 0` 決定是否渲染，折線卻要 `pointsOnly.length > 1`；恰好 1 點時走進
       繪圖分支卻畫不出線，呈現一個 64px 高、無數字無文字的空白框。補上「有資料但不足以繪圖」
