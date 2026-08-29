@@ -37,7 +37,9 @@
     "spike:copilot-agents": "tsx scripts/spike/15-copilot-agents.ts",
     "spike:verify-provider": "tsx scripts/spike/16-verify-copilot-provider.ts",
     "spike:templates": "tsx scripts/spike/17-message-templates.ts",
-    "spike:agent-latency": "tsx scripts/spike/18-agent-model-latency.ts"
+    "spike:agent-latency": "tsx scripts/spike/18-agent-model-latency.ts",
+    "spike:userid": "tsx scripts/spike/19-userid-roundtrip.ts",
+    "spike:knowledge-latency": "tsx scripts/spike/20-knowledge-latency.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",
