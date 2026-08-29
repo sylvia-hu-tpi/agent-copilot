@@ -405,8 +405,13 @@ async function main(): Promise<void> {
 
     // ⚠️ 上面那筆走的是「送出 API 直接 poke()」的捷徑，量到的是我方內部延遲。
     //    真正撐著 4 秒預算的是**客戶回覆** —— 它不經過我方任何 API，
-    //    只能靠第一層清單輪詢（3s）發現 `last_message_at` 變了才 poke。
+    //    只能靠輪詢發現 `last_message_at` 變了才 poke。
     //    這一筆才是驗收數字的來源，前一筆再快都不能代替它。
+    //
+    // ⚠️ **這一項分不出是第一層還是第二層發現的** —— 兩層在前景都是 3 秒。
+    //    2026-08-29 之前第一層整場都沒跑過（見 ARCHITECTURE §9.3.1 的警告），
+    //    這一項照樣是綠的，缺陷一路藏到 ⑤ 才露出來（那裡第二層降到 15 秒）。
+    //    要真的驗第一層，得看 ⑤ 那一項，或直接數 gateway 收到幾筆 `_search`。
     const cursorCustomer = streamB.cursor()
     const customerAt = Date.now()
     gateway.pushMessage('con_1', '客戶：好，那我再等等')
@@ -416,7 +421,7 @@ async function main(): Promise<void> {
       { since: cursorCustomer, label: 'B 收到客戶的訊息' },
     )
     check(
-      `客戶回覆（無捷徑，只靠第一層輪詢）也在 ${DELIVERY_BUDGET_MS / 1000} 秒內出現`,
+      `客戶回覆（無捷徑，只靠輪詢偵測）也在 ${DELIVERY_BUDGET_MS / 1000} 秒內出現`,
       customerSeen.at - customerAt <= DELIVERY_BUDGET_MS,
       `實際 ${customerSeen.at - customerAt}ms`,
     )
