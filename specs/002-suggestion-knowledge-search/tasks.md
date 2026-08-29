@@ -44,7 +44,7 @@ description: "Task list template for feature implementation"
 - [X] T002 [P] 新增 `shared/types/knowledge.ts`，**一次寫入最終形狀**（data-model.md §2、§5）：
   `KnowledgeHit`（`id`/`title`/`snippet`/`score: number | null`/`updatedAt: string | null`/`sourceRef`）、
   `KnowledgeProvider`（`search(query, opts?: { topK?: number, fileId?: string, timeoutMs?: number }): Promise<KnowledgeHit[]>`
-  —— `fileId` 供「展開全文」限定檔案內搜尋（US2／research.md #3），`timeoutMs` 供 SC-002 的逾時保障；
+  —— `fileId` 供「展開全文」限定檔案內搜尋（US2／research.md #3），`timeoutMs` 供 SC-002b 的逾時保障；
   **不設 `channel` 選項**，本功能無任何使用者）、`KnowledgeSearchRequest`（`{ query: string, expandRef?: string }`）、
   `KnowledgeSearchResponse`（`{ hits: KnowledgeHit[], degraded?: boolean }`）
 - [X] T003 修改 `shared/types/copilot.ts`：新增 `SuggestionCard`（`id`/`sopId`/`sopTitle`/`text`/
@@ -90,7 +90,11 @@ description: "Task list template for feature implementation"
   匯出常數 `KNOWLEDGE_SEARCH_TIMEOUT_MS = 8_000`（plan.md Constraints：短於 SC-002 的 10 秒門檻），
   ⚠️ **2026-08-27 已依實測修訂為 30_000，並另立 `SUGGESTION_RETRIEVAL_TIMEOUT_MS = 8_000`
   給建議卡那條路徑**——實測真實檢索最快 13.0 秒、最慢 24.9 秒（⚠️ **2026-08-29 訂正**：加大樣本後為最快 9.4 秒、中位 11.9 秒、p90 16.9 秒、最慢 20.1 秒，原「沒有任何一次低於 13 秒」已被推翻；**但「8 秒 100% 逾時」的結論不變且更確定（0/12）**，詳見 `server/services/knowledge/agent-knowledge-provider.ts` 的常數註解），8 秒在生產路徑上 100% 逾時。
-  SC-002 的門檻同步由 10 秒改寫為 25 秒。理由與九次取樣數據見該常數的註解與 plan.md Constraints；
+  SC-002 的門檻同步由 10 秒改寫為 25 秒（⚠️ **2026-08-29 再修訂**：25 秒源自已排除模型的單筆離群值，
+  且比 30 秒的逾時上限還短；已拆為 SC-002a 20 秒／SC-002b 35 秒，見 002 spec SC-002b 註記）。
+  理由與九次取樣數據見該常數的註解與 plan.md Constraints；
+  ⚠️ **2026-08-29：`SUGGESTION_RETRIEVAL_TIMEOUT_MS` 已於 004 刪除**，建議卡路徑改共用
+  `KNOWLEDGE_SEARCH_TIMEOUT_MS`（004 FR-003）；
   `opts.timeoutMs` 可覆寫，逾時即拋錯交由呼叫端降級（**不重試**：檢索失敗時 FR-004 允許以空集合續行，
   重試只是再等一次）（依賴 T002）
 - [X] T010 [P] 新增 `server/services/knowledge/mock-knowledge-provider.ts`：`MockKnowledgeProvider implements KnowledgeProvider`，
@@ -286,8 +290,9 @@ description: "Task list template for feature implementation"
 
 - [X] T036 [P] [US2] 新增 `test/knowledge-search-api.test.ts`：空白查詢不呼叫 provider 且回傳 200 `{hits:[]}`；
   未 JOIN 回 403；provider 拋錯回 200 `{hits:[],degraded:true}`；**provider 逾時（超過
-  `KNOWLEDGE_SEARCH_TIMEOUT_MS`）同樣回 200 `{hits:[],degraded:true}` 而非無限等待**（SC-002 的
-  門檻靠這個上限成立；該門檻 2026-08-27 已依實測由 10 秒改寫為 25 秒，見 T009）；`expandRef` 有值時 provider 收到對應 `fileId`
+  `KNOWLEDGE_SEARCH_TIMEOUT_MS`）同樣回 200 `{hits:[],degraded:true}` 而非無限等待**（SC-002b 的
+  門檻靠這個上限成立；該門檻 2026-08-27 由 10 秒改為 25 秒，2026-08-29 再拆為 SC-002a 20 秒／
+  SC-002b 35 秒，見 T009）；`expandRef` 有值時 provider 收到對應 `fileId`
   （contracts/knowledge-search-api.md）
 
 ### App
@@ -525,9 +530,10 @@ description: "Task list template for feature implementation"
 > **SC-001（3 秒／10 秒延遲門檻）刻意不列自動化任務**：`smoke` 跑的是假 gateway ＋ Mock provider，
 > 對它斷言延遲量到的是 `suggestDelayMs` 這個自己設的數字，不是真實 AI 呼叫（實測中位數 5.0 秒、
 > 最慢 12.2 秒）。改以 quickstart.md 的手動／staging 場景驗收。**這是刻意取捨，不是漏做**——
-> 日後要補自動化，前提是先有一條打真實 agent 的驗收路徑。（SC-002 不同：它的門檻由
-> `KNOWLEDGE_SEARCH_TIMEOUT_MS` 這個實際生效的上限保障，可在 T036 斷言。⚠️ 2026-08-27：
-> 該常數已由 8_000 改為 30_000、SC-002 門檻由 10 秒改為 25 秒，見 T009 的修訂註記。）
+> 日後要補自動化，前提是先有一條打真實 agent 的驗收路徑。（SC-002b 不同：它的門檻由
+> `KNOWLEDGE_SEARCH_TIMEOUT_MS` 這個實際生效的上限保障，可在 T036 斷言；SC-002a 的 20 秒
+> 與 SC-001 同性質，同樣不進自動化。⚠️ 2026-08-27：該常數已由 8_000 改為 30_000、SC-002 門檻
+> 由 10 秒改為 25 秒；2026-08-29 再拆為 SC-002a 20 秒／SC-002b 35 秒，見 T009 的修訂註記。）
 
 ---
 

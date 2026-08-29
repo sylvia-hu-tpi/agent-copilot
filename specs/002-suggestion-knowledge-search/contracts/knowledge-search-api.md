@@ -36,7 +36,12 @@ FR-007）；`updatedAt` 可能為 `null`（research.md #2）。
 型別定義以 `data-model.md` 為準，本契約不另立形狀。
 
 檢索呼叫 MUST 帶逾時上限（`KNOWLEDGE_SEARCH_TIMEOUT_MS`，見 `plan.md` Constraints），
-逾時即走上表最後一列的 `degraded` 路徑——SC-002 的門檻靠這個上限成立，不靠 provider 自律。
+逾時即走上表最後一列的 `degraded` 路徑——SC-002b 的 35 秒最壞落定門檻靠這個上限成立
+（30 < 35），不靠 provider 自律。
+
+⚠️ **2026-08-29 起，建議卡路徑改與快查共用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`**（004 FR-003：
+兩段式讓「先檢索再生成」的串行約束消失，建議卡不再需要短逾時）。以下這段「MUST NOT 共用」
+描述的是 004 落地前的現況，保留作為歷史脈絡：
 
 ⚠️ **本端點（快查）與建議卡生成用的是兩個不同的逾時值**，MUST NOT 共用：快查是客服主動
 發起、畫面上有骨架的同步查詢，用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`；建議卡走「先檢索再生成」
