@@ -416,4 +416,4 @@
 
 | # | 問題 |
 |---|---|
-| **U-3** | ⚠️ **「切換組織」完全沒有實作**，而 1b 的文案正在對使用者承諾它。頂欄的組織名連到 `/organization`，但重新 exchange 需要 `loginToken`，它只存在於 `PendingOrgSession`，選完組織後就沒有了。連帶：`console.vue` 的 chevron 判斷 `auth.organizations.length > 1` 對 active session 永遠是 `false`，所以**那個下拉指示從來沒出現過**。R-4 的修正順手讓已 active 的人從該頁導回工作區——那是**掩蓋症狀的權宜之計，不是修好**。真正的修法要先決定：要不要把 `loginToken` 留在 active session 裡（安全取捨），或改成「回到選組織」的獨立流程 |
+| ~~U-3~~ | ✅ **已實作（方案 B）**：新增 `POST /api/auth/reselect-organization`，把 active session 退回 `pending_org` 後導向既有的選組織頁。⚠️ 這需要把 `loginToken` 與 `organizations` 留在 `ActiveSession` 裡整個 8 小時 session ——**方案 A 與 B 在這點上沒有差別**（我先前說 B 的暴露窗口較短，那是錯的，已更正）。B 真正的優點是重用既有流程、不產生第二套 exchange 邏輯。`GET /api/auth/me` 對 active 也回傳組織清單，順帶修好「chevron 從來沒出現過」 |
