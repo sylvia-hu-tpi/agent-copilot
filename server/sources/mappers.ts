@@ -39,7 +39,9 @@ import type {
  * 實測值域（stable 環境，2026-08-25）：
  *   con_…  客戶（contact）
  *   u_…    真人客服（user）
- *   pub_…  推測為 AI workflow —— ⚠️ 尚未由 iMBrace 確認，見 IMBRACE_QUESTIONS H-3b
+ *   pub_…  推測為 AI workflow —— ⚠️ 尚未由 iMBrace 確認，見 IMBRACE_QUESTIONS H-3c ③
+ *          （原 H-3b「pub_ 是否即代表 AI」已於 2026-08-29 撤回：後續分析顯示 pub_ 是
+ *           publisher 實體 id，該問法答不到我們要的東西，改由 H-3c 承接）
  *
  * ⚠️ 未知前綴一律歸為 'unknown'，**不可**預設為 'ai'。
  * 撞單防護寧可漏判也不能誤判：把同事誤判成 AI 會讓客服收到假警報，
