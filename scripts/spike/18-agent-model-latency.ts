@@ -17,6 +17,8 @@
  *   npm run spike:agent-latency                        # 預設情緒 agent，5 次
  *   npm run spike:agent-latency -- sentiment 8         # 情緒 agent，8 次
  *   npm run spike:agent-latency -- summary 5           # 摘要 agent
+ *   npm run spike:agent-latency -- suggestion 5        # 建議卡・第一段（不帶知識庫命中）
+ *   npm run spike:agent-latency -- suggestion-kb 5     # 建議卡・第二段（帶 3 筆命中）
  */
 
 import { z } from 'zod'
@@ -24,6 +26,104 @@ import { makeClient, loadEnv, isMain, OUT_DIR } from './lib/harness.js'
 import type { ImbraceClient } from '@imbrace/sdk'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { buildSuggestionPrompt } from '../../server/services/ai/imbrace-agent-provider.js'
+import type { Message } from '../../shared/types/conversation.js'
+import type { KnowledgeHit } from '../../shared/types/knowledge.js'
+
+/**
+ * 建議卡的量測輸入 —— 刻意比摘要／情緒那兩筆長。
+ *
+ * 004 FR-001 要的是「第一段在 002 SC-001 的 10 秒時限內完成」，而建議卡 prompt 的長度
+ * 本身就是被量的變數（完整逐字稿 ＋ 規則 ＋ 欄位清單），用三兩句的迷你對話量出來的數字
+ * 會低估正式路徑。這裡用一段有升溫、有嘗試步驟、有待補資料的真實形狀對話。
+ */
+const SUGGESTION_HISTORY: Message[] = [
+  { text: '你好，我想問一下網路的問題', type: 'customer' },
+  { text: '您好，請問是完全無法連線，還是時斷時續呢？', type: 'agent' },
+  { text: '網路好像有點不穩定，看影片一直轉圈圈', type: 'customer' },
+  { text: '請協助確認數據機燈號是否正常，並嘗試斷電重啟約 30 秒。', type: 'ai' },
+  { text: '已經重開機三次了都沒解決', type: 'customer' },
+  { text: '了解，我這邊先幫您查詢線路狀態，請稍候。', type: 'agent' },
+  { text: '到底要修到什麼時候，已經影響到我上班了', type: 'customer' },
+  { text: '這個月的費用可以退嗎？不然我考慮換一家', type: 'customer' },
+].map((m, i) => ({
+  id: `msg-${i + 1}`,
+  conversationId: 'spike-conversation',
+  at: new Date(Date.UTC(2026, 7, 29, 2, i)).toISOString(),
+  sender: { type: m.type as Message['sender']['type'] },
+  text: m.text,
+}))
+
+/**
+ * ⚠️ `id` 是白名單後驗（憲法 4.3）的比對基準——`check()` 會拿模型回傳的 `sopId` 跟這裡
+ *    的 id 集合核對。若模型自行編造 id，那就是「快而錯」的典型，只看延遲看不出來。
+ */
+const SUGGESTION_HITS: KnowledgeHit[] = [
+  {
+    id: 'kb-001',
+    title: '寬頻連線不穩定排除流程',
+    snippet: '若用戶回報連線時斷時續，請依序確認：① 數據機 LOS 燈是否恆亮 ② 分接盒接頭是否鬆脫 '
+      + '③ 若重啟三次仍未改善，開立線路檢測工單並告知用戶檢測時段為 24 小時內。',
+    score: null,
+    updatedAt: '2026-06-01T00:00:00.000Z',
+    sourceRef: { type: 'knowledge', ref: '寬頻連線不穩定排除流程' },
+  },
+  {
+    id: 'kb-002',
+    title: '障礙期間費用減免申請',
+    snippet: '經檢測確認為線路障礙且連續影響達 24 小時以上者，可申請按日比例減免當月月租費，'
+      + '需由客服代為填寫減免申請單並附上工單編號。',
+    score: null,
+    updatedAt: '2026-05-14T00:00:00.000Z',
+    sourceRef: { type: 'knowledge', ref: '障礙期間費用減免申請' },
+  },
+  {
+    id: 'kb-003',
+    title: '用戶表達解約意向的挽留話術',
+    snippet: '用戶提及「換一家」「不續約」時，先完整同理其損失，再說明目前正在進行的處理進度與時程，'
+      + '最後才提供補償方案，避免一開口就談優惠而顯得敷衍。',
+    score: null,
+    updatedAt: '2026-07-20T00:00:00.000Z',
+    sourceRef: { type: 'knowledge', ref: '用戶表達解約意向的挽留話術' },
+  },
+]
+
+/**
+ * 建議卡的合規判讀 —— 比照 `server/services/ai/schemas.ts` 的 `SuggestionCardSchema`，
+ * 但**扣掉 `id` 與 `supersededBy`**：那兩欄是 provider 自己填的，不是模型的輸出
+ * （見 `ImbraceAgentProvider.suggest()` 的註解），拿它們苛求模型會誤判成不合規。
+ *
+ * ⚠️ 除了 schema，這裡還多驗兩件 schema 管不到、但錯了會直接違憲的事：
+ *    ① 卡數上限 5（002 FR-001／004 FR-012 要求在生成階段落實，不得事後截斷）
+ *    ② `sopId` 必須落在本次餵進去的命中集合內（憲法 4.3 白名單後驗）——編造 id 是
+ *       換模型時最容易悄悄劣化的一項。
+ */
+function makeSuggestionCheck(allowedSopIds: string[]) {
+  const schema = z.array(z.object({
+    sopId: z.string().nullable(),
+    sopTitle: z.string().nullable(),
+    text: z.string().min(1),
+    confidence: z.number().min(0).max(100).nullable(),
+    rationale: z.string(),
+    tone: z.enum(['apologetic', 'informative', 'retention', 'closing', 'escalating']),
+    requiresData: z.array(z.string()),
+  })).min(1).max(5)
+
+  return (v: unknown) => {
+    const r = schema.safeParse(v)
+    if (!r.success) {
+      return { ok: false as const, note: r.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ') }
+    }
+    const allowed = new Set(allowedSopIds)
+    const fabricated = r.data.filter(c => c.sopId !== null && !allowed.has(c.sopId)).map(c => c.sopId)
+    const note = `${r.data.length} 張  `
+      + r.data.map(c => `${c.tone}[${c.sopId ?? '無引用'}]${c.requiresData.length > 0 ? `需補:${JSON.stringify(c.requiresData)}` : ''}`).join(' ')
+    if (fabricated.length > 0) {
+      return { ok: false as const, note: `⚠️ sopId 編造：${JSON.stringify(fabricated)}（憲法 4.3）  ${note}` }
+    }
+    return { ok: true as const, note }
+  }
+}
 
 const AGENTS = {
   sentiment: {
@@ -75,6 +175,21 @@ const AGENTS = {
         ? { ok: true as const, note: `intent=「${r.data.intent}」riskFlags=${JSON.stringify(r.data.riskFlags)}` }
         : { ok: false as const, note: r.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join('; ') }
     },
+  },
+  /**
+   * 004 FR-001 的第一段：**不等待知識庫檢索**就先產出一批無引用的卡。
+   * 這一筆量的就是「10 秒預算夠不夠」——`knowledgeHits` 為空是真實情境，不是簡化。
+   */
+  'suggestion': {
+    name: 'AgentCopilot_建議回覆_agent',
+    prompt: buildSuggestionPrompt({ history: SUGGESTION_HISTORY, knowledgeHits: [], aiReplies: false }),
+    check: makeSuggestionCheck([]),
+  },
+  /** 004 FR-001 的第二段（也是 002 現行的唯一路徑）：帶 3 筆命中，prompt 明顯更長 */
+  'suggestion-kb': {
+    name: 'AgentCopilot_建議回覆_agent',
+    prompt: buildSuggestionPrompt({ history: SUGGESTION_HISTORY, knowledgeHits: SUGGESTION_HITS, aiReplies: false }),
+    check: makeSuggestionCheck(SUGGESTION_HITS.map(h => h.id)),
   },
 } as const
 
@@ -142,6 +257,7 @@ async function main(): Promise<void> {
   console.log(`\n── 18 Agent 延遲與合規量測 ──────────────────────────────`)
   console.log(`   agent：${spec.name}（${agentId}）`)
   console.log(`   模型：${agent.modelId}   ← 由 API 讀取，不是人工記錄`)
+  console.log(`   prompt：${spec.prompt.length} 字   ← 建議卡兩段的差別就在這個數字`)
   console.log(`   樣本：${runs} 次\n`)
 
   const results: Array<{ run: number, ms: number, ok: boolean, note: string }> = []
@@ -194,7 +310,10 @@ async function main(): Promise<void> {
   console.log(`   最快      ${sorted[0]}ms`)
   console.log(`   中位數    ${percentile(sorted, 0.5)}ms`)
   console.log(`   最慢      ${sorted[sorted.length - 1]}ms   ← 逾時是被這個數字打死的`)
-  console.log(`   15 秒門檻 ${results.filter(r => r.ms > 15_000).length}/${runs} 次超過（FR-014 單次逾時）`)
+  console.log(`   15 秒門檻 ${results.filter(r => r.ms > 15_000).length}/${runs} 次超過（003 FR-014 單次逾時）`)
+  // ⚠️ 10 秒是 002 SC-001 的建議卡時限，也是 004 FR-001 第一段的預算上限。
+  //    它比 15 秒門檻更早卡死人，所以兩個都要印——只看 15 秒會漏掉「沒逾時但太慢」。
+  console.log(`   10 秒預算 ${results.filter(r => r.ms > 10_000).length}/${runs} 次超過（002 SC-001／004 FR-001）`)
 
   // 檔名帶模型，換模型重跑不會互相覆寫，也不必靠人記哪個檔是哪個模型
   const slug = agent.modelId.replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '')

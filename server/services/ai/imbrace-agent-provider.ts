@@ -56,8 +56,13 @@ function buildSentimentPrompt(messages: Message[]): string {
 /**
  * ⚠️ 訊息內容一律取 `Message.text`，MUST NOT 讀 `caption`——後者是上傳時的原始檔名，
  *    客戶上傳時為空（憲法 6.5／FR-017）。`transcriptLine()` 本來就只讀 `m.text`，此處沿用。
+ *
+ * ⚠️ **匯出是為了讓 `scripts/spike/18-agent-model-latency.ts` 量到與正式路徑「同一份」
+ *    prompt**，不是給其他 route 使用。摘要／情緒兩個 prompt 在該腳本裡是手抄複本（短、
+ *    結構穩定），但建議卡的 prompt 長度本身就是被量的變數（004 FR-001 的 10 秒預算），
+ *    手抄一旦漂移，量出來的數字就不再代表正式路徑。
  */
-function buildSuggestionPrompt(input: {
+export function buildSuggestionPrompt(input: {
   history: Message[]
   knowledgeHits: KnowledgeHit[]
   aiReplies: boolean
