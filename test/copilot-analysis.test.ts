@@ -1353,3 +1353,90 @@ describe('兩段式（004 US1）', () => {
     expect(block.cards.length).toBeGreaterThan(0)
   })
 })
+
+// ── 004 US3：背景對話不走兩段式（FR-013）──────────────────────────────
+//
+// ⚠️ 前景與背景的**不一致是刻意的**：背景沒有人在等（002 SC-007 以「切回時已更新」為驗收），
+//    第一段的產出沒有人會看到，而背景並行上限 10 個對話正是兩段式在背景省下的那筆呼叫。
+//    這一節存在的理由，就是讓「順手把它改成一致」會立刻紅。
+
+describe('背景對話（004 US3）', () => {
+  it('① 背景走單段：analyzing → ready/cited，無 pending，suggest() 恰 1 次且在檢索完成之後', async () => {
+    vi.useFakeTimers()
+    const id = convId('background-single')
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 1_000 }))
+    setAIProvider(new StageAIProvider())
+
+    // 背景增量要有既有的分析狀態才會執行（未曾 JOIN 的對話一律略過）
+    await runColdStart(id, [customerText(id, '第一批', 10)], false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await awaitSuggestionTail(id)
+
+    const events = collect(id)
+    const ai = new StageAIProvider()
+    setAIProvider(ai)
+
+    const running = runIncremental(id, [customerText(id, '背景期間的新問題', 1)], 'background', false)
+    await vi.advanceTimersByTimeAsync(1_000)
+    await running
+    await awaitSuggestionTail(id)
+
+    // 沒有第一段，就沒有那筆多出來的呼叫 —— FR-013 省下的正是它
+    expect(ai.suggestCalls).toBe(1)
+    // 唯一那次呼叫已經帶著命中結果，代表它發生在檢索完成之後
+    expect(ai.hitsSeen[0]).toEqual(STUB_HITS)
+    expect(suggestionSeq(events)).toEqual(['analyzing/cited', 'ready/cited'])
+    expect(events.some(e => e.type === 'suggestion.updated' && e.suggestion.citation === 'pending')).toBe(false)
+  })
+
+  it('② 背景檢索 0 筆 → ready/none，provenance 為 { stage: 2, stage1RetryAttempt: 0 }', async () => {
+    vi.useFakeTimers()
+    const id = convId('background-zero-hit')
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: [], delayMs: 500 }))
+    setAIProvider(new StageAIProvider())
+
+    await runColdStart(id, [customerText(id, '第一批', 10)], false)
+    await vi.advanceTimersByTimeAsync(500)
+    await awaitSuggestionTail(id)
+
+    const events = collect(id)
+    const running = runIncremental(id, [customerText(id, '背景期間的新問題', 1)], 'background', false)
+    await vi.advanceTimersByTimeAsync(500)
+    await running
+    await awaitSuggestionTail(id)
+
+    expect(suggestionSeq(events)).toEqual(['analyzing/none', 'ready/none'])
+    const block = await suggestionState(id)
+    // 單段沒有第一段，`stage1RetryAttempt` 恆為 0（data-model.md §1）
+    expect(block.provenance).toEqual({ stage: 2, stage1RetryAttempt: 0 })
+    expect(block.knowledgeSearch).toEqual({ ran: true, hitCount: 0 })
+  })
+
+  it('③ 背景分析進行中，狀態仍帶著上一批卡片 —— 切回前景的快照不會是空白（002 SC-007）', async () => {
+    vi.useFakeTimers()
+    const id = convId('background-keeps-cards')
+    setKnowledgeProvider(new StubKnowledgeProvider({ hits: STUB_HITS, delayMs: 3_000 }))
+    setAIProvider(new StageAIProvider())
+
+    await runColdStart(id, [customerText(id, '第一批', 10)], false)
+    await vi.advanceTimersByTimeAsync(3_000)
+    await awaitSuggestionTail(id)
+    const before = await suggestionState(id)
+    expect(before.cards.length).toBeGreaterThan(0)
+
+    const running = runIncremental(id, [customerText(id, '背景期間的新問題', 1)], 'background', false)
+    // 檢索還沒回來：這一刻正是客服切回前景、快照送出的時點
+    await vi.advanceTimersByTimeAsync(100)
+
+    const during = await suggestionState(id)
+    expect(during.status).toBe('analyzing')
+    // ⚠️ `beginAnalyzing()` 的 spread 保留舊卡與其 `citation` —— 兩者都是刻意的：
+    //    保留下來的卡若來自上一輪第二段，確實有 SOP 依據，標成「未引用」是說錯話（SC-004）
+    expect(during.cards).toEqual(before.cards)
+    expect(during.citation).toBe(before.citation)
+
+    await vi.advanceTimersByTimeAsync(3_000)
+    await running
+    await awaitSuggestionTail(id)
+  })
+})

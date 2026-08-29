@@ -169,8 +169,8 @@ EventStream 上依序看到 `ready/pending` → `ready/cited`，且 `pending` �
 
 ### Implementation for User Story 3
 
-- [ ] T025 [US3] 確認 `server/services/copilot-analysis.ts::runIncremental()` 的 `priority === 'background'` 分支傳 `'single'`（T012 已如此），並在 `analyzeSuggestionsOnce()` 的 `strategy` 參數註解與該分支各寫一段 **FR-013 的理由**：「背景沒有人在等（002 SC-007 以切回時已更新為驗收）、第一段的產出沒有人會看到、背景並行上限 10 個對話正是省下的量；前景與背景**刻意**不一致，MUST NOT 為了一致性改回兩段」——沒有這段註解，日後會被當 bug 修回來（spec Clarifications）
-- [ ] T026 [US3] 在 `test/copilot-analysis.test.ts` 新增 `describe('背景對話（004 US3）')`：① `runIncremental(priority: 'background')` 配 `searchDelayMs` → 事件序列為 `analyzing → ready/cited`，無 `pending`，`suggest()` 恰 1 次且在 `search()` 完成之後才被呼叫；② 檢索 0 筆 → `ready/none`，`provenance` 為 `{ stage: 2, stage1RetryAttempt: 0 }`；③ 背景進行中切回前景（連線快照）→ 快照送出既有的上一批卡（`status: 'analyzing'` 保留 cards），不空白
+- [x] T025 [US3] 確認 `server/services/copilot-analysis.ts::runIncremental()` 的 `priority === 'background'` 分支傳 `'single'`（T012 已如此），並在 `analyzeSuggestionsOnce()` 的 `strategy` 參數註解與該分支各寫一段 **FR-013 的理由**：「背景沒有人在等（002 SC-007 以切回時已更新為驗收）、第一段的產出沒有人會看到、背景並行上限 10 個對話正是省下的量；前景與背景**刻意**不一致，MUST NOT 為了一致性改回兩段」——沒有這段註解，日後會被當 bug 修回來（spec Clarifications）
+- [x] T026 [US3] 在 `test/copilot-analysis.test.ts` 新增 `describe('背景對話（004 US3）')`：① `runIncremental(priority: 'background')` 配 `searchDelayMs` → 事件序列為 `analyzing → ready/cited`，無 `pending`，`suggest()` 恰 1 次且在 `search()` 完成之後才被呼叫；② 檢索 0 筆 → `ready/none`，`provenance` 為 `{ stage: 2, stage1RetryAttempt: 0 }`；③ 背景進行中切回前景（連線快照）→ 快照送出既有的上一批卡（`status: 'analyzing'` 保留 cards），不空白
 
 **Checkpoint**: 三個 story 完整，`npm test` 綠燈
 
