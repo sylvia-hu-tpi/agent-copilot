@@ -47,6 +47,46 @@ function registry(): Registry {
   return g[KEY]
 }
 
+type CredentialWatcher = (orgId: string) => void
+
+const WATCH_KEY = Symbol.for('agent-copilot.polling-credential-watchers')
+type WatcherGlobal = typeof globalThis & { [WATCH_KEY]?: Set<CredentialWatcher> }
+
+function watchers(): Set<CredentialWatcher> {
+  const g = globalThis as WatcherGlobal
+  if (!g[WATCH_KEY]) g[WATCH_KEY] = new Set()
+  return g[WATCH_KEY]
+}
+
+/**
+ * 訂閱「這個組織現在可能需要更頻繁地輪詢了」—— 有人上線、或分頁切回前景。
+ *
+ * ⚠️ **相依方向是刻意的。** 本模組 MUST NOT 反向 import `copilot-runtime.ts`
+ *    （理由見該檔 `setJoinedResolver` 的說明：它會把 Nitro auto-import 拉進
+ *    `tsconfig.scripts.json` 的型別圖）。所以這裡只發通知、不知道對方是誰，
+ *    由 runtime 自己決定要做什麼。
+ *
+ * ⚠️ 只在「可能變快」時發，不在登出／轉背景時發 —— 變慢不需要立刻反應，
+ *    下一拍自然會用新的間隔。
+ */
+export function onCredentialUpgrade(watcher: CredentialWatcher): Unsubscribe {
+  watchers().add(watcher)
+  return () => {
+    watchers().delete(watcher)
+  }
+}
+
+function notifyUpgrade(orgId: string): void {
+  for (const watcher of [...watchers()]) {
+    try {
+      watcher(orgId)
+    }
+    catch {
+      // 訂閱者爆掉不得影響登記本身 —— 登記失敗會讓整個組織的輪詢停擺
+    }
+  }
+}
+
 /**
  * 登記一位連線中客服的憑證（由 SSE 連線建立時呼叫）。
  *
@@ -65,6 +105,10 @@ export function registerCredential(
     registeredAt: Date.now(),
   })
 
+  // ⚠️ 第一層輪詢的間隔在排程當下就固定了。runtime 常常在還沒有任何憑證時
+  //    就建立並排了 30 秒那一拍，少了這行它要等滿 30 秒才會發現有人上線了。
+  notifyUpgrade(cred.orgId)
+
   let done = false
   return () => {
     if (done) return
@@ -81,7 +125,10 @@ export function setCredentialActivity(
   activity: OperatorActivity,
 ): void {
   const cred = registry().get(orgId)?.get(operatorId)
-  if (cred) cred.activity = activity
+  if (!cred) return
+  cred.activity = activity
+  // 切回前景 → 間隔應由 30 秒回到 3 秒，但已排定的那一拍不會自己變快
+  if (activity === 'foreground') notifyUpgrade(orgId)
 }
 
 /**

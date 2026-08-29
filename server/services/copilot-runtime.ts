@@ -31,6 +31,7 @@ import { setJoinedResolver } from './copilot-analysis.js'
 import {
   borrowCredential,
   hasForegroundOperator,
+  onCredentialUpgrade,
 } from './credentials.js'
 import { snapshotOf } from './presence.js'
 
@@ -115,6 +116,16 @@ function createRuntime(orgId: string): CopilotRuntime {
     onError: (convId, err) => logPollFailure('messages', convId, err),
   })
 
+  /**
+   * ⚠️ **裝配點，MUST NOT 刪除。** 第一層的間隔在排下一拍時就固定了，而這個 runtime
+   *    很可能在還沒有任何人連線時就被建立（JOIN 這類請求也會建），那一拍會照 30 秒排。
+   *    少了這行，客服上線或切回前景後仍要等滿 30 秒第一層才會醒 —— 不報錯、
+   *    只是側欄與 mode 變動安靜地遲到。詳見 `ConversationListPoller.wake()`。
+   */
+  const offCredentialUpgrade = onCredentialUpgrade((changedOrgId) => {
+    if (changedOrgId === orgId) listPoller.wake()
+  })
+
   const offChange = listPoller.onChange((change) => {
     // ① 新訊息 → 叫第二層立刻拉（第二層才知道「新了哪幾則」）
     if (change.hasNewMessages) messageSource.poke(change.conversationId)
@@ -155,6 +166,7 @@ function createRuntime(orgId: string): CopilotRuntime {
     listPoller,
     messageSource,
     dispose: async () => {
+      offCredentialUpgrade()
       offChange()
       listPoller.stop()
       await messageSource.dispose()

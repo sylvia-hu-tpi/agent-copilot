@@ -53,6 +53,10 @@ export class ConversationListPoller {
   private handlers = new Set<ChangeHandler>()
   private timer: NodeJS.Timeout | undefined
   private running = false
+  /** 最近一次 tick 的時刻 —— `wake()` 據此算「下一拍本來該在什麼時候」 */
+  private lastTickAt = 0
+  /** 目前計時器預定的觸發時刻。沒有計時器時為 Infinity（等於「永遠不會到」） */
+  private nextTickAt = Number.POSITIVE_INFINITY
   /** 監控用（§17）：跑了幾次、失敗幾次 */
   private stats = { polls: 0, failures: 0, changes: 0 }
 
@@ -96,6 +100,28 @@ export class ConversationListPoller {
     this.running = false
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
+    this.nextTickAt = Number.POSITIVE_INFINITY
+  }
+
+  /**
+   * 叫醒輪詢 —— 有人上線、或分頁切回前景時呼叫。
+   *
+   * ⚠️ **少了這支會靜默慢 30 秒，而且不會有任何錯誤。**
+   *    間隔在「排下一拍的那一刻」就固定了，之後不再重評。而第一拍常常發生在
+   *    **還沒有任何人連線**的時候 —— runtime 由最先到的請求建立（JOIN 就會建），
+   *    那一刻 SSE 連線還沒登記憑證，`hasForeground()` 為 false，於是照 30 秒排。
+   *    客服隨後連上線、切回前景都不會讓它變快。
+   *
+   *    2026-08-29 實測（`smoke:realtime` 加探針）：整場 9.4 秒第一層只 tick 過一次、
+   *    `conversations.search()` 零筆，所有偵測其實都由第二層完成 —— 而兩層在前景
+   *    都是 3 秒，症狀因此被完美掩蓋，直到對話轉背景（第二層降到 15 秒）才露出來。
+   */
+  wake(): void {
+    if (!this.running) return
+    const dueAt = this.lastTickAt + this.intervalMs()
+    // 已經排得夠早就不動 —— 否則每一次心跳都會多打一次清單
+    if (this.nextTickAt <= dueAt) return
+    this.schedule(Math.max(0, dueAt - Date.now()))
   }
 
   /** 目前的輪詢間隔（測試與監控用） */
@@ -109,7 +135,20 @@ export class ConversationListPoller {
     if (!this.running) return
     await this.tick()
     if (!this.running) return
-    this.timer = setTimeout(() => void this.loop(), this.intervalMs())
+    this.schedule(this.intervalMs())
+  }
+
+  /**
+   * 排下一拍。
+   *
+   * ⚠️ 一律經過這裡，`nextTickAt` 才不會與真正的計時器脫節 ——
+   *    脫節的話 `wake()` 會依一個過期的預定時間判斷「已經排得夠早」而不重排，
+   *    退化成本檔開頭那個 30 秒空窗。
+   */
+  private schedule(delayMs: number): void {
+    if (this.timer) clearTimeout(this.timer)
+    this.nextTickAt = Date.now() + delayMs
+    this.timer = setTimeout(() => void this.loop(), delayMs)
     // 這個計時器不該讓 Node 程序無法退出
     this.timer.unref?.()
   }
@@ -121,6 +160,7 @@ export class ConversationListPoller {
    *    也不該讓客服看到錯誤畫面（憲法 3.2 靜默降級）。
    */
   async tick(): Promise<ConversationChange[]> {
+    this.lastTickAt = Date.now()
     this.stats.polls++
     let list: Conversation[]
     try {
