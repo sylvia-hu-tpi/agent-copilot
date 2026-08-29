@@ -131,6 +131,15 @@ interface Stage2Trace {
   keptCardCount?: number
   /** 模型宣稱引用的 sopId 是否都在命中集合裡；false 即為杜撰 */
   sopIdsAllValid?: boolean
+  /**
+   * 杜撰的 `sopId` 長什麼形狀 —— 決定「調 prompt 能不能修」的關鍵，**只記形狀不記值**：
+   *   - `used-title`      → 填了命中結果的**標題**而不是 id（模型看得到資料，只是選錯欄位
+   *                         → 調 prompt 有機會修）
+   *   - `truncated-id`    → 是某個命中 id 的前綴／子字串（複製時被截斷 → 同上）
+   *   - `unknown-id-like` → 形狀像 id 但完全不在命中集合裡（純粹編造 → 調 prompt 未必有用）
+   *   - `other`           → 其餘
+   */
+  invalidSopIdShapes?: string[]
   outcome: 'ok' | 'whitelisted-out' | 'empty-output' | 'failed'
   errorName?: string
   errorMessage?: string
@@ -186,6 +195,13 @@ function instrumentProviders(startedAt: () => number) {
         trace.keptCardCount = kept.length
         const validIds = new Set(hits.map(h => h.id))
         trace.sopIdsAllValid = cards.every(c => c.sopId === null || validIds.has(c.sopId))
+        const invalid = cards.map(c => c.sopId).filter((v): v is string => typeof v === 'string' && !validIds.has(v))
+        trace.invalidSopIdShapes = invalid.map((bad) => {
+          if (hits.some(h => h.title === bad)) return 'used-title'
+          if (hits.some(h => h.id.includes(bad) || bad.includes(h.id))) return 'truncated-id'
+          if (hits.some(h => h.title.includes(bad) || bad.includes(h.title))) return 'used-title'
+          return /^[\w-]{8,}$/.test(bad) ? 'unknown-id-like' : 'other'
+        })
         trace.outcome = cards.length === 0 ? 'empty-output' : kept.length === 0 ? 'whitelisted-out' : 'ok'
         return cards
       }
@@ -504,6 +520,7 @@ async function main(): Promise<void> {
             ? `\n        第二段：${sample.stage2.map(t =>
               `${t.outcome}（送出 +${t.startedAtMs}ms、耗時 ${t.elapsedMs}ms、模型回 ${t.rawCardCount ?? '—'} 張、`
               + `過白名單 ${t.keptCardCount ?? '—'} 張、sopId 全有效=${t.sopIdsAllValid ?? '—'}`
+              + `${t.invalidSopIdShapes?.length ? `、無效的形狀=[${t.invalidSopIdShapes.join(',')}]` : ''}`
               + `${t.errorName ? `、${t.errorName}: ${t.errorMessage}` : ''}）`).join('；')}`
             : ''),
         )
