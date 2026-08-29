@@ -31,7 +31,7 @@ import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
 import type { CopilotAnalysisState, FailedBatch } from '../state/types.js'
 import { useAIProvider } from './ai/index.js'
-import type { FailureKind } from './ai/retry-policy.js'
+import type { FailureKind, WithRetryOptions } from './ai/retry-policy.js'
 import {
   AICallTimeoutError,
   AIOutputValidationError,
@@ -723,16 +723,221 @@ export async function checkSuggestionsSuperseded(conversationId: string, message
   await publishBlock(conversationId, 'suggestions', next)
 }
 
+// ── 兩段式的執行期控制流（specs/004-progressive-citations data-model.md §4）──────
+//
+// ⚠️ 這一整段是 server-only 的**控制流**狀態，MUST NOT 進 `CopilotAnalysisState` ——
+//    進了 state 就會隨 `publishBlock()` 送出的整個 block 流到瀏覽器
+//    （`test/contract-guards.test.ts` 有守衛擋 `shared/` 出現這些名字）。
+
+/**
+ * 第二段（帶知識庫命中重新生成）的單次呼叫逾時。
+ *
+ * ✅ **2026-08-29 裁決為 20 秒**（004 research.md #5）。第二段一律 `maxRetries: 0`，
+ * **不進重試迴圈**，因此改這個數字不牽動 001 FR-014 的 15s／1s→4s／40s 三數綁定，
+ * 兩者沒有耦合 —— MUST NOT 因為「統一」而把這裡改成 15 秒。
+ *
+ * 為什麼不是 15 秒：建議卡生成實測最慢 13.0 秒，15 秒只剩 13% 餘裕；平台漂移 36% 就會逾時，
+ * 而第二段逾時是**靜默**落成 `citation: 'none'`（依 FR-003 不轉 error、不顯示重試中），
+ * 客服只會看到「未引用知識庫」而沒有任何異常跡象 —— 直接侵蝕 SC-002 的「≥ 90% 取得引用」。
+ */
+const SUGGESTION_STAGE2_CALL_TIMEOUT_MS = 20_000
+
+/** 第一段的落定結果 —— 尾巴在落定 `citation` 之前 MUST 先等它（FR-003a ①） */
+type Stage1Result =
+  | { kind: 'landed' } // 已發布 ready/pending（cards 可能為空）
+  | { kind: 'failed' } // 已 finishBlockError()，區塊為 error
+  | { kind: 'aborted' } // 被 stage1Abort 取消，區塊仍停在 analyzing／retrying
+
+interface SuggestionTail {
+  /** 每次 `analyzeSuggestionsOnce()` 啟動 +1；過期判定的**唯一**依據 */
+  generation: number
+  /**
+   * ⚠️ **兩個 controller MUST NOT 合併成一個**（data-model.md §4）。觸發者與標的相反：
+   *   - `stage1Abort`：由**第二段自己**在成功路徑上（檢索有命中時）觸發，標的是第一段
+   *     尚未送出的重試（FR-006a）
+   *   - `tailAbort`：由**外部**（新世代、`cancelPendingAnalysis()` ＝ LEAVE）觸發，
+   *     標的是尚未送出的第二段呼叫
+   * 共用一個的後果是：第二段一開始就把它 abort 掉，之後 LEAVE 再 abort 完全是 no-op ——
+   * 第二段的 AI 呼叫照送、錢照付、結果無人看，而且**不會有任何錯誤**。
+   */
+  stage1Abort: AbortController
+  tailAbort: AbortController
+  /** 第二段已寫入；同世代後到的第一段結果 MUST NOT 覆蓋它（FR-006a） */
+  citedLanded: boolean
+  stage1Settled: Promise<Stage1Result>
+  /** 由第一段的三條出口之一呼叫。**三條都要**，漏一條尾巴會永遠掛在 await 上而不報錯 */
+  settleStage1: (result: Stage1Result) => void
+  /** 尾巴結束（成功、放棄、丟棄皆算）；`awaitSuggestionTail()` 供測試等待 */
+  done: Promise<void>
+  finishTail: () => void
+  /** research.md #3 的檢索備忘 —— FR-005「命中已在手」用 */
+  lastRetrieval?: { anchor: string | null, hits: KnowledgeHit[], at: string }
+  /**
+   * FR-015：第二段等待期間抵達的同事／AI 回覆，由 `checkSuggestionsSuperseded()` 在
+   * **訊息抵達當下**追加（它那一刻手上正拿著回覆全文，且已做完 workflow-internal 過濾）。
+   * 第二段整批換卡前重放，否則同事已回過的建議會以未標記的新卡復活（憲法 7.2）。
+   * ⚠️ MUST NOT 改由分析函式手上的 `input.history` 推導 —— 那份資料裡沒有同事回覆（§8）。
+   */
+  repliesDuringTail: { kind: 'agent' | 'ai', messageId: string, text: string }[]
+}
+
+const suggestionTails = new Map<string, SuggestionTail>()
+
+/**
+ * 尾巴的結束 Promise，**與登記本身分開存放**：`cancelPendingAnalysis()`（LEAVE）會把登記
+ * 整筆刪掉，但那一刻尾巴本身可能還在 `await retrieval`。測試要能等到它真的收工，
+ * 才問得出「第二段有沒有被送出」。尾巴自己在 finally 移除，因此只會留下進行中的那些。
+ */
+const suggestionTailDone = new Map<string, Promise<void>>()
+
+/**
+ * 開一個新世代：舊尾巴的第二段就此作廢（abort 尚未送出的呼叫），並換上全新的兩個 controller。
+ *
+ * ⚠️ 過期判定一律比對 `generation`，**MUST NOT 用 `basedOnMessageId`**（research.md #2）：
+ *    手動重試會用同一個錨點再跑一次，錨點比對會放行舊尾巴覆蓋新結果，而且不會報錯。
+ */
+function nextSuggestionGeneration(conversationId: string): SuggestionTail {
+  const prev = suggestionTails.get(conversationId)
+  prev?.tailAbort.abort()
+
+  let settleStage1: (result: Stage1Result) => void
+  const stage1Settled = new Promise<Stage1Result>((resolve) => {
+    settleStage1 = resolve
+  })
+  let finishTail: () => void
+  const done = new Promise<void>((resolve) => {
+    finishTail = resolve
+  })
+
+  const tail: SuggestionTail = {
+    generation: (prev?.generation ?? 0) + 1,
+    stage1Abort: new AbortController(),
+    tailAbort: new AbortController(),
+    citedLanded: false,
+    stage1Settled,
+    settleStage1: settleStage1!,
+    done,
+    finishTail: finishTail!,
+    // 檢索備忘刻意**沿用**上一筆：FR-005 的「命中已在手」判斷靠它，
+    // 而手動重試正是新世代——這裡清掉會讓那條路徑永遠走不到。
+    lastRetrieval: prev?.lastRetrieval,
+    repliesDuringTail: [],
+  }
+  suggestionTails.set(conversationId, tail)
+  suggestionTailDone.set(conversationId, done)
+  return tail
+}
+
+/** 這個對話現在有沒有尾巴在跑 —— 重連快照用來分辨「pending 還有人接手」與「程序重啟後的孤兒」 */
+export function hasSuggestionTail(conversationId: string): boolean {
+  return suggestionTails.has(conversationId)
+}
+
+/**
+ * ⚠️ **僅供測試**：等待這個對話最後一次尾巴收工。正式路徑上沒有人需要等第二段 ——
+ * 它就是為了「不讓任何人等」才被放到鎖外的。
+ */
+export function awaitSuggestionTail(conversationId: string): Promise<void> {
+  return suggestionTailDone.get(conversationId) ?? Promise.resolve()
+}
+
+/** 這個世代還是不是最新的？不是就整個丟棄，一個字都不要寫回 state */
+function isCurrentGeneration(conversationId: string, tail: SuggestionTail): boolean {
+  return suggestionTails.get(conversationId)?.generation === tail.generation
+}
+
+// ── 建議卡的共用工具（004 T010）────────────────────────────────────────
+
+/**
+ * 一次「生成 → 驗證 → 白名單 → confidence 歸零」。兩段共用，順序與 002 相同（憲法 4.2～4.4）。
+ *
+ * ⚠️ **白名單集合是本次呼叫傳入的 `hits`**（data-model.md §7）：第一段是空集合（因此任何
+ *    `sopId !== null` 的卡都會被整卡捨棄，那是既有行為），第二段是**第二段呼叫當下**的命中。
+ *    第二段若沿用第一段的空集合，所有帶 `sopId` 的卡會被整卡捨棄、畫面永遠看不到引用，
+ *    而 `status` 仍是 `ready` —— 不報錯。
+ */
+async function generateSuggestionCards(
+  input: { history: Message[], aiReplies: boolean },
+  hits: KnowledgeHit[],
+  opts: {
+    maxRetries?: number
+    callTimeoutMs?: number
+    onRetry?: WithRetryOptions['onRetry']
+    signal?: AbortSignal
+  },
+): Promise<{ cards: SuggestionCard[], retryAttempt: number }> {
+  const outcome = await withRetry(
+    async () => parseSuggestionCards(await useAIProvider().suggest({
+      history: input.history,
+      knowledgeHits: hits,
+      // ⚠️ 兩段都要帶（002 FR-016）。第二段漏帶會讓 Hybrid 模式下的補位提示在第二段消失。
+      aiReplies: input.aiReplies,
+    })),
+    {
+      maxRetries: opts.maxRetries,
+      callTimeoutMs: opts.callTimeoutMs,
+      onRetry: opts.onRetry,
+      signal: opts.signal,
+    },
+  )
+
+  const whitelisted = whitelistFilter(outcome.value, hits)
+  return { cards: forceNullConfidence(whitelisted, hits), retryAttempt: outcome.retryAttempt }
+}
+
+/** 落地一批卡並推播。`clearFailedBatch()` 一併做掉——這批有結果了，失敗記憶沒有存在意義 */
+async function publishSuggestionReady(
+  conversationId: string,
+  args: {
+    cards: SuggestionCard[]
+    knowledgeSearch: { ran: boolean, hitCount: number }
+    citation: 'pending' | 'cited' | 'none'
+    basedOnMessageId: string | null
+    provenance: { stage: 1 | 2, stage1RetryAttempt: number }
+  },
+): Promise<void> {
+  const next = await updateAnalysisState(conversationId, state => ({
+    ...clearFailedBatch(state, 'suggestions'),
+    suggestionBlock: {
+      status: 'ready' as const,
+      cards: args.cards,
+      knowledgeSearch: args.knowledgeSearch,
+      citation: args.citation,
+      basedOnMessageId: args.basedOnMessageId,
+      provenance: args.provenance,
+      retryAttempt: undefined,
+      firstFailureAt: undefined,
+      updatedAt: nowIso(),
+    },
+  }))
+  await publishBlock(conversationId, 'suggestions', next)
+}
+
 async function analyzeSuggestions(
   conversationId: string,
   input: { history: Message[], aiReplies: boolean },
+  strategy: SuggestionStrategy,
 ): Promise<void> {
-  await runBlockDeduped(conversationId, 'suggestions', () => analyzeSuggestionsOnce(conversationId, input))
+  await runBlockDeduped(conversationId, 'suggestions', () => analyzeSuggestionsOnce(conversationId, input, strategy))
 }
+
+/**
+ * 建議卡的兩種執行策略（004 FR-001／FR-013）。
+ *
+ * ⚠️ 參數名 MUST 是 `strategy`，**不是 `mode`**：`mode` 在本專案是對話服務模式的受控字彙
+ *    （`manual`／`hybrid`／`automation`，CLAUDE.md 列為靜默失效地雷之一），而同一支函式的
+ *    輸入正帶著由它推導出的 `aiReplies`。同一段程式碼裡兩個 `mode` 指不同東西是找麻煩。
+ *
+ *   - `'progressive'`：前景兩段式——第一段不帶知識庫先落地（`pending`），檢索有命中時
+ *     第二段整批換上（`cited`）
+ *   - `'single'`：等檢索完成再一次生成（背景對話 FR-013、命中已在手 FR-005）
+ */
+type SuggestionStrategy = 'progressive' | 'single'
 
 async function analyzeSuggestionsOnce(
   conversationId: string,
   input: { history: Message[], aiReplies: boolean },
+  strategy: SuggestionStrategy,
 ): Promise<void> {
   const anchor = batchAnchor(input.history)
   if (await isBatchAlreadyFailed(conversationId, 'suggestions', anchor)) return
@@ -744,60 +949,61 @@ async function analyzeSuggestionsOnce(
     .map(m => m.text)
     .join('\n')
 
-  let knowledgeHits: KnowledgeHit[] = []
-  try {
-    // ⚠️ **2026-08-29（004 FR-003）**：改與快查共用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`。
-    //    原本這裡帶的是建議卡專用的 8 秒短逾時常數（已刪除），
-    //    理由是保護「先檢索再生成」這條**串行**路徑的門檻；而實測檢索最快 9.4 秒，
-    //    那個上限等於建議卡永遠拿不到引用。兩段式（下方 'progressive'）讓檢索不再擋在
-    //    生成前面，30 秒因此可以承受。MUST NOT 為建議卡另立第二個逾時值。
-    knowledgeHits = await useKnowledgeProvider().search(query, {
-      topK: 5,
-      timeoutMs: KNOWLEDGE_SEARCH_TIMEOUT_MS,
-    })
+  // ⚠️ Phase 2 過渡狀態：`'progressive'` 由 T013 實作，此刻沒有任何呼叫端會傳它。
+  await runSingleStage(conversationId, input, { anchor, query })
+}
+
+/**
+ * 單段：等檢索完成，再以命中結果一次生成（背景對話 FR-013、命中已在手 FR-005）。
+ *
+ * @param presetHits 已完成的檢索結果（FR-005 的備忘）。有值時 MUST NOT 再發一次檢索——
+ *   同一批訊息、同一個 query，知識庫在數十秒內不會改變。
+ */
+async function runSingleStage(
+  conversationId: string,
+  input: { history: Message[], aiReplies: boolean },
+  ctx: { anchor: string | null, query: string, presetHits?: KnowledgeHit[] },
+): Promise<void> {
+  let knowledgeHits: KnowledgeHit[] = ctx.presetHits ?? []
+  if (!ctx.presetHits) {
+    try {
+      // ⚠️ **2026-08-29（004 FR-003）**：與快查共用 `KNOWLEDGE_SEARCH_TIMEOUT_MS`。
+      //    原本這裡帶的是建議卡專用的 8 秒短逾時常數（已刪除），理由是保護
+      //    「先檢索再生成」這條**串行**路徑的門檻；而實測檢索最快 9.4 秒，
+      //    那個上限等於建議卡永遠拿不到引用。MUST NOT 為建議卡另立第二個逾時值。
+      knowledgeHits = await useKnowledgeProvider().search(ctx.query, {
+        topK: 5,
+        timeoutMs: KNOWLEDGE_SEARCH_TIMEOUT_MS,
+      })
+    }
+    catch (err) {
+      // FR-004：檢索失敗時以空集合續行（誠實降級，非整塊轉 error）——
+      // 憲法 6.2 禁止的是「略過檢索」，不是「結果是空的」
+      console.error(`[copilot-analysis] ${conversationId} 知識庫檢索失敗，改以無引用續行:`, err instanceof Error ? err.message : String(err))
+    }
   }
-  catch (err) {
-    // FR-004：檢索失敗時以空集合續行（誠實降級，非整塊轉 error）——
-    // 憲法 6.2 v3.0.1 禁止的是「略過檢索」，不是「結果是空的」
-    console.error(`[copilot-analysis] ${conversationId} 知識庫檢索失敗，改以無引用續行:`, err instanceof Error ? err.message : String(err))
-  }
-  // 檢索呼叫**送出後**即視為已跑過，無論結果多寡或是否拋錯 —— 憲法 6.2 v3.0.1 要求的可稽核證據
+  // 檢索呼叫**送出後**即視為已跑過，無論結果多寡或是否拋錯 —— 憲法 6.2 要求的可稽核證據
   const knowledgeSearch = { ran: true, hitCount: knowledgeHits.length }
 
   try {
-    const outcome = await withRetry(
-      async () => parseSuggestionCards(await useAIProvider().suggest({
-        history: input.history,
-        knowledgeHits,
-        aiReplies: input.aiReplies,
-      })),
-      { onRetry: info => publishRetrying(conversationId, 'suggestions', info) },
-    )
+    const { cards } = await generateSuggestionCards(input, knowledgeHits, {
+      onRetry: info => publishRetrying(conversationId, 'suggestions', info),
+    })
 
-    const whitelisted = whitelistFilter(outcome.value, knowledgeHits)
-    const cards = forceNullConfidence(whitelisted, knowledgeHits)
-
-    const next = await updateAnalysisState(conversationId, state => ({
-      // 成功即清除該區塊的失敗批次記憶
-      ...clearFailedBatch(state, 'suggestions'),
-      suggestionBlock: {
-        status: 'ready' as const,
-        cards,
-        knowledgeSearch,
-        citation: knowledgeHits.length > 0 ? ('cited' as const) : ('none' as const),
-        basedOnMessageId: anchor,
-        provenance: { stage: 2 as const, stage1RetryAttempt: 0 },
-        retryAttempt: undefined,
-        firstFailureAt: undefined,
-        updatedAt: nowIso(),
-      },
-    }))
-    await publishBlock(conversationId, 'suggestions', next)
+    await publishSuggestionReady(conversationId, {
+      cards,
+      knowledgeSearch,
+      citation: knowledgeHits.length > 0 ? 'cited' : 'none',
+      basedOnMessageId: ctx.anchor,
+      // 單段沒有第一段，`stage1RetryAttempt` 恆為 0（data-model.md §1）
+      provenance: { stage: 2, stage1RetryAttempt: 0 },
+    })
   }
   catch (err) {
-    await finishBlockError(conversationId, 'suggestions', err, anchor)
+    await finishBlockError(conversationId, 'suggestions', err, ctx.anchor)
   }
 }
+
 
 // ── 對外入口 ──────────────────────────────────────────────────────────
 
@@ -816,7 +1022,7 @@ export async function runColdStart(conversationId: string, history: Message[], a
   await Promise.all([
     analyzeSummary(conversationId, { history, previousSummary: undefined }),
     analyzeSentimentBatch(conversationId, history),
-    analyzeSuggestions(conversationId, { history, aiReplies }),
+    analyzeSuggestions(conversationId, { history, aiReplies }, 'single'),
   ])
 }
 
@@ -878,7 +1084,7 @@ export async function runIncremental(
     try {
       await Promise.all([
         analyzeSentimentBatch(conversationId, newCustomerMessages),
-        analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }),
+        analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }, 'single'),
       ])
     }
     finally {
@@ -893,7 +1099,7 @@ export async function runIncremental(
       previousSummary: state.summaryBlock.summary ?? undefined,
     }),
     analyzeSentimentBatch(conversationId, newCustomerMessages),
-    analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }),
+    analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }, 'single'),
   ])
 }
 
@@ -944,7 +1150,7 @@ export async function retryBlock(
     await analyzeSentimentBatch(conversationId, history)
   }
   else {
-    await analyzeSuggestions(conversationId, { history, aiReplies })
+    await analyzeSuggestions(conversationId, { history, aiReplies }, 'single')
   }
 }
 
@@ -1030,6 +1236,24 @@ export function scheduleIncremental(
  *    反過來只做保證層則行為正確、但留著一個空轉的計時器。兩層都要。
  */
 export function cancelPendingAnalysis(conversationId: string): void {
+  // ── 004：先處置尾巴，**MUST 在下面那個早退之前** ────────────────────────
+  //
+  // ⚠️ 這個順序是規範，不是風格。下面的早退問的是「有沒有等待中的 debounce 排程」，
+  //    與「有沒有第二段的尾巴」無關 —— 而 JOIN 冷啟動觸發的尾巴正是**沒有** debounce
+  //    排程的那一種。寫在早退之後，LEAVE 之後第二段照跑、錢照付、結果無人看，
+  //    而且不會有任何錯誤。
+  //
+  // ① abort：沒有人 JOIN 的對話不該再花第二段的錢（003 FR-013 的延伸）。
+  // ② delete：`lastRetrieval` 備忘的唯一用途是手動重試（FR-005），而 LEAVE 之後
+  //    沒有人能按重試，備忘從那一刻起就沒有意義。不刪的話這個 Map 會隨程序生命週期
+  //    逐對話累積，每筆還帶著知識庫全文片段 —— 對照 `CopilotAnalysisState` 有 2 小時
+  //    sliding TTL，它會是唯一沒有任何回收機制的狀態。
+  const tail = suggestionTails.get(conversationId)
+  if (tail) {
+    tail.tailAbort.abort()
+    suggestionTails.delete(conversationId)
+  }
+
   const pending = debounceTimers.get(conversationId)
   if (!pending) return
   clearTimeout(pending.timer)
