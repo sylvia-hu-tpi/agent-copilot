@@ -7,6 +7,11 @@
  * `classifyFailure()` 刻意回傳三值而非二值：'rate-limited'（429）在 M2 的處置與
  * 'permanent' 相同（直接轉 error、不自動重試），但原因不同 —— M3 全域退避佇列建立時
  * 只有 'rate-limited' 會改接佇列，現在若省事併入 'permanent' 屆時將無從辨識。
+ *
+ * ⚠️ **`maxRetries: 0` 時 FR-014 的三數綁定不適用**（specs/004-progressive-citations #4）：
+ *    不進重試迴圈就沒有退避、也用不到總預算，只剩單次逾時一個數字有效。004 的建議卡第二段
+ *    正是這樣呼叫的，它的單次逾時由 `SUGGESTION_STAGE2_CALL_TIMEOUT_MS` 承載 ——
+ *    **改那個常數 MUST NOT 連帶動下面這三個**，兩者沒有耦合。
  */
 
 const CALL_TIMEOUT_MS = 15_000
@@ -56,6 +61,19 @@ export class RetryExhaustedError extends Error {
   }
 }
 
+/**
+ * `signal` 在退避等待中或下一次呼叫送出前被 abort 時拋出（004 data-model.md §5）。
+ *
+ * ⚠️ **`classifyFailure()` 刻意不處理它** —— 它不是一種 AI 失敗，而是呼叫端自己撤回了這次呼叫。
+ *    呼叫端 MUST 在分類／記錄失敗之前先攔截它（例如 004 第一段被第二段 abort 時是**靜默返回**，
+ *    不轉 error），否則會被歸為 `'permanent'` 而讓區塊莫名其妙變成錯誤狀態。
+ */
+export class RetryAbortedError extends Error {
+  constructor() {
+    super('AI 呼叫已被呼叫端取消')
+  }
+}
+
 export function classifyFailure(error: unknown): FailureKind {
   if (error instanceof AICallTimeoutError) return 'transient'
   if (error instanceof AIOutputValidationError) return 'permanent'
@@ -85,10 +103,39 @@ export interface WithRetryOptions {
   onRetry?: (info: { attempt: number, firstFailureAt: string, nextDelayMs: number }) => void | Promise<void>
   callTimeoutMs?: number
   budgetMs?: number
+  /**
+   * 最多自動重試次數；預設 `BACKOFF_MS.length`（＝ 2，001 FR-014）。
+   * 004 的建議卡第二段傳 `0` —— **不重試是呼叫端的明示選擇**，不是這裡改預設值。
+   * 傳 0 時 `onRetry` 永遠不會被呼叫（也就不會閃出「重試中」），失敗一次即拋 `RetryExhaustedError`。
+   */
+  maxRetries?: number
+  /**
+   * 取消訊號。**只在退避等待中與下一次呼叫送出前檢查**，已經在飛的呼叫不受影響
+   * （SDK 未暴露 signal，見 004 research.md #2）—— abort 能省下的是「還沒送出」的那一次。
+   * 被 abort 時拋 `RetryAbortedError`（不是 `RetryExhaustedError`）。
+   */
+  signal?: AbortSignal
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+/**
+ * 退避等待，但 `signal` 一 abort 就立刻結束（不必空等完剩下的秒數）。
+ * ⚠️ MUST 移除 listener：同一個 signal 會跨多次退避重複使用，不移除會逐次累積。
+ */
+function sleepOrAbort(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return sleep(ms)
+  return new Promise((resolve) => {
+    const timer = setTimeout(finish, ms)
+    function finish(): void {
+      clearTimeout(timer)
+      signal!.removeEventListener('abort', finish)
+      resolve()
+    }
+    signal.addEventListener('abort', finish, { once: true })
+  })
 }
 
 async function callWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
@@ -108,6 +155,7 @@ async function callWithTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Prom
  * 包裹一次 AI 呼叫（含輸出驗證，見呼叫端如何組裝 fn），依 FR-014 執行重試／退避。
  *
  * @throws {RetryExhaustedError} 非暫時性失敗、429、或重試次數/總預算用盡時
+ * @throws {RetryAbortedError} `opts.signal` 在退避等待中或下一次呼叫送出前被 abort 時
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
@@ -115,11 +163,14 @@ export async function withRetry<T>(
 ): Promise<WithRetryOutcome<T>> {
   const callTimeoutMs = opts.callTimeoutMs ?? CALL_TIMEOUT_MS
   const budgetMs = opts.budgetMs ?? BUDGET_MS
+  const maxRetries = opts.maxRetries ?? MAX_RETRIES
 
   let attempt = 0
   let firstFailureAtMs: number | undefined
 
   for (;;) {
+    // ⚠️ 送出前檢查（含首次）——已在飛的呼叫取消不了，能省的只有還沒送出的那一次
+    if (opts.signal?.aborted) throw new RetryAbortedError()
     try {
       const value = await callWithTimeout(fn, callTimeoutMs)
       return {
@@ -133,7 +184,7 @@ export async function withRetry<T>(
       if (firstFailureAtMs === undefined) firstFailureAtMs = Date.now()
       const firstFailureAt = new Date(firstFailureAtMs).toISOString()
 
-      if (kind !== 'transient' || attempt >= MAX_RETRIES) {
+      if (kind !== 'transient' || attempt >= maxRetries) {
         throw new RetryExhaustedError(kind, attempt, firstFailureAt, err)
       }
 
@@ -145,7 +196,7 @@ export async function withRetry<T>(
       attempt++
       const delay = BACKOFF_MS[attempt - 1] ?? BACKOFF_MS[BACKOFF_MS.length - 1]!
       await opts.onRetry?.({ attempt, firstFailureAt, nextDelayMs: delay })
-      await sleep(delay)
+      await sleepOrAbort(delay, opts.signal)
     }
   }
 }

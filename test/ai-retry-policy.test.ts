@@ -10,6 +10,7 @@ import {
   AICallTimeoutError,
   AIOutputValidationError,
   AIProviderHttpError,
+  RetryAbortedError,
   RetryExhaustedError,
   classifyFailure,
   withRetry,
@@ -164,5 +165,87 @@ describe('withRetry()', () => {
     const outcome = await withRetry(async () => 'ok')
     expect(outcome.firstFailureAt).toBeUndefined()
     expect(outcome.retryAttempt).toBe(0)
+  })
+})
+
+/**
+ * specs/004-progressive-citations data-model.md §5：兩個新選項讓「第二段不重試」與
+ * 「第一段被第二段取消」都是呼叫端的**明示選擇**，而不是改動 FR-014 的三個數字。
+ *
+ * ⚠️ 上面既有的三個數值斷言（1s→4s、15 秒逾時、40 秒預算）MUST 維持綠燈 ——
+ *    它們是 001 FR-014 的驗收本身，本節新增的選項不得改變預設行為。
+ */
+describe('withRetry() 的 maxRetries／signal（004）', () => {
+  it('maxRetries: 0 對暫時性失敗不重試、不呼叫 onRetry，直接拋 RetryExhaustedError(transient)', async () => {
+    const fn = vi.fn(async () => {
+      throw new AIProviderHttpError('server error', 500)
+    })
+    const onRetry = vi.fn()
+
+    await expect(withRetry(fn, { maxRetries: 0, onRetry })).rejects.toBeInstanceOf(RetryExhaustedError)
+    // 分類仍是 transient（失敗的性質沒變，變的只是呼叫端不想重試）
+    await expect(withRetry(fn, { maxRetries: 0, onRetry })).rejects.toMatchObject({
+      kind: 'transient',
+      retryAttempt: 0,
+    })
+    expect(fn).toHaveBeenCalledTimes(2) // 兩次 withRetry 各 1 次，沒有任何重試
+    // ⚠️ 004 第二段失敗是**靜默**的，閃出「重試中」等於對客服說謊
+    expect(onRetry).not.toHaveBeenCalled()
+  })
+
+  it('signal 在第一次退避等待中 abort → 拋 RetryAbortedError，且 fn 不再被呼叫', async () => {
+    vi.useFakeTimers()
+    const controller = new AbortController()
+    const fn = vi.fn(async () => {
+      throw new AIProviderHttpError('server error', 500)
+    })
+
+    const promise = withRetry(fn, {
+      signal: controller.signal,
+      // 第一次失敗、進入 1 秒退避的那一刻就 abort
+      onRetry: () => controller.abort(),
+    })
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+
+    await expect(promise).rejects.toBeInstanceOf(RetryAbortedError)
+    // ⚠️ 這一項才是重點：abort 省下的正是「還沒送出的下一次呼叫」
+    expect(fn).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
+  })
+
+  it('signal 在呼叫**在飛**時 abort → 該次呼叫的結果照常回傳（已送出的取消不了）', async () => {
+    const controller = new AbortController()
+    const fn = vi.fn(async () => {
+      controller.abort() // 呼叫進行中被 abort
+      return 'ok'
+    })
+
+    const outcome = await withRetry(fn, { signal: controller.signal })
+    expect(outcome.value).toBe('ok')
+    expect(outcome.retryAttempt).toBe(0)
+  })
+
+  it('signal 已經 aborted 時連第一次呼叫都不送出', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const fn = vi.fn(async () => 'ok')
+
+    await expect(withRetry(fn, { signal: controller.signal })).rejects.toBeInstanceOf(RetryAbortedError)
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('未傳 maxRetries 時預設仍是 2 次重試（001 FR-014 不因新選項改變）', async () => {
+    vi.useFakeTimers()
+    const fn = vi.fn(async () => {
+      throw new AIProviderHttpError('server error', 500)
+    })
+
+    const promise = withRetry(fn)
+    promise.catch(() => {})
+    await vi.runAllTimersAsync()
+    await expect(promise).rejects.toMatchObject({ retryAttempt: 2 })
+    expect(fn).toHaveBeenCalledTimes(3)
+    vi.useRealTimers()
   })
 })
