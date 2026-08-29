@@ -378,6 +378,44 @@ export async function sendTextMessage(
 }
 
 /**
+ * 對話清單查詢 —— **必須走這支，不要直接呼叫 `client.conversations.search()`**。
+ *
+ * ⚠️⚠️ **SDK 宣告的分頁參數是 `skip`，但平台實際吃的是 `offset`。**
+ *    傳 `skip` 不會報錯、不會是 400 —— 平台回 200 並**原封送回第一頁**。
+ *    症狀因此是「載入更多按下去沒反應」，而不是任何一種錯誤。
+ *    2026-08-29 由 `npm run spike:list-order` 實測定位（探測 ②③④）：
+ *      skip / from / page / start / skip_count → 全部回傳與第一頁相同的內容
+ *      offset                                  → ✅ 精確的筆數位移
+ *    佐證：`offset=8&limit=8` 與全量的第 9–16 筆逐筆相符；
+ *          `offset=1&limit=3` 等於第 2–4 筆（確認是位移而非頁碼語意）。
+ *
+ * ⚠️ 排序：平台預設依 **`updated_at` 由新到舊**（同一支 spike，n=16，15 組比對全部成立）。
+ *    **不是** `last_message_at`（該欄位填充率僅 81%，遞減比例只有 67%）。
+ *    §9.3.1 第一層只取前 `LIST_PAGE_SIZE` 筆而不分頁，正是依賴這個排序 ——
+ *    有新訊息的對話會讓 `updated_at` 跳動而前移，因此落在取數視窗內。
+ *    ⚠️ 若平台日後改變預設排序，那個「只取前 N 筆」的安排會**安靜地失效**。
+ */
+export async function searchConversations(
+  client: ImbraceClient,
+  params: { businessUnitId: string, q: string, limit?: number, offset?: number },
+): Promise<unknown> {
+  const res = client.conversations as unknown as {
+    http: { getFetch(): typeof fetch }
+    v1: string
+  }
+  const url = new URL(`${res.v1}/team_conversations/_search`)
+  url.searchParams.set('business_unit_id', params.businessUnitId)
+  url.searchParams.set('type', 'text')
+  url.searchParams.set('q', params.q)
+  if (params.limit !== undefined) url.searchParams.set('limit', String(params.limit))
+  if (params.offset) url.searchParams.set('offset', String(params.offset))
+
+  const r = await res.http.getFetch()(url, { method: 'GET' })
+  if (!r.ok) throw new Error(`conversations.search 失敗：HTTP ${r.status}`)
+  return r.json()
+}
+
+/**
  * 補上 `conv_` 前綴。
  *
  * ⚠️ 與 `mappers.normalizeConversationId()` 方向相反 —— 那支是**對內**正規化成裸 UUID，

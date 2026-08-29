@@ -142,3 +142,65 @@ describe('004 FR-008：程式主動更新 MUST NOT 碰 Composer 草稿', () => {
     expect('const draft = useDraft(id)'.includes('useDraft')).toBe(true)
   })
 })
+
+describe('對話清單查詢 MUST 走防腐層（skip → offset）', () => {
+  /**
+   * SDK 宣告的分頁參數是 `skip`，平台實際吃的是 `offset`；傳 `skip` 會回 200
+   * 並原封送回**第一頁**。症狀是「載入更多按下去沒反應」，不是任何一種錯誤 ——
+   * 沒有 400、沒有例外、沒有型別問題。2026-08-29 由 `npm run spike:list-order` 定位。
+   *
+   * 因此繞道關在 `server/services/imbrace.ts` 的 `searchConversations()`，
+   * 其他地方一律不得直接呼叫 SDK 的 `conversations.search()` ——
+   * 直接呼叫會讓分頁再次靜默失效，而且這次沒有任何訊號提醒。
+   */
+  const ALLOWED = 'server/services/imbrace.ts'
+  const CALL = /\bconversations\s*\.\s*search\s*\(/
+
+  /**
+   * ⚠️ **註解與字串字面值都要先剝掉。**
+   *
+   * 多支 server 檔案在**說明為什麼不能用它**的地方寫著 `conversations.search()`：
+   * 有的在註解裡，有的在錯誤訊息的字串裡（`business-unit.ts:59` 就是後者）。
+   * 純字串比對會把這些說明本身當成違規 —— 守衛永遠紅，最後被關掉，等於沒有守衛。
+   *
+   * ⚠️ 這個剝除是近似的（不處理跨行字串裡的引號之類的邊界），對本守衛足夠：
+   *    誤判方向是「漏抓」而不是「誤抓」，而漏抓會在 code review 補上，
+   *    誤抓則會讓整條守衛失去可信度。
+   */
+  const stripNonCode = (src: string): string => src
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\/\/[^\n]*/g, '')
+    .replace(/'(?:[^'\\\n]|\\.)*'/g, "''")
+    .replace(/"(?:[^"\\\n]|\\.)*"/g, '""')
+    .replace(/`(?:[^`\\]|\\.)*`/g, '``')
+
+  it('server/ 底下只有防腐層可以呼叫 client.conversations.search()', () => {
+    const offenders: string[] = []
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = resolve(dir, entry.name)
+        if (entry.isDirectory()) { walk(full); continue }
+        if (!entry.name.endsWith('.ts')) continue
+        const rel = full.replace(ROOT, '').split('\\').join('/').replace(/^\//, '')
+        if (rel === ALLOWED) continue
+        if (CALL.test(stripNonCode(readFileSync(full, 'utf8')))) offenders.push(rel)
+      }
+    }
+    walk(resolve(ROOT, 'server'))
+    expect(offenders).toEqual([])
+  })
+
+  it('防腐層本身送出的是 offset，不是 skip', () => {
+    const source = readFileSync(resolve(ROOT, ALLOWED), 'utf8')
+    expect(source).toContain("url.searchParams.set('offset'")
+    expect(source).not.toContain("url.searchParams.set('skip'")
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 抓得到真呼叫，且不會被註解或字串騙', () => {
+    expect(CALL.test(stripNonCode('await client.conversations.search({})'))).toBe(true)
+    expect(CALL.test(stripNonCode('// 見 conversations.search() 的說明'))).toBe(false)
+    expect(CALL.test(stripNonCode('/* conversations.search() 已被防腐層取代 */'))).toBe(false)
+    // business-unit.ts:59 就是這一種 —— 錯誤訊息的字串裡提到它
+    expect(CALL.test(stripNonCode("throw new Error('無法組出 conversations.search() 的查詢範圍')"))).toBe(false)
+  })
+})

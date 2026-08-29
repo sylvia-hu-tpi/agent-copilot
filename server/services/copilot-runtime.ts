@@ -24,6 +24,7 @@ import { fetchLatest } from '../sources/message-fetch.js'
 import { toConversation, unwrapPaged } from '../sources/mappers.js'
 import { PollingMessageSource } from '../sources/polling-message-source.js'
 import { imbraceClientForPolling } from '../utils/imbrace-client.js'
+import { searchConversations } from './imbrace.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic, organizationTopic } from '../state/types.js'
 import { resolveBusinessUnitId } from './business-unit.js'
@@ -200,7 +201,8 @@ async function fetchConversationList(orgId: string) {
 
   const client = imbraceClientForPolling(cred)
   const businessUnitId = await resolveBusinessUnitId(client, orgId)
-  const res = await client.conversations.search({
+  // ⚠️ 走防腐層，不直接呼叫 SDK —— 分頁參數名與排序的實測結論都記在那裡
+  const res = await searchConversations(client, {
     businessUnitId,
     q: '',
     limit: LIST_PAGE_SIZE,
