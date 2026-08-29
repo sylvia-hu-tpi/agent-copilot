@@ -40,7 +40,8 @@
     "spike:agent-latency": "tsx scripts/spike/18-agent-model-latency.ts",
     "spike:userid": "tsx scripts/spike/19-userid-roundtrip.ts",
     "spike:knowledge-latency": "tsx scripts/spike/20-knowledge-latency.ts",
-    "spike:progressive": "tsx scripts/spike/21-progressive-citations.ts"
+    "spike:progressive": "tsx scripts/spike/21-progressive-citations.ts",
+    "spike:list-order": "tsx scripts/spike/22-list-order.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",
