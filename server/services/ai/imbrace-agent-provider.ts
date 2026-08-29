@@ -94,8 +94,14 @@ export function buildSuggestionPrompt(input: {
  * 也還是會出現的穩定行為，逼 prompt 100% 守規矩不可靠。因此策略是：先找到文字中第一個
  * `{` 或 `[`（JSON 本體必然由此開始），從那裡切掉前面的開場白；再用 `JSON.parse` 的錯誤
  * 訊息回報的失敗位置，切掉後面多餘的文字。兩段都可能不存在，皆為 no-op。
+ *
+ * ⚠️ **匯出是為了讓 `scripts/spike/18-agent-model-latency.ts` 用同一份抽取邏輯判「合規」。**
+ *    2026-08-29 的實例：該腳本原本自己抄了一份簡化版（少了「切掉開場白」這一步），
+ *    於是把摘要 agent 判成 **0/15 不合規**——而它的輸出其實完全正常，正式路徑一直都解得開。
+ *    量測工具比正式路徑嚴格，會憑空製造出不存在的缺陷；比正式路徑寬鬆，則會漏掉真的缺陷。
+ *    兩種都不可接受，唯一的解法是共用同一份程式碼。
  */
-function extractLeadingJson(text: string): unknown {
+export function extractLeadingJson(text: string): unknown {
   const withoutFence = text.replace(/```json|```/g, '').trim()
   const start = withoutFence.search(/[[{]/)
   const cleaned = start > 0 ? withoutFence.slice(start) : withoutFence

@@ -26,7 +26,7 @@ import { makeClient, loadEnv, isMain, OUT_DIR } from './lib/harness.js'
 import type { ImbraceClient } from '@imbrace/sdk'
 import { writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { buildSuggestionPrompt } from '../../server/services/ai/imbrace-agent-provider.js'
+import { buildSuggestionPrompt, extractLeadingJson } from '../../server/services/ai/imbrace-agent-provider.js'
 import type { Message } from '../../shared/types/conversation.js'
 import type { KnowledgeHit } from '../../shared/types/knowledge.js'
 
@@ -213,21 +213,24 @@ async function findAgent(
 }
 
 /**
- * 模型常在合法 JSON 前後多吐開場白／結語（2026-08-28 實測：gemma-3-27b 每一次都會）。
- * 正式路徑用 `extractLeadingJson()` 容忍它，這裡比照，否則量到的是「模型話多不多」
- * 而不是「輸出合不合規」。
+ * ⚠️ **一律走正式路徑的 `extractLeadingJson()`，MUST NOT 自己抄一份簡化版。**
+ *
+ * 2026-08-29 的教訓：這裡原本自抄了一份，只做「去 code fence ＋ 依 JSON.parse 失敗位置
+ * 截斷後綴」，**漏了「找第一個 `{`／`[` 切掉開場白」那一步**。於是摘要 agent 被判成
+ * 0/15 不合規——而它的輸出一直都正常（`Okay, I will summarize...` 開場白後接合法 JSON，
+ * 正式路徑解得開）。原本的註解甚至寫著「比照正式路徑」，但實作並沒有。
+ *
+ * **量測工具比正式路徑嚴格，會憑空製造出不存在的缺陷；比它寬鬆，會漏掉真的缺陷。**
+ * 唯一可靠的做法是共用同一份程式碼，而不是靠註解宣稱兩邊一致。
  */
 function extractJson(text: string): unknown | null {
-  const cleaned = text.replace(/```json|```/g, '').trim()
-  try { return JSON.parse(cleaned) }
-  catch { /* 往下試截斷 */ }
-  const m = /position (\d+)/.exec((() => {
-    try { JSON.parse(cleaned); return '' }
-    catch (e) { return e instanceof Error ? e.message : String(e) }
-  })())
-  if (!m?.[1]) return null
-  try { return JSON.parse(cleaned.slice(0, Number(m[1]))) }
-  catch { return null }
+  try {
+    return extractLeadingJson(text)
+  }
+  catch {
+    // 正式路徑會拋 AIOutputValidationError；量測只需要「解不開」這個事實
+    return null
+  }
 }
 
 function percentile(sorted: number[], p: number): number {
