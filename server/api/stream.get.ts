@@ -21,9 +21,11 @@ import { STREAM_HEARTBEAT_MS } from '../../shared/types/events.js'
 import {
   cancelPendingAnalysis,
   catchUpSummaryIfStale,
+  hasSuggestionTail,
   lastCoveredMessageId,
   newCustomerMessagesSince,
   runIncremental,
+  settleOrphanedPendingCitation,
 } from '../services/copilot-analysis.js'
 import { useCopilotRuntime } from '../services/copilot-runtime.js'
 import { registerCredential } from '../services/credentials.js'
@@ -199,8 +201,21 @@ export default defineEventHandler(async (event) => {
     aiReplies: boolean,
   ): Promise<void> {
     try {
-      const analysisState = await store.getAnalysisState(conversationId)
+      let analysisState = await store.getAnalysisState(conversationId)
       if (!analysisState) return
+
+      /**
+       * ⚠️ **004 契約 §4**：`citation: 'pending'` 代表「第二段還在跑」，而尾巴是**執行期**
+       * 狀態（`suggestionTails`），程序重啟就消失。重啟後這個 `'pending'` 沒有任何路徑會
+       * 再落定它——客服會永遠看到「檢索中」，而 `status` 是 `ready`、卡片可用，
+       * 沒有任何錯誤跡象。有尾巴在跑時照送 `'pending'`，尾巴落地會再推一次。
+       *
+       * ⚠️ 這個修正 MUST 放在**這裡**（快照路徑），不是 `forward()`：快照走 `send()`、
+       *    不經那條即時推播路徑，放錯地方對快照完全無效（003 踩過同一個陷阱）。
+       */
+      if (analysisState.suggestionBlock.citation === 'pending' && !hasSuggestionTail(conversationId)) {
+        analysisState = await settleOrphanedPendingCitation(conversationId)
+      }
 
       await send({ type: 'summary.updated', conversationId, summary: analysisState.summaryBlock })
       await send({ type: 'sentiment.updated', conversationId, sentiment: analysisState.sentimentBlock })
