@@ -21,3 +21,8 @@ docs/meeting-draft/
 dist/
 .nitro/
 *.tsbuildinfo
+
+# Claude Design 畫布原始檔 —— 設計規格的唯一真實來源，但刻意不進版控
+# （單檔 6MB+，且每次設計調整都會整份重新匯出，diff 沒有意義）。
+# docs/DESIGN_TOKENS.md 是它的可查詢、可 diff 衍生物；docs/wireframe/*.png 只是備存留查。
+docs/wireframe/*.html
