@@ -9,6 +9,7 @@
 import type {
   AIProvider,
   ConversationSummary,
+  SentimentNarrative,
   SentimentPoint,
   SuggestionCard,
 } from '../../../shared/types/copilot.js'
@@ -19,14 +20,19 @@ export interface MockAIProviderOptions {
   /** 每次呼叫前的延遲（ms）—— 測試用，模擬 AI 呼叫的執行時間 */
   summarizeDelayMs?: number
   sentimentDelayMs?: number
+  narrateDelayMs?: number
   suggestDelayMs?: number
   /** 每次呼叫時執行；回傳 Error 即拋出該錯誤，回傳 null 表示這次不失敗 */
   summarizeFailure?: () => Error | null
   sentimentFailure?: () => Error | null
+  /** ⚠️ 走勢摘要失敗 MUST NOT 讓情緒區塊轉 error —— 這個開關就是用來守住那條線的 */
+  narrateFailure?: () => Error | null
   suggestFailure?: () => Error | null
   /** 回傳不符合 Zod schema 的輸出（空字串 intent／超出範圍的 score），測試驗證失敗路徑用 */
   invalidSummaryOutput?: boolean
   invalidSentimentOutput?: boolean
+  /** 只給 trend、不給 advice —— schema 應該擋下來（見 SentimentNarrativeSchema） */
+  invalidNarrativeOutput?: boolean
   invalidSuggestOutput?: boolean
 }
 
@@ -83,6 +89,25 @@ export class MockAIProvider implements AIProvider {
       label: 'neutral' as const,
       drivers: [],
     }))
+  }
+
+  async narrateSentiment(input: {
+    points: Array<Pick<SentimentPoint, 'score' | 'label' | 'drivers'>>
+  }): Promise<SentimentNarrative> {
+    if (this.opts.narrateDelayMs) await sleep(this.opts.narrateDelayMs)
+
+    const failure = this.opts.narrateFailure?.()
+    if (failure) throw failure
+
+    if (this.opts.invalidNarrativeOutput) {
+      // 只有 trend、沒有 advice —— schema 的 advice.min(1) 應該擋下來
+      return { trend: '情緒大致平穩' } as unknown as SentimentNarrative
+    }
+
+    return {
+      trend: `近 ${input.points.length} 輪情緒大致平穩，無明顯惡化`,
+      advice: '建議維持目前的說明節奏，並在下一則回覆給出明確時間點',
+    }
   }
 
   async suggest(input: {

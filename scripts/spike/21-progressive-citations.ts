@@ -174,6 +174,7 @@ function instrumentProviders(startedAt: () => number) {
   const ai: AIProvider = {
     summarize: input => realAI.summarize(input),
     analyzeSentiment: input => realAI.analyzeSentiment(input),
+    narrateSentiment: input => realAI.narrateSentiment(input),
     async suggest(input) {
       const hits: KnowledgeHit[] = input.knowledgeHits
       if (hits.length === 0) return realAI.suggest(input) // 第一段，不記錄

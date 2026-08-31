@@ -7,7 +7,7 @@
  */
 
 import { z } from 'zod'
-import type { ConversationSummary, SentimentPoint, SuggestionCard } from '../../../shared/types/copilot.js'
+import type { ConversationSummary, SentimentNarrative, SentimentPoint, SuggestionCard } from '../../../shared/types/copilot.js'
 import { AIOutputValidationError } from './retry-policy.js'
 
 const RISK_FLAGS = ['churn', 'escalation', 'compliance', 'vip', 'repeat_contact'] as const
@@ -36,6 +36,27 @@ export const SentimentPointSchema = z.object({
   label: z.enum(SENTIMENT_LABELS),
   drivers: z.array(z.string()),
 })
+
+/**
+ * 走勢文字摘要（畫布 2a）。
+ *
+ * ⚠️ **`advice` 用 `.min(1)` 強制存在**：只給 `trend` 的輸出直接驗不過。
+ *    折線圖已經表達了走勢，這一段的價值全在建議 —— 讓「只給前半」安靜地通過，
+ *    等於花了一次 AI 呼叫換來一句廢話（見 `SentimentNarrative` 的說明）。
+ */
+export const SentimentNarrativeSchema = z.object({
+  trend: z.string().min(1),
+  advice: z.string().min(1),
+})
+
+/** @throws {AIOutputValidationError} 未通過驗證時 */
+export function parseSentimentNarrative(raw: unknown): SentimentNarrative {
+  const result = SentimentNarrativeSchema.safeParse(raw)
+  if (!result.success) {
+    throw new AIOutputValidationError(`情緒走勢摘要未通過 schema 驗證：${result.error.issues.length} 項問題`)
+  }
+  return result.data
+}
 
 /**
  * @throws {AIOutputValidationError} 未通過驗證時 —— 由 withRetry() 的 classifyFailure()

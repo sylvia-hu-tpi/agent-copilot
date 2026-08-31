@@ -40,7 +40,7 @@ import {
   RetryExhaustedError,
   withRetry,
 } from './ai/retry-policy.js'
-import { parseConversationSummary, parseSentimentPoints, parseSuggestionCards } from './ai/schemas.js'
+import { parseConversationSummary, parseSentimentNarrative, parseSentimentPoints, parseSuggestionCards } from './ai/schemas.js'
 import { KNOWLEDGE_SEARCH_TIMEOUT_MS } from './knowledge/agent-knowledge-provider.js'
 import { useKnowledgeProvider } from './knowledge/index.js'
 
@@ -98,7 +98,7 @@ function initialState(conversationId: string): CopilotAnalysisState {
   return {
     conversationId,
     summaryBlock: { status: 'empty', summary: null, updatedAt: at },
-    sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: at },
+    sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, narrative: null, updatedAt: at },
     suggestionBlock: {
       status: 'empty',
       cards: [],
@@ -586,6 +586,13 @@ async function finishSentimentSuccess(
         status: 'ready' as const,
         timeline,
         stats: computeStats(timeline),
+        /**
+         * ⚠️ **新的評分點落地時 MUST 把舊敘述歸零。**
+         *    敘述講的是「當時那條時間軸」——多了幾點之後「近 3 輪持續上升」可能已經不成立。
+         *    留著舊敘述是在畫面上放一句**可能已經錯了的斷言**；空白只是暫時沒有資訊。
+         *    這裡刻意接受一次短暫的閃動，換取「畫面上的話一定是真的」。
+         */
+        narrative: null,
         retryAttempt: undefined,
         firstFailureAt: undefined,
         updatedAt: nowIso(),
@@ -593,6 +600,52 @@ async function finishSentimentSuccess(
     }
   })
   await publishBlock(conversationId, 'sentiment', next)
+
+  // ⚠️ 分數先發、敘述後補：折線與示警是有時效的（客戶正在生氣），
+  //    不能為了一段散文多等一次 AI 往返。失敗不影響上面已經發出去的 ready。
+  await narrateSentimentTrend(conversationId)
+}
+
+/**
+ * 走勢文字摘要（畫布 2a、D-19）—— **在分數發布之後**才跑的第二次呼叫。
+ *
+ * ⚠️ **失敗一律吞掉，MUST NOT 讓情緒區塊轉 error。** 分數與示警是這個區塊的主體，
+ *    為了一段敘述把折線圖一起打掉是本末倒置（憲法 3.2：降級要看得見，但不該擴大災情）。
+ *    產不出來時 `narrative` 維持 `null`，UI 就不顯示那一段。
+ *
+ * ⚠️ **少於兩個評分點時不呼叫。** 一個點沒有「走勢」可談，硬要模型講會得到一句
+ *    憑空發揮的話——而 UI 本來就有 `singlePoint` 的說明（「僅一次評分，尚不足以看出走勢」）。
+ *
+ * ⚠️ 只送 score／label／drivers，不送訊息原文（見 `AIProvider.narrateSentiment`）。
+ */
+async function narrateSentimentTrend(conversationId: string): Promise<void> {
+  const current = await useStateStore().getAnalysisState(conversationId)
+  const points = (current?.sentimentBlock.timeline ?? [])
+    .filter((e): e is SentimentPoint => e.kind === 'point')
+  if (points.length < 2) return
+
+  let narrative
+  try {
+    narrative = parseSentimentNarrative(await useAIProvider().narrateSentiment({
+      points: points.map(p => ({ score: p.score, label: p.label, drivers: p.drivers })),
+    }))
+  }
+  catch {
+    // 憲法 1.5：不記錄任何可能夾帶對話內容的錯誤訊息，只留一行通用的降級紀錄
+    console.warn(`[copilot-analysis] ${conversationId} 情緒走勢摘要產生失敗，該段留空（不影響分數）`)
+    return
+  }
+
+  const next = await updateAnalysisState(conversationId, (state) => {
+    // ⚠️ 期間若又有新的一批分數落地，這份敘述已經對不上那條時間軸了——直接丟棄。
+    //    判斷依據是點數：narrate 期間新增的點只會讓它變多。
+    const now = state.sentimentBlock.timeline.filter(e => e.kind === 'point').length
+    if (now !== points.length) return state
+    return { ...state, sentimentBlock: { ...state.sentimentBlock, narrative, updatedAt: nowIso() } }
+  })
+  if (next.sentimentBlock.narrative === narrative) {
+    await publishBlock(conversationId, 'sentiment', next)
+  }
 }
 
 async function analyzeSentimentBatch(conversationId: string, messages: Message[]): Promise<void> {

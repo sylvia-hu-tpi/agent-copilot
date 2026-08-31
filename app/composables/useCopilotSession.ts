@@ -18,6 +18,7 @@ function emptySentimentBlock(): SentimentBlock {
     status: 'empty',
     timeline: [],
     stats: { lowestScore: null, lowestAt: null },
+    narrative: null,
     updatedAt: new Date().toISOString(),
   }
 }

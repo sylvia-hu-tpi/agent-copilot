@@ -213,7 +213,7 @@ describe('契約 §4：重連快照不得送出無人接手的 pending（004 T01
     await useStateStore().setAnalysisState({
       conversationId: id,
       summaryBlock: { status: 'empty', summary: null, updatedAt: '' },
-      sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' },
+      sentimentBlock: { status: 'empty', timeline: [], stats: { lowestScore: null, lowestAt: null }, narrative: null, updatedAt: '' },
       suggestionBlock: {
         status: 'ready',
         cards: [],

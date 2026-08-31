@@ -337,7 +337,7 @@ describe('lastCoveredMessageId()（T010c 重連快照的補跑判斷依據）', 
   })
 
   it('尚無任何資料時回傳 null', () => {
-    const empty = { conversationId: 'x', summaryBlock: { status: 'empty' as const, summary: null, updatedAt: '' }, sentimentBlock: { status: 'empty' as const, timeline: [], stats: { lowestScore: null, lowestAt: null }, updatedAt: '' }, suggestionBlock: { status: 'empty' as const, cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, citation: 'none' as const, basedOnMessageId: null, provenance: { stage: 1 as const, stage1RetryAttempt: 0 }, updatedAt: '' } }
+    const empty = { conversationId: 'x', summaryBlock: { status: 'empty' as const, summary: null, updatedAt: '' }, sentimentBlock: { status: 'empty' as const, timeline: [], stats: { lowestScore: null, lowestAt: null }, narrative: null, updatedAt: '' }, suggestionBlock: { status: 'empty' as const, cards: [], knowledgeSearch: { ran: false, hitCount: 0 }, citation: 'none' as const, basedOnMessageId: null, provenance: { stage: 1 as const, stage1RetryAttempt: 0 }, updatedAt: '' } }
     expect(lastCoveredMessageId(empty)).toBeNull()
   })
 })
@@ -1438,5 +1438,87 @@ describe('背景對話（004 US3）', () => {
     await vi.advanceTimersByTimeAsync(3_000)
     await running
     await awaitSuggestionTail(id)
+  })
+})
+
+// ── 情緒走勢文字摘要（D-19）─────────────────────────────────────────
+
+describe('情緒走勢文字摘要（D-19）', () => {
+  async function sentimentState(id: string) {
+    const state = await useStateStore().getAnalysisState(id)
+    if (!state) throw new Error('分析狀態不存在')
+    return state.sentimentBlock
+  }
+
+  it('成功時 narrative 落地，且分數先於敘述發布（折線不等散文）', async () => {
+    const id = convId('narrate-ok')
+    const events = collect(id)
+
+    await runColdStart(id, [
+      customerText(id, '我的訂單還沒到', 10),
+      customerText(id, '已經第三次問了', 5),
+    ], false)
+
+    const block = await sentimentState(id)
+    expect(block.status).toBe('ready')
+    expect(block.narrative?.trend).toBeTruthy()
+    expect(block.narrative?.advice).toBeTruthy()
+
+    // ⚠️ 這個順序本身就是驗收項：先出現一則 narrative 為 null 的 ready（分數已可看），
+    //    才出現帶著 narrative 的第二則。反過來代表折線被散文擋住了。
+    const ready = events.filter(
+      (e): e is Extract<CopilotEvent, { type: 'sentiment.updated' }> =>
+        e.type === 'sentiment.updated' && e.sentiment.status === 'ready',
+    )
+    expect(ready.length).toBeGreaterThanOrEqual(2)
+    expect(ready[0]!.sentiment.narrative).toBeNull()
+    expect(ready.at(-1)!.sentiment.narrative).not.toBeNull()
+  })
+
+  it('⚠️ 敘述失敗 MUST NOT 讓情緒區塊轉 error —— 分數與示警是主體', async () => {
+    const id = convId('narrate-fail')
+    setAIProvider(new MockAIProvider({
+      narrateFailure: () => new Error('走勢摘要 agent 掛了'),
+    }))
+
+    await runColdStart(id, [
+      customerText(id, '我的訂單還沒到', 10),
+      customerText(id, '已經第三次問了', 5),
+    ], false)
+
+    const block = await sentimentState(id)
+    expect(block.status).toBe('ready')
+    expect(block.timeline.length).toBe(2)
+    expect(block.narrative).toBeNull()
+  })
+
+  it('只給 trend、不給 advice 的輸出驗不過 —— 走勢那半自己是廢話', async () => {
+    const id = convId('narrate-invalid')
+    setAIProvider(new MockAIProvider({ invalidNarrativeOutput: true }))
+
+    await runColdStart(id, [
+      customerText(id, '我的訂單還沒到', 10),
+      customerText(id, '已經第三次問了', 5),
+    ], false)
+
+    const block = await sentimentState(id)
+    expect(block.status).toBe('ready')
+    expect(block.narrative).toBeNull()
+  })
+
+  it('只有一個評分點時不呼叫模型（沒有走勢可談）', async () => {
+    const id = convId('narrate-single')
+    let narrateCalls = 0
+    setAIProvider(new (class extends MockAIProvider {
+      override async narrateSentiment(input: Parameters<MockAIProvider['narrateSentiment']>[0]) {
+        narrateCalls++
+        return super.narrateSentiment(input)
+      }
+    })())
+
+    await runColdStart(id, [customerText(id, '我的訂單還沒到', 10)], false)
+
+    expect(narrateCalls).toBe(0)
+    expect((await sentimentState(id)).narrative).toBeNull()
   })
 })

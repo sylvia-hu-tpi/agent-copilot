@@ -73,6 +73,22 @@ export interface SentimentMarker {
 
 export type SentimentTimelineEntry = SentimentPoint | SentimentMarker
 
+/**
+ * 情緒走勢的文字摘要（畫布 2a：「近 3 輪情緒持續上升；第 4 輪因客服說明後略有回落。
+ * 建議先安撫語氣、再給明確時間點。」）。
+ *
+ * ⚠️ **兩個欄位是刻意分開的，不是一個字串。** 只有走勢描述那半的話它是一句廢話 ——
+ *    「分數上升」旁邊就是折線圖。這個區塊之所以值得多一次 AI 呼叫，全在 `advice`：
+ *    折線圖說不出「該怎麼辦」。拆成兩個欄位讓 schema 能強制模型兩者都給，
+ *    只給前半的輸出會直接驗不過而不是安靜地降級成廢話。
+ */
+export interface SentimentNarrative {
+  /** 走勢描述 —— 只講觀察到的變化，不含建議 */
+  trend: string
+  /** 行動建議 —— 客服下一句話該怎麼說 */
+  advice: string
+}
+
 export interface SentimentBlock {
   status: AnalysisBlockStatus
   retryAttempt?: number
@@ -82,6 +98,19 @@ export interface SentimentBlock {
   timeline: SentimentTimelineEntry[]
   /** 依全量 timeline 算出的統計值，不受「僅繪最近 50 點」影響（FR-015） */
   stats: { lowestScore: number | null, lowestAt: string | null }
+  /**
+   * 走勢文字摘要（畫布 2a）。`null` ＝ 尚未產出、產出失敗，或只有一個評分點（無走勢可談）。
+   *
+   * ⚠️ **這是次要內容：產不出來時 block 仍是 `ready`，MUST NOT 因此把整塊打成 `error`。**
+   *    分數與示警才是這個區塊的主體，為了一段敘述把折線圖一起打掉是本末倒置。
+   *
+   * ⚠️ **新的評分點落地時 MUST 先歸零。** 敘述描述的是「當時那條時間軸」，
+   *    多了幾點之後「近 3 輪持續上升」可能已經不成立 —— 留著舊敘述是在畫面上放一句
+   *    可能已經錯了的斷言，而空白只是暫時沒有資訊。⚠️ 這是**必填**而非 optional：
+   *    每一個建構 `SentimentBlock` 的地方都必須自己決定，不能靠預設值兜
+   *    （`BlockShell.defaultOpen` 那次就是預設值安靜地做錯事）。
+   */
+  narrative: SentimentNarrative | null
   updatedAt: string
 }
 
@@ -198,6 +227,16 @@ export interface SuggestionBlock {
 export interface AIProvider {
   summarize(input: { history: Message[], previousSummary?: ConversationSummary }): Promise<ConversationSummary>
   analyzeSentiment(input: { messages: Message[] }): Promise<SentimentPoint[]>
+  /**
+   * 情緒走勢的文字摘要（畫布 2a）。
+   *
+   * ⚠️ **輸入是評分結果，不是訊息原文。** 走勢與建議可以從 score／label／drivers 推出來，
+   *    重送一次全部訊息只是把同一批個資再送一趟、prompt 也長好幾倍（憲法 1.5 的精神）。
+   * ⚠️ 呼叫端 MUST 容忍本方法失敗 —— 見 `SentimentBlock.narrative` 的說明。
+   */
+  narrateSentiment(input: {
+    points: Array<Pick<SentimentPoint, 'score' | 'label' | 'drivers'>>
+  }): Promise<SentimentNarrative>
   /** knowledgeHits 由呼叫端先查好傳入，agent 只能從其中選 sopId（§11.6①的流程） */
   suggest(input: {
     history: Message[]

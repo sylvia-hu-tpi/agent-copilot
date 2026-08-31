@@ -21,11 +21,28 @@ import type { Message } from '../../../shared/types/conversation.js'
 import type {
   AIProvider,
   ConversationSummary,
+  SentimentNarrative,
   SentimentPoint,
   SuggestionCard,
 } from '../../../shared/types/copilot.js'
 import type { KnowledgeHit } from '../../../shared/types/knowledge.js'
 import { AIOutputValidationError, AIProviderHttpError } from './retry-policy.js'
+
+/**
+ * 三個 agent 的共用語言指令 —— **每一個會產出自由文字的 prompt 都要帶上**。
+ *
+ * ⚠️ **這是必要但不充分的一半。** 2026-08-31 使用者在真實環境回報：情緒區塊的走勢摘要
+ *    會不定量出現簡體字。原先的 prompt 已經寫了「繁體中文」，模型還是會漂 ——
+ *    真正可靠的槓桿是 **iMBrace 後台那三個 agent 的 system prompt**（離模型更近、每次呼叫都生效）。
+ *    這裡加強只是把我方掌握得到的那一半做滿。
+ *
+ * ⚠️ **MUST NOT 在程式碼裡做簡轉繁。** 簡繁不是一對一：「后／後」「干／乾／幹」「发／發／髮」
+ *    「里／裡」「只／隻」「面／麵」都要看語境。字元表換出來的是**看起來對、實際是別的字**，
+ *    而那正是本專案一再防的失敗模式（安靜地做錯事）。少數簡體字是瑕疵，換錯字是錯誤。
+ */
+const LANGUAGE_RULE
+  = '【語言】全部輸出必須使用**台灣繁體中文（zh-TW）**的字形與用語，'
+    + '禁止出現任何簡體字。若不確定某個字的繁體寫法，改用其他詞語表達。'
 
 const SENDER_LABEL: Record<string, string> = {
   customer: '客戶',
@@ -43,14 +60,39 @@ function buildSummaryPrompt(input: { history: Message[], previousSummary?: Conve
     // FR-004：增量情境只送既有摘要 + 新訊息，不重送完整歷史
     return `這是既有摘要與新增的客戶發言（增量更新情境，只需反映新增訊息帶來的變化）：\n\n`
       + `既有摘要：${JSON.stringify(input.previousSummary)}\n\n`
-      + `新增訊息：\n${transcript}`
+      + `新增訊息：\n${transcript}\n\n`
+      + LANGUAGE_RULE
   }
-  return `請摘要以下客服對話：\n\n${transcript}`
+  return `請摘要以下客服對話：\n\n${transcript}\n\n` + LANGUAGE_RULE
+}
+
+/**
+ * 走勢文字摘要的 prompt。
+ *
+ * ⚠️ **只送評分結果，不送訊息原文**（見 `AIProvider.narrateSentiment` 的說明）。
+ *    走勢與建議可以從 score／label／drivers 推出來，重送一次全部訊息只是把同一批
+ *    個資再送一趟，prompt 也長好幾倍。
+ * ⚠️ prompt 明寫「trend 不要寫建議、advice 一定要寫」——`SentimentNarrativeSchema`
+ *    雖然會擋下缺 advice 的輸出，但擋下來的代價是整次呼叫作廢，先在 prompt 講清楚比較便宜。
+ */
+function buildSentimentNarrativePrompt(
+  points: Array<Pick<SentimentPoint, 'score' | 'label' | 'drivers'>>,
+): string {
+  const lines = points
+    .map((p, i) => `第 ${i + 1} 輪：score ${p.score}／${p.label}${p.drivers.length ? `／${p.drivers.join('、')}` : ''}`)
+    .join('\n')
+  return '以下是同一位客戶最近幾輪發言的情緒評分（score 0–100，越低越負面）：\n\n'
+    + `${lines}\n\n`
+    + '請輸出 JSON 物件 `{"trend": "...", "advice": "..."}`，兩個欄位都必填、皆為繁體中文：\n'
+    + '- `trend`：一到兩句，只描述觀察到的走勢變化（哪幾輪上升／下降、有沒有轉折），**不要寫建議**。\n'
+    + '- `advice`：一句，告訴客服**下一則回覆該怎麼說**（語氣與該給的內容），以「建議」開頭。\n\n'
+    + LANGUAGE_RULE
 }
 
 function buildSentimentPrompt(messages: Message[]): string {
   const lines = messages.map((m, i) => `${i + 1}. ${m.text}`).join('\n')
-  return `請針對以下客戶發言，依序給出情緒判斷（陣列長度需與發言則數一致，共 ${messages.length} 則）：\n\n${lines}`
+  return `請針對以下客戶發言，依序給出情緒判斷（陣列長度需與發言則數一致，共 ${messages.length} 則）：\n\n${lines}\n\n`
+    + LANGUAGE_RULE
 }
 
 /**
@@ -85,7 +127,8 @@ export function buildSuggestionPrompt(input: {
     + '每張卡片需包含欄位：sopId（字串或 null）、sopTitle（字串或 null）、text（回覆全文）、'
     + 'confidence（一律填 null）、rationale（建議理由）、'
     + 'tone（apologetic／informative／retention／closing／escalating 之一）、'
-    + 'requiresData（字串陣列）。'
+    + 'requiresData（字串陣列）。\n\n'
+    + LANGUAGE_RULE
 }
 
 /**
@@ -179,6 +222,14 @@ export class ImbraceAgentProvider implements AIProvider {
     })
   }
 
+  async narrateSentiment(input: {
+    points: Array<Pick<SentimentPoint, 'score' | 'label' | 'drivers'>>
+  }): Promise<SentimentNarrative> {
+    const text = await this.callAgent(this.sentimentAgentId, buildSentimentNarrativePrompt(input.points))
+    // 格式驗證交給呼叫端的 parseSentimentNarrative()（憲法 4.2），這裡只負責取回原樣輸出
+    return extractLeadingJson(text) as SentimentNarrative
+  }
+
   /**
    * ⚠️ `id` 由本層以 `crypto.randomUUID()` 產生，不信任模型輸出——模型沒有理由知道
    *    穩定唯一的 id，比照 `analyzeSentiment()` 不信任模型給的 `messageId`/`at` 同一原則。
@@ -216,6 +267,9 @@ export class ImbraceAgentProvider implements AIProvider {
   /**
    * @throws {AIProviderHttpError} 呼叫本身失敗且能判別 HTTP 狀態碼時
    * @throws {AIOutputValidationError} 200 回應但無文字輸出，或平台回報 errorText 時
+   *
+   * ⚠️ 這裡是**唯一**一個所有 agent 輸出都會經過的地方，簡體字偵測因此放在這裡 ——
+   *    放在各自的 parse 裡會漏掉沒有結構化欄位的輸出，也會變成三份要同步的程式碼。
    */
   private async callAgent(assistantId: string, prompt: string): Promise<string> {
     let res: { text: () => Promise<string> }
@@ -253,6 +307,45 @@ export class ImbraceAgentProvider implements AIProvider {
     if (!text.trim()) {
       throw new AIOutputValidationError('AI Agent 回應為空，無文字輸出')
     }
+
+    warnIfSimplified(assistantId, text)
     return text
   }
+}
+
+/**
+ * 只出現在簡體中文的常用字（取樣本，不求完整）。
+ *
+ * ⚠️ 這些字**在繁體中文裡不會出現**，因此不會誤判 —— 刻意不收「后」「干」「里」這類
+ *    兩邊都存在、只是語意分工不同的字。寧可漏報，不可誤報：這個偵測的用途是
+ *    「agent 的 system prompt 改了之後有沒有生效」，誤報會讓那個訊號失去意義。
+ */
+/**
+ * 只出現在**簡體**中文的常用字（取樣，不求完整）。
+ *
+ * ⚠️ **寧可漏報，不可誤報。** 這個偵測的用途是回答「iMBrace 後台那三個 agent 的
+ *    system prompt 改了之後還有沒有簡體字」—— 一旦會誤報，那個訊號就沒有意義了。
+ *    因此刻意**排除兩邊都存在**的字：
+ *      · `划`（繁體有「划船」「划算」）
+ *      · `予`（繁體有「給予」「予以」）
+ *      · `后`／`干`／`里`／`只`／`面`（繁簡分工不同，不是簡體專有）
+ *    表中每一個字在正體中文裡都不存在對應寫法，因此命中即為簡體。
+ *    ⚠️ 刻意收滿「訁」部（说／语／议／讲／谈／记／详／评／询／话…）—— 客服語彙大量落在這一部
+ *    （語氣、建議、說明、詳細、評估、諮詢），而簡化後的「讠」在正體中文完全不存在，
+ *    是精度與召回都最好的一組。也刻意**排除 `据`**：正體的「拮据」就是這個字。
+ */
+const SIMPLIFIED_ONLY = new RegExp('[' + '这为们说时过让还应该请问题实现认识开关车马鸟门东买卖学习进国图书报纸经济产业运动员场处备复杂难级绪续统计确转换给点线议语论讲谈记设详诉评询话谢课试调读训许证轮软较间闻简单双变华汉与万抚' + ']', 'g')
+
+/**
+ * ⚠️ **只警告，不修改輸出**（見 `LANGUAGE_RULE`：程式碼裡做簡轉繁會換出錯的字）。
+ * ⚠️ **不記錄任何內容**（憲法 1.5）—— 只記 agent id 與命中處數，那足以回答
+ *    「後台的 system prompt 改了之後還有沒有」，而那正是這一行存在的唯一目的。
+ */
+function warnIfSimplified(assistantId: string, text: string): void {
+  const hits = text.match(SIMPLIFIED_ONLY)
+  if (!hits) return
+  console.warn(
+    `[ai] agent ${assistantId} 的輸出含簡體字（命中 ${hits.length} 處）——`
+    + ' prompt 已要求繁體，請確認該 agent 後台的 system prompt 是否也有相同指示',
+  )
 }
