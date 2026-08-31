@@ -72,36 +72,20 @@ const customerName = computed(() =>
 const agentName = computed(() => props.message.sender.name || t('sender.agent'))
 
 /**
- * AI 泡泡的「份量較輕」—— 畫布是整顆 `opacity:.82`，實作改用**逐項混色**。
+ * ⚠️ **AI 泡泡不淡化，四項全部用原色 token**（`--ai-bg`／`--ai-bd`／`--ai`／`--text`）。
  *
- * ⚠️ **`opacity` 不能用**：它會連文字一起壓。畫布的文字是 `--text-2`，
- *    `.82` 之後淺色主題只剩 **3.74:1**，過不了 WCAG AA（內文需 ≥ 4.5:1）。
- *    連 `.90` 都只有 4.41 —— 換個保守數字解決不了。
+ *    畫布 2026-08-31 起已移除整顆的 `opacity:.82`，文字色也由 `--text-2` 改為 `--text`。
+ *    在那之前實作用的是「逐項混色」（底色／邊框／色條混到 82%、文字以 `--text` 混到 65%），
+ *    那是為了在畫布仍套 `opacity` 時**還能過 WCAG AA** 的補償措施 ——
+ *    `--text-2` ＋ `.82` 在淺色主題只有 **3.74:1**，而內文需 ≥ 4.5:1。
  *
- * ⚠️ 逐項混色的好處是**每一項可以各自設定**，不必共用同一個比例。因此：
+ *    畫布自己解決之後，那層補償反而讓我們的對比**比畫布低**（4.76:1 vs 8.25:1），
+ *    因此整個移除。⚠️ **不要再把淡化加回來** —— 若日後想表達「AI 的份量較輕」，
+ *    手段只能是底色／邊框／色條，**不能碰文字的對比**。
  *
- *    · 底色／邊框／左側色條 → `AI_DIM`：**與畫布完全同色**（`.82` 的等效混色值）。
- *      這三項沒有文字對比問題，色條 4.37:1／5.01:1 也遠高於非文字元件的 3:1 門檻。
- *    · 文字 → `AI_TEXT_DIM`：畫布那個亮度（rgb(117,124,139)）本身就是破線的原因，
- *      **無法同色**。改用 `--text` 當基底混到 **65%** —— 這是淺色主題的 AA 地板
- *      （4.76:1；再淡一格的 63% 就掉到 4.49 破線），也就是**規則允許下最接近畫布的值**。
- *
- *    結果：全泡泡只有**文字**與畫布不同（rgb(103,108,117) vs rgb(117,124,139)），其餘逐一相同。
- *
- * ⚠️ 混色的第二個顏色 MUST 是 `--bg`（訊息流的實際底色，由 `main.css` 的 `body` 規則提供）
- *    —— 那正是 `opacity` 會合成到的東西。用 `--surface` 會算錯。
- *
- * ⚠️ 另一個不用 `opacity` 的理由：它會把泡泡**裡面**的附件卡與「下載」連結一起壓，
- *    那顆連結的對比不能跟著掉。
- *
- * ⚠️ 這是**畫布的無障礙問題**，不是我方的美感取捨，已回報 Design（`DESIGN_FEEDBACK.md` F-1）。
- *    畫布若把 AI 文字色從 `--text-2` 改成 `--text`，兩邊就能完全一致。
+ * ⚠️ 「這則是 AI 發的」由三個東西共同表達，不是只靠淡不淡：泡泡上方的文字徽章、
+ *    `--ai-bg`／`--ai-bd` 的紫色系、以及左側 3px 的 `--ai` 色條（憲法 8.1）。
  */
-const AI_DIM_PCT = 82
-const AI_TEXT_DIM_PCT = 65
-
-const dim = (token: string, pct: number) => `color-mix(in srgb, ${token} ${pct}%, var(--bg))`
-const AI_DIM = (token: string) => dim(token, AI_DIM_PCT)
 
 /**
  * 每一種發送者都有自己的色票，且**不只靠顏色**區分 ——
@@ -115,7 +99,7 @@ const tone = computed(() => {
     case 'customer':
       return { bg: 'var(--surface)', bd: 'var(--border)', fg: 'var(--text)' }
     case 'ai':
-      return { bg: AI_DIM('var(--ai-bg)'), bd: AI_DIM('var(--ai-bd)'), fg: dim('var(--text)', AI_TEXT_DIM_PCT) }
+      return { bg: 'var(--ai-bg)', bd: 'var(--ai-bd)', fg: 'var(--text)' }
     case 'agent':
       return { bg: 'var(--agent-bg)', bd: 'var(--agent-bd)', fg: 'var(--text)' }
     default:
@@ -259,7 +243,7 @@ const ATTACHMENT_ICON: Record<string, string> = {
                     **簡寫屬性**上都會重演（`border`、`background`、`font`、`margin`…）。
                     值可能是「不設定」時，key 就不要出現。
             */
-            ...(senderType === 'ai' ? { borderLeft: `3px solid ${AI_DIM('var(--ai)')}` } : {}),
+            ...(senderType === 'ai' ? { borderLeft: '3px solid var(--ai)' } : {}),
             ...(collisionSource ? { boxShadow: '0 0 0 3px var(--warn-bg)' } : {}),
           }"
       >

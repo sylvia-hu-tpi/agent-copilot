@@ -53,12 +53,15 @@
 
   /*
    * specs/001-sentiment-panel FR-003：「挫折」與「生氣」兩級 MUST 有可互相區分的呈現，
-   * 不得共用完全相同的顏色與文字 —— 「挫折」沿用上方 --warn，「生氣」用此組更深的紅，
-   * 對比度皆通過 WCAG AA（≥4.5:1，對白色背景／--surface 手動驗算）。
+   * 不得共用完全相同的顏色與文字 —— 「挫折」沿用上方 --warn，「生氣」用此組更深的紅。
+   *
+   * ⚠️ 這組值 2026-08-31 起**以畫布為準**。先前畫布沒有 --danger，這三個值是我方自訂的
+   * （#c0311d／#fbeae7／#f0bcb3）；該日畫布把「生氣」獨立出來並正式定義了這組 token，
+   * 已改為對齊，不要再改回自訂值。
    */
-  --danger: #c0311d;
-  --danger-bg: #fbeae7;
-  --danger-bd: #f0bcb3;
+  --danger: #a3202a;
+  --danger-bg: #fbeaec;
+  --danger-bd: #eebfc4;
 
   --skel: #e7e9ee;
   --skel-hi: #f2f3f7;
@@ -106,9 +109,9 @@
   --warn-bg: #2a2015;
   --warn-bd: #553f22;
 
-  --danger: #f0937f;
-  --danger-bg: #2e1712;
-  --danger-bd: #5c2c22;
+  --danger: #f0868f;
+  --danger-bg: #2c1719;
+  --danger-bd: #5c2b31;
 
   --skel: #232833;
   --skel-hi: #2c323d;
