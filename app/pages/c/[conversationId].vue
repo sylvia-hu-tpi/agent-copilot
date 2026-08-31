@@ -30,19 +30,20 @@ const composer = ref<{ focus: () => void } | null>(null)
 // 建議卡「一鍵帶入」的草稿覆蓋確認（FR-018、憲法 8.4，research.md #11）
 const overwriteConfirm = useOverwriteConfirm(draft.text, (text) => { draft.text.value = text })
 
-// ── 兩欄的寬度（畫布 §8.1：左欄 220–400／預設 280，右欄 320–520／預設 420）──
+// ── 兩欄的寬度（畫布 §8.1：左欄 220–400／預設 280，右欄 320–720／預設 420）──
 
 /**
- * ⚠️ 左欄的拖曳範圍是 **220–400**，不是先前實作的 200–480。
- *    這個範圍在畫布的 `startDragLeft` 裡是逐字寫死的（`Math.min(400, Math.max(220, …))`），
- *    先前實作那組數字是畫布沒有規格時自訂的，2026-08-31 對齊。
+ * ⚠️ 兩欄的拖曳範圍在畫布的 script 裡是逐字寫死的，不是示意：
+ *    `startDragLeft` → `Math.min(400, Math.max(220, …))`、
+ *    `startDrag` → `Math.min(720, Math.max(320, …))`。
  *
- * ⚠️ 右欄預設 420px，不是 380 —— 畫布已於 2026-08-28 統一為 420px 為所有狀態共用的展開寬度
- *    （`docs/DESIGN_TOKENS.md` §7.1；先前的 380/420 差異來自畫布尚未統一，不是設計區分）。
+ * ⚠️ **右欄上限 720 遠大於預設的 420，那是刻意的** —— Copilot 面板在某些情境下會成為
+ *    客服主要在看的畫面（逐條讀建議卡、展開知識庫全文），不是永遠的輔助欄。
+ *    拉到 720 時中欄會被壓縮，但中欄是 `flex-1 min-w-0`、標題已 truncate，不會破版。
  */
 const sidebar = usePanelWidth({ key: 'ac.sidebarWidth', def: 280, min: 220, max: 400 })
 /** 右欄的把手在面板**左**緣，往左拖（滑鼠 X 變小）要讓面板變寬 —— 方向與左欄相反 */
-const copilotPane = usePanelWidth({ key: 'ac.copilotWidth', def: 420, min: 320, max: 520, invert: true })
+const copilotPane = usePanelWidth({ key: 'ac.copilotWidth', def: 420, min: 320, max: 720, invert: true })
 
 const sidebarCollapsed = ref(false)
 const COLLAPSED_KEY = 'ac.sidebarCollapsed'
