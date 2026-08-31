@@ -1997,7 +1997,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [x] SC-002：離開或結案後 5 秒內不再有新分析事件，中欄與草稿不受影響
       ⚠️ 5 秒時窗以 `smoke:realtime` ⑥ 的自動化量測為準，真實環境未逐秒計時
 
-**UI 與設計核對**（逐項紀錄見 `docs/M2-UI-PARITY.md`，該檔為暫時性工作清單）
+**UI 與設計核對**（規格正典為 `docs/DESIGN_TOKENS.md`；刻意偏離畫布之處與理由見 `docs/DESIGN_FEEDBACK.md`。
+逐列比對的過程紀錄曾另存於 `M2-UI-PARITY.md`，核對完成後已刪除——結論都在上述兩份與程式碼註解裡）
 
 - [x] 中欄標題列改為狀態驅動的兩態（未接手→「接手對話」＋下拉；已接手→「離開對話」＋「結案」），
       已對照畫布 artboard 1c（003 T032）
@@ -2006,10 +2007,15 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       向 Design 索取設計。對話紀錄／結案摘要屬 M3
 - [x] 左側清單（`Sidebar.vue`）與中欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、
       `PresenceBar.vue`、`ModeSelect.vue`）已對照畫布 artboard 1c 及其 10 個狀態變體核實完成。
-      ⚠️ 唯一未關閉的是 **1c-C6 夾帶檔案按鈕（M3 範圍**，且卡在 `IMBRACE_QUESTIONS.md` H-6c
-      附件送出流程未知）。刻意背離畫布之處（字級、WCAG AA 的等效混色等）記於 `DESIGN_FEEDBACK.md`
+      ⚠️ 唯一未關閉的是 **Composer 的夾帶檔案按鈕（M3 範圍**，且卡在 `IMBRACE_QUESTIONS.md` H-6c
+      附件送出流程未知）。**刻意不放 disabled 佔位鈕** —— 在拿到 H-6c 的答案前那顆按鈕按下去
+      沒有任何可走的路，而「按了不會有任何變化的按鈕比沒有按鈕更像壞掉」。
+      ⚠️ 日後補這顆按鈕時**要一起改版面**：畫布是上下兩列（`textarea` 在上、工具列在下，
+      中間一條 `border-top`），實作目前是左右一列（`textarea` 與送出鍵並排），不是塞一顆進去就好。
+      刻意背離畫布之處（字級、WCAG AA 的等效混色等）記於 `DESIGN_FEEDBACK.md`
 
-**未修的缺陷**（皆為真實環境挖出、皆不報錯；已決議另開 005 收，不阻塞 004）
+**未修的缺陷與未歸屬項目**（皆不報錯、皆不阻塞 004。前三條為真實環境挖出的缺陷，
+已決議另開 005 收；後兩條是 M2 期間發現、但**還沒有里程碑認領**的項目）
 
 - [ ] **`registerCredential()` 雙分頁**：以 `(orgId, operatorId)` 為鍵，取消登記時無條件
       `byOperator.delete(operatorId)`。同一客服開兩分頁、關掉其一，會把仍開著那條的憑證一併移除
@@ -2022,6 +2028,16 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] **自動恢復不補算先前失敗的批次**：故障排除後由新發言觸發的恢復走 `runIncremental()`，
       只拿到新訊息，先前失敗那批的情緒點永久缺席（除非重新 JOIN 走冷啟動）。
       `SENTIMENT_CHUNK_SIZE` 的註解只承諾了手動 `retryBlock()` 會全部重算，未涵蓋這條路徑
+- [ ] **平台清單的預設排序從未實測**：§9.3.1 第一層只取前 `LIST_PAGE_SIZE`（100）筆而不分頁、
+      側欄的 `BACKGROUND_COVERAGE` 也鎖在同一個 100，兩者的安全性**完全取決於「有新訊息的對話
+      會不會被排到前 100 筆」**。目前唯一的樣本只有 3 筆，順序與 `last_message_at` 遞減一致，
+      但 n=3 分不出排序鍵是 `last_message_at` 還是 `updated_at`，也證明不了是伺服器端排序而非巧合。
+      ⚠️ **`scripts/spike/22-list-order.ts`（`npm run spike:list-order`）早已寫好，但從未執行過** ——
+      `scripts/spike/out/` 沒有任何對應產出。跑一次即可關閉本項
+- [ ] **第一層背景輪詢的分頁不屬於任何里程碑**：`copilot-runtime.ts` 的 `TODO(M2)`
+      （對話數超過 `LIST_PAGE_SIZE` 的組織需要分頁）不在 M2／M3／M4 任何一份驗收清單裡。
+      M4 的 webhook 若到位會讓它變得無關緊要，但那是外部依賴。⚠️ 需要一個明確歸屬，
+      否則會從縫隙掉下去 —— 本條記載的存在本身就是為了堵住那個縫隙
 
 **已修的缺陷**（2026-08-29；此處只留一行索引與仍然有效的教訓）
 
