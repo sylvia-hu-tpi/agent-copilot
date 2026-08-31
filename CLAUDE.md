@@ -12,7 +12,8 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 |---|---|
 | `docs/ARCHITECTURE.md` | 架構決策與**所有平台實測結論**。1600+ 行，用章節號索引 |
 | `docs/CONSTITUTION.md` | 程式碼約束（九條憲法）＋命名慣例＋修憲流程。寫 code 前必讀。條號是穩定介面，程式碼註解直接引用 |
-| `docs/IMBRACE_QUESTIONS.md` | 待向 iMBrace 確認的清單。⚠️ **唯一會離開這個 repo 的文件** |
+| `docs/IMBRACE_QUESTIONS.md` | 待向 iMBrace 確認的清單。⚠️ **會離開這個 repo** |
+| `docs/DESIGN_FEEDBACK.md` | 給 Design 的畫布回饋（實作刻意偏離畫布之處＋理由）。⚠️ **會離開這個 repo** |
 | `docs/PLATFORM_CAPABILITY.md`、`docs/SDK_FINDINGS.md` | 平台能力與 SDK 的實測記錄 |
 | `docs/DESIGN_TOKENS.md` | 設計規格。⚠️ 衍生自 Claude Design 畫布，可能與畫布脫鉤 |
 | `scripts/spike/out/` | 實測原始產出。**結論有疑慮時以此為準，不以文件敘述為準** |
@@ -57,8 +58,8 @@ grep -rln "<被撤銷方案的名稱/端點>" docs/   # 例：撤銷 ai.embed() 
 
 完整說明見 `docs/ARCHITECTURE.md` 附錄「推翻既有結論時的必要步驟」。
 
-> **`IMBRACE_QUESTIONS.md` 要特別小心** —— 它會被直接轉貼給 iMBrace。
-> 內容過期不只是不準確，而是浪費對方時間並稀釋其他真正待答問題。
+> **`IMBRACE_QUESTIONS.md` 與 `DESIGN_FEEDBACK.md` 要特別小心** —— 兩者都會被直接轉貼出去
+> （前者給 iMBrace、後者給 Design）。內容過期不只是不準確，而是浪費對方時間並稀釋其他真正待答的項目。
 > 自行解決的問題要**明確撤回並附上解法**，不是默默刪掉（對方可能已經在查了）。
 
 ## ⚠️ 三個會「靜默失效」的地雷
