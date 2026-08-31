@@ -13,6 +13,7 @@ import type { ConversationMode } from '#shared/types/conversation'
 
 definePageMeta({ layout: 'console' })
 
+const { t } = useI18n()
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -29,23 +30,32 @@ const composer = ref<{ focus: () => void } | null>(null)
 // 建議卡「一鍵帶入」的草稿覆蓋確認（FR-018、憲法 8.4，research.md #11）
 const overwriteConfirm = useOverwriteConfirm(draft.text, (text) => { draft.text.value = text })
 
-// ── 側欄 ────────────────────────────────────────────────────────────
-
-const sidebarWidth = ref(280)
-const sidebarCollapsed = ref(false)
-
-const WIDTH_KEY = 'ac.sidebarWidth'
-const COLLAPSED_KEY = 'ac.sidebarCollapsed'
-
-// ── 右欄 Copilot 面板（可拖曳調寬，範圍依 docs/DESIGN_TOKENS.md §7.1：320–520px）───
+// ── 兩欄的寬度（畫布 §8.1：左欄 220–400／預設 280，右欄 320–520／預設 420）──
 
 /**
- * ⚠️ 預設 420px，不是 380 —— 畫布已於 2026-08-28 統一為 420px 為所有狀態共用的展開寬度
- * （`docs/DESIGN_TOKENS.md` §7.1；先前的 380/420 差異來自畫布尚未統一，不是設計區分）。
- * 拖曳範圍 320–520 不變，此值只影響首次開啟。
+ * ⚠️ 左欄的拖曳範圍是 **220–400**，不是先前實作的 200–480。
+ *    這個範圍在畫布的 `startDragLeft` 裡是逐字寫死的（`Math.min(400, Math.max(220, …))`），
+ *    先前實作那組數字是畫布沒有規格時自訂的，2026-08-31 對齊。
+ *
+ * ⚠️ 右欄預設 420px，不是 380 —— 畫布已於 2026-08-28 統一為 420px 為所有狀態共用的展開寬度
+ *    （`docs/DESIGN_TOKENS.md` §7.1；先前的 380/420 差異來自畫布尚未統一，不是設計區分）。
  */
-const copilotWidth = ref(420)
-const COPILOT_WIDTH_KEY = 'ac.copilotWidth'
+const sidebar = usePanelWidth({ key: 'ac.sidebarWidth', def: 280, min: 220, max: 400 })
+/** 右欄的把手在面板**左**緣，往左拖（滑鼠 X 變小）要讓面板變寬 —— 方向與左欄相反 */
+const copilotPane = usePanelWidth({ key: 'ac.copilotWidth', def: 420, min: 320, max: 520, invert: true })
+
+const sidebarCollapsed = ref(false)
+const COLLAPSED_KEY = 'ac.sidebarCollapsed'
+
+/**
+ * 中欄「對話資訊列」的收合（畫布 1c：標題列 ＋ 服務模式 ＋ Presence 三段收成 38px 一列）。
+ *
+ * ⚠️ 與左欄／右欄一樣**記在 localStorage**。這三個收合狀態是同一種偏好
+ *    （客服自己決定畫面要留給訊息流還是留給狀態），只有這一個不記住的話，
+ *    每次切換對話都要重收一次 —— 而切換對話一天要發生數十次。
+ */
+const headerCollapsed = ref(false)
+const HEADER_COLLAPSED_KEY = 'ac.headerCollapsed'
 
 /**
  * 面板的可見性與收合（specs/003-analysis-trigger-policy FR-016、FR-017）。
@@ -55,13 +65,11 @@ const COPILOT_WIDTH_KEY = 'ac.copilotWidth'
 const panel = useCopilotPanel(conversationId, view.viewerJoined)
 
 onMounted(() => {
+  sidebar.restore()
+  copilotPane.restore()
   try {
-    const w = Number(localStorage.getItem(WIDTH_KEY))
-    if (Number.isFinite(w) && w >= 200 && w <= 480) sidebarWidth.value = w
     sidebarCollapsed.value = localStorage.getItem(COLLAPSED_KEY) === '1'
-
-    const cw = Number(localStorage.getItem(COPILOT_WIDTH_KEY))
-    if (Number.isFinite(cw) && cw >= 320 && cw <= 520) copilotWidth.value = cw
+    headerCollapsed.value = localStorage.getItem(HEADER_COLLAPSED_KEY) === '1'
   }
   catch {
     // 隱私模式下讀不到就用預設值，不影響功能
@@ -69,50 +77,19 @@ onMounted(() => {
   void conversations.load()
 })
 
-watch([sidebarWidth, sidebarCollapsed, copilotWidth], ([w, c, cw]) => {
+watch(sidebarCollapsed, (c) => {
   try {
-    localStorage.setItem(WIDTH_KEY, String(w))
     localStorage.setItem(COLLAPSED_KEY, c ? '1' : '0')
-    localStorage.setItem(COPILOT_WIDTH_KEY, String(cw))
   }
   catch { /* 存不下來不影響本次操作 */ }
 })
 
-/** 拖曳調寬 */
-const dragging = ref(false)
-function startDrag(e: PointerEvent): void {
-  dragging.value = true
-  const startX = e.clientX
-  const startWidth = sidebarWidth.value
-  const move = (ev: PointerEvent) => {
-    sidebarWidth.value = Math.min(480, Math.max(200, startWidth + ev.clientX - startX))
+watch(headerCollapsed, (c) => {
+  try {
+    localStorage.setItem(HEADER_COLLAPSED_KEY, c ? '1' : '0')
   }
-  const up = () => {
-    dragging.value = false
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
-  }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', up)
-}
-
-/** 右欄拖曳把手在面板的左邊緣，往左拖（滑鼠 X 變小）要讓面板變寬，方向與左側欄相反 */
-const copilotDragging = ref(false)
-function startCopilotDrag(e: PointerEvent): void {
-  copilotDragging.value = true
-  const startX = e.clientX
-  const startWidth = copilotWidth.value
-  const move = (ev: PointerEvent) => {
-    copilotWidth.value = Math.min(520, Math.max(320, startWidth - (ev.clientX - startX)))
-  }
-  const up = () => {
-    copilotDragging.value = false
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
-  }
-  window.addEventListener('pointermove', move)
-  window.addEventListener('pointerup', up)
-}
+  catch { /* 存不下來不影響本次操作 */ }
+})
 
 // ── 側欄與 SSE 的連動 ───────────────────────────────────────────────
 
@@ -182,6 +159,56 @@ async function joinAs(mode: 'manual' | 'hybrid'): Promise<void> {
 const title = computed(() =>
   view.detail.value?.name || view.detail.value?.contactId || conversationId.value,
 )
+
+// ── 中欄標題列的 meta（畫布 §8.3：`conv_8f21c0 · 建立於 08/25 13:58 · 訊息 312 則`）──
+
+/**
+ * ⚠️ **「訊息 N 則」的 N 是「目前已載入的則數」，不是對話總則數。**
+ *    平台的訊息 API 只回一頁 ＋ `hasMore`，沒有總數欄位（`useConversationView`
+ *    的 `MessagesResponse`）。把已載入數直接標成「訊息 312 則」是謊報 ——
+ *    因此還有更早的歷史沒載完時，措辭改為「已載入 N 則」，全部載完才說「訊息 N 則」。
+ *    平台日後提供總數時，這裡改回單一措辭即可。
+ */
+const metaParts = computed<string[]>(() => {
+  const parts: string[] = [shortConversationId(conversationId.value)]
+  const created = createdAtLabel(view.detail.value?.createdAt)
+  if (created) parts.push(t('conversation.createdAt', { time: created }))
+  const n = view.messages.value.length
+  if (n > 0) {
+    parts.push(view.hasMore.value
+      ? t('conversation.messagesLoaded', { n })
+      : t('conversation.messagesTotal', { n }))
+  }
+  return parts
+})
+
+/**
+ * 撞單來源訊息（畫布 §8.3）—— 在訊息流上把「害你被攔下」的那幾則標出來。
+ * ⚠️ 只有 `agent`／`ai` 才有具體訊息；`unverified` 是「檢查本身失敗」，
+ *    沒有任何一則訊息可指，此時 `messages` 為空、不標任何東西。
+ */
+const collisionMessageIds = computed(
+  () => new Set((view.collision.value?.messages ?? []).map(m => m.id)),
+)
+
+const statusColor = computed(() => STATUS_COLOR[view.detail.value?.status ?? ''])
+const channelIcon = computed(() => CHANNEL_ICON[view.detail.value?.channel ?? ''])
+
+/**
+ * 收合態那一列的 presence 摘要（畫布 1c 的 `presenceShort`）。
+ *
+ * ⚠️ **措辭沿用 `ConversationPresenceBar` 的同一套保守標準**：只講「偵測到幾個人」，
+ *    沒偵測到時說「你正在檢視」而**不是**「沒有其他人」—— `mode` 的 `automation`
+ *    對「真的沒人」與「有人但唯讀」無法區分（§10.2），後者等於宣稱我們分得出來。
+ *    收合態字少，最容易把「保守」寫成「斷言」，這一行因此不可簡化成「1 人」。
+ */
+const presenceShort = computed(() => {
+  const p = view.presence.value
+  const others = p.operators.length + (p.unidentifiedActor ? 1 : 0)
+  return others === 0
+    ? t('presence.youViewing')
+    : t('presence.shortOthers', { n: others })
+})
 </script>
 
 <template>
@@ -190,7 +217,7 @@ const title = computed(() =>
     <div
       v-if="!sidebarCollapsed"
       class="shrink-0"
-      :style="{ width: `${sidebarWidth}px` }"
+      :style="{ width: `${sidebar.width.value}px` }"
     >
       <ConversationSidebar
         v-model:query="conversations.query"
@@ -206,145 +233,39 @@ const title = computed(() =>
         :error="conversations.error"
         @select="select"
         @refresh="conversations.load()"
+        collapsible
+        @collapse="sidebarCollapsed = true"
       />
     </div>
 
-    <div
+    <!-- 收合態：48px 窄直條（畫布 §8.1、D-21）。整欄消失的話，收合期間就沒有任何
+         「還有幾個對話、有沒有新訊息」的出口 —— 客服得先展開才知道要不要展開 -->
+    <ConversationSidebarCollapsed
+      v-else
+      :total="conversations.total"
+      :loaded="conversations.items.length"
+      :has-unread="conversations.unread.size > 0"
+      @expand="sidebarCollapsed = false"
+    />
+
+    <ConversationResizeHandle
       v-if="!sidebarCollapsed"
-      class="w-1 shrink-0 cursor-col-resize transition-colors"
-      :style="{ background: dragging ? 'var(--navy-2)' : 'transparent' }"
-      role="separator"
-      aria-orientation="vertical"
-      @pointerdown.prevent="startDrag"
+      :dragging="sidebar.dragging.value"
+      :value="sidebar.width.value"
+      :min="sidebar.min"
+      :max="sidebar.max"
+      :label="$t('layout.resizeSidebar')"
+      @pointerdown="sidebar.startDrag"
+      @keydown="sidebar.onKeydown"
     />
 
     <!-- ── 中欄：對話視窗 ── -->
     <section class="flex min-h-0 min-w-0 flex-1 flex-col">
-      <header
-        class="shrink-0 border-b px-4 py-2"
-        :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
-      >
-        <div class="flex items-center gap-2">
-          <button
-            type="button"
-            class="rounded-md p-1 transition-opacity hover:opacity-70"
-            :style="{ color: 'var(--text-3)' }"
-            :aria-label="sidebarCollapsed ? $t('sidebar.expand') : $t('sidebar.collapse')"
-            :title="sidebarCollapsed ? $t('sidebar.expand') : $t('sidebar.collapse')"
-            @click="sidebarCollapsed = !sidebarCollapsed"
-          >
-            <UIcon :name="sidebarCollapsed ? 'i-lucide-panel-left-open' : 'i-lucide-panel-left-close'" class="size-4" />
-          </button>
-
-          <h1 class="ac-mono min-w-0 truncate text-[1.03125rem] font-semibold">{{ title }}</h1>
-
-          <!--
-            兩個並列出口（FR-020、FR-022、SC-007）。
-            ⚠️ 憲法 8.1：「離開對話」與「結案」的差別 MUST 由**文案**讀得出來（下方輔助說明），
-               MUST NOT 只靠主／次按鈕的視覺層級表達 —— 視覺層級是強化，不是資訊本身。
-          -->
-          <div class="ml-auto flex shrink-0 items-center gap-2">
-            <template v-if="!view.viewerJoined.value">
-              <div class="relative flex">
-                <!--
-                  ⚠️ 畫布 §8.3 的主按鈕帶 `user-check` icon（13px、gap 6px）——
-                     這顆按鈕是整個標題列唯一的 primary 動作，icon 是它與旁邊次要按鈕的
-                     主要視覺區分，少了它在深色主題下更難一眼認出。
-                -->
-                <button
-                  type="button"
-                  class="ac-btn-primary flex h-8 items-center gap-1.5 rounded-r-none px-3 text-[0.9375rem]"
-                  :disabled="view.busy.value"
-                  @click="joinAs('manual')"
-                >
-                  <UIcon
-                    :name="view.busy.value ? 'i-lucide-loader-circle' : 'i-lucide-user-check'"
-                    class="size-3.5 shrink-0"
-                    :class="{ 'animate-spin': view.busy.value }"
-                  />
-                  {{ view.busy.value ? $t('conversation.joining') : $t('conversation.join') }}
-                </button>
-                <button
-                  type="button"
-                  class="ac-btn-primary h-8 rounded-l-none border-l border-white/20 px-1.5"
-                  :disabled="view.busy.value"
-                  :aria-label="$t('conversation.joinModeLabel')"
-                  :aria-expanded="joinMenuOpen"
-                  @click="joinMenuOpen = !joinMenuOpen"
-                >
-                  <UIcon name="i-lucide-chevron-down" class="size-4" />
-                </button>
-
-                <div
-                  v-if="joinMenuOpen"
-                  class="ac-card absolute right-0 top-9 z-20 w-72 p-1 text-left"
-                  role="menu"
-                >
-                  <button
-                    v-for="opt in ([
-                      { mode: 'manual', icon: 'i-lucide-user-round', label: $t('conversation.joinAsManual'), hint: $t('conversation.joinAsManualHint') },
-                      { mode: 'hybrid', icon: 'i-lucide-sparkles', label: $t('conversation.joinAsHybrid'), hint: $t('conversation.joinAsHybridHint') },
-                    ] as const)"
-                    :key="opt.mode"
-                    type="button"
-                    role="menuitem"
-                    class="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
-                    @click="joinAs(opt.mode)"
-                  >
-                    <UIcon :name="opt.icon" class="mt-0.5 size-4 shrink-0" :style="{ color: 'var(--text-3)' }" />
-                    <span class="min-w-0">
-                      <span class="block text-[0.9375rem]">{{ opt.label }}</span>
-                      <span class="block text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ opt.hint }}</span>
-                    </span>
-                  </button>
-                </div>
-              </div>
-            </template>
-
-            <template v-else>
-              <button
-                type="button"
-                class="flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
-                :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
-                :disabled="view.busy.value"
-                @click="view.leave()"
-              >
-                <UIcon name="i-lucide-log-out" class="size-4" />
-                {{ view.busy.value ? $t('conversation.leaving') : $t('conversation.leave') }}
-              </button>
-              <button
-                type="button"
-                class="ac-btn-primary flex h-8 items-center gap-1.5 px-3 text-[0.9375rem]"
-                :disabled="view.busy.value"
-                @click="view.closeConversation()"
-              >
-                <UIcon name="i-lucide-clipboard-check" class="size-4" />
-                {{ view.busy.value ? $t('conversation.closing') : $t('conversation.close') }}
-              </button>
-            </template>
-          </div>
-        </div>
-
-        <!-- 兩個出口的差別（憲法 8.1：資訊在文案裡，不在視覺層級裡） -->
-        <p
-          v-if="view.viewerJoined.value"
-          class="mt-1 text-right text-[0.8125rem]"
-          :style="{ color: 'var(--text-3)' }"
-        >
-          {{ $t('conversation.exitHint') }}
-        </p>
-
-        <div class="mt-1.5">
-          <ConversationModeSelect
-            :mode="view.control.value?.mode ?? null"
-            :disabled="!view.viewerJoined.value || view.busy.value"
-            :busy="view.busy.value"
-            @change="switchMode"
-          />
-        </div>
-      </header>
-
-      <!-- 即時更新中斷：靜默降級但必須讓使用者知道畫面可能不是最新的（憲法 3.2） -->
+      <!--
+        即時更新中斷：靜默降級但必須讓使用者知道畫面可能不是最新的（憲法 3.2）。
+        ⚠️ 位置在資訊列**之上**且**不隨收合消失** —— 「畫面可能不是最新的」在收合態
+           只會更難察覺（收合正是為了長時間讀訊息流），那時反而更需要這一條。
+      -->
       <p
         v-if="stream.degraded"
         class="ac-alert-warn flex shrink-0 items-center gap-2 px-4 py-1.5"
@@ -353,18 +274,227 @@ const title = computed(() =>
         <span>{{ $t('stream.offline') }}</span>
       </p>
 
-      <ConversationPresenceBar :presence="view.presence.value" />
+      <!--
+        對話資訊列的展開／收合（畫布 1c）—— 收合的是**標題列 ＋ 服務模式 ＋ Presence**
+        這一整組，不是只收其中一段。畫布把 Presence 列一起關在展開態裡，
+        收合態則把模式與 presence 各壓成一個徽記帶走（見 ConversationHeaderCollapsed）。
+      -->
+      <ConversationHeaderCollapsed
+        v-if="headerCollapsed"
+        :title="title"
+        :status="view.detail.value?.status"
+        :channel="view.detail.value?.channel"
+        :mode="view.control.value?.mode ?? null"
+        :presence-short="presenceShort"
+        :joined="view.viewerJoined.value"
+        :busy="view.busy.value"
+        @expand="headerCollapsed = false"
+        @join="joinAs('manual')"
+        @close="view.closeConversation()"
+      />
+
+      <template v-else>
+        <header
+          class="shrink-0 border-b px-4 py-2"
+          :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
+        >
+          <div class="flex items-center gap-2">
+            <!--
+              畫布 §8.3 標題列：頭像 ＋ 代號 ＋ status pill ＋ 頻道 pill，第二行是 meta。
+              ⚠️ 頭像／status 色／頻道 icon 與側欄共用 `app/utils/conversation-display.ts` ——
+                 兩處算法各寫一份時會長不一樣，而那不會有型別錯誤。
+            -->
+            <span
+              class="ac-mono flex size-8 shrink-0 items-center justify-center rounded-full text-[0.8125rem] font-semibold"
+              :style="{
+                background: avatarColor(title).bg,
+                color: avatarColor(title).fg,
+              }"
+              aria-hidden="true"
+            >{{ avatarLabel(title) }}</span>
+
+            <div class="flex min-w-0 flex-col gap-0.5">
+              <div class="flex min-w-0 items-center gap-2">
+                <h1 class="ac-mono min-w-0 truncate text-[1.03125rem] font-medium">{{ title }}</h1>
+
+                <span
+                  v-if="statusColor"
+                  class="flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.8125rem]"
+                  :style="{ background: statusColor.bg, color: statusColor.fg }"
+                >
+                  <span class="size-1 rounded-full" :style="{ background: statusColor.fg }" aria-hidden="true" />
+                  {{ view.detail.value?.status }}
+                </span>
+
+                <span
+                  v-if="view.detail.value?.channel"
+                  class="flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.8125rem]"
+                  :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
+                >
+                  <img
+                    v-if="channelIcon"
+                    :src="channelIcon"
+                    :alt="view.detail.value.channel"
+                    class="size-3 shrink-0 rounded-[3px] object-contain"
+                  >
+                  {{ view.detail.value.channel }}
+                </span>
+              </div>
+
+              <p class="ac-mono truncate text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+                {{ metaParts.join(' · ') }}
+              </p>
+            </div>
+
+            <!--
+              兩個並列出口（FR-020、FR-022、SC-007）。
+              ⚠️ 憲法 8.1：「離開對話」與「結案」的差別 MUST 由**文案**讀得出來（下方輔助說明），
+                 MUST NOT 只靠主／次按鈕的視覺層級表達 —— 視覺層級是強化，不是資訊本身。
+            -->
+            <div class="ml-auto flex shrink-0 items-center gap-2">
+              <template v-if="!view.viewerJoined.value">
+                <div class="relative flex">
+                  <!--
+                    ⚠️ 畫布 §8.3 的主按鈕帶 `user-check` icon（13px、gap 6px）——
+                       這顆按鈕是整個標題列唯一的 primary 動作，icon 是它與旁邊次要按鈕的
+                       主要視覺區分，少了它在深色主題下更難一眼認出。
+                  -->
+                  <button
+                    type="button"
+                    class="ac-btn-primary flex h-8 items-center gap-1.5 rounded-r-none px-3 text-[0.9375rem]"
+                    :disabled="view.busy.value"
+                    @click="joinAs('manual')"
+                  >
+                    <UIcon
+                      :name="view.busy.value ? 'i-lucide-loader-circle' : 'i-lucide-user-check'"
+                      class="size-3.5 shrink-0"
+                      :class="{ 'animate-spin': view.busy.value }"
+                    />
+                    {{ view.busy.value ? $t('conversation.joining') : $t('conversation.join') }}
+                  </button>
+                  <button
+                    type="button"
+                    class="ac-btn-primary h-8 rounded-l-none border-l border-white/20 px-1.5"
+                    :disabled="view.busy.value"
+                    :aria-label="$t('conversation.joinModeLabel')"
+                    :aria-expanded="joinMenuOpen"
+                    @click="joinMenuOpen = !joinMenuOpen"
+                  >
+                    <UIcon name="i-lucide-chevron-down" class="size-4" />
+                  </button>
+
+                  <div
+                    v-if="joinMenuOpen"
+                    class="ac-card absolute right-0 top-9 z-20 w-72 p-1 text-left"
+                    role="menu"
+                  >
+                    <button
+                      v-for="opt in ([
+                        { mode: 'manual', icon: 'i-lucide-user-round', label: $t('conversation.joinAsManual'), hint: $t('conversation.joinAsManualHint') },
+                        { mode: 'hybrid', icon: 'i-lucide-sparkles', label: $t('conversation.joinAsHybrid'), hint: $t('conversation.joinAsHybridHint') },
+                      ] as const)"
+                      :key="opt.mode"
+                      type="button"
+                      role="menuitem"
+                      class="flex w-full items-start gap-2 rounded-md px-2 py-2 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+                      @click="joinAs(opt.mode)"
+                    >
+                      <UIcon :name="opt.icon" class="mt-0.5 size-4 shrink-0" :style="{ color: 'var(--text-3)' }" />
+                      <span class="min-w-0">
+                        <span class="block text-[0.9375rem]">{{ opt.label }}</span>
+                        <span class="block text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ opt.hint }}</span>
+                      </span>
+                    </button>
+                  </div>
+                </div>
+              </template>
+
+              <template v-else>
+                <button
+                  type="button"
+                  class="flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
+                  :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
+                  :disabled="view.busy.value"
+                  @click="view.leave()"
+                >
+                  <UIcon name="i-lucide-log-out" class="size-4" />
+                  {{ view.busy.value ? $t('conversation.leaving') : $t('conversation.leave') }}
+                </button>
+                <button
+                  type="button"
+                  class="ac-btn-primary flex h-8 items-center gap-1.5 px-3 text-[0.9375rem]"
+                  :disabled="view.busy.value"
+                  @click="view.closeConversation()"
+                >
+                  <UIcon name="i-lucide-clipboard-check" class="size-4" />
+                  {{ view.busy.value ? $t('conversation.closing') : $t('conversation.close') }}
+                </button>
+              </template>
+            </div>
+          </div>
+
+          <!-- 兩個出口的差別（憲法 8.1：資訊在文案裡，不在視覺層級裡） -->
+          <p
+            v-if="view.viewerJoined.value"
+            class="mt-1 text-right text-[0.8125rem]"
+            :style="{ color: 'var(--text-3)' }"
+          >
+            {{ $t('conversation.exitHint') }}
+          </p>
+
+          <!--
+            收合鈕在**服務模式區塊的右下角**（畫布 2026-08-31 第三版：`position:absolute`
+            ＋ `right:14px; bottom:8px`，即該區塊 padding box 的右下角，與最後一行警語齊底）。
+
+            ⚠️ 不放標題列：那一排是「接手／離開／結案」這種有後果的動作，
+               把一顆純視覺的收合鈕擠進去會讓它看起來像同一類東西。
+            ⚠️ 用 `absolute` 而不是 flex 的第三個項目 —— 它要對齊的是**整個區塊的底部**
+               （警語那一行），不是模式按鈕那一列。畫布上一版就是放在按鈕列裡，這一版特地改掉了。
+            ⚠️ `pr-8` 是給按鈕讓出的空間：警語是可換行的整行文字，沒有這段留白會被按鈕壓住。
+          -->
+          <div class="relative mt-1.5 pr-8">
+            <ConversationModeSelect
+              :mode="view.control.value?.mode ?? null"
+              :disabled="!view.viewerJoined.value || view.busy.value"
+              :busy="view.busy.value"
+              @change="switchMode"
+            />
+            <button
+              type="button"
+              class="absolute bottom-0 right-0 flex size-6 items-center justify-center rounded-md border transition-opacity hover:opacity-70"
+              :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface)', color: 'var(--text-2)' }"
+              :aria-label="$t('conversation.collapseHeader')"
+              :aria-expanded="true"
+              :title="$t('conversation.collapseHeader')"
+              @click="headerCollapsed = true"
+            >
+              <UIcon name="i-lucide-chevrons-up" class="size-3.5" />
+            </button>
+          </div>
+        </header>
+
+        <ConversationPresenceBar :presence="view.presence.value" />
+      </template>
 
       <p v-if="view.error.value" class="ac-alert-warn mx-4 flex items-start gap-2 px-3 py-2">
         <UIcon name="i-lucide-alert-circle" class="mt-px size-3.5 shrink-0" />
         <span>{{ view.error.value }}</span>
       </p>
 
-      <div v-if="view.loading.value && view.messages.value.length === 0" class="flex-1 space-y-4 p-4">
+      <!--
+        1d 載入中（畫布 §9）：骨架泡泡 ＋ 底部一行「正在載入訊息…」。
+        ⚠️ 畫布寫的是「正在載入 **312** 則訊息…」，我方沒有那個數字 ——
+           訊息 API 只回一頁 ＋ hasMore，沒有總數。與其編一個數，不如不講。
+      -->
+      <div v-if="view.loading.value && view.messages.value.length === 0" class="flex min-h-0 flex-1 flex-col gap-4 p-4">
         <div v-for="n in 4" :key="n" class="space-y-2">
           <div class="ac-skel h-2.5 w-20" />
           <div class="ac-skel ac-skel-shimmer h-10" :style="{ width: `${70 - n * 7}%` }" />
         </div>
+        <p class="mt-auto flex items-center justify-center gap-2 text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">
+          <UIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+          {{ $t('conversation.loadingMessages') }}
+        </p>
       </div>
 
       <p
@@ -379,6 +509,8 @@ const title = computed(() =>
         v-else
         :messages="view.messages.value"
         :my-operator-id="auth.me?.operatorId"
+        :customer-label="view.detail.value?.name || view.detail.value?.contactId"
+        :collision-message-ids="collisionMessageIds"
         :loading-more="view.loadingMore.value"
         :has-more="view.hasMore.value"
         @load-older="view.loadOlder()"
@@ -416,6 +548,7 @@ const title = computed(() =>
         :sending="view.sending.value"
         :send-error="view.sendError.value"
         :collision="view.collision.value"
+        :initializing="view.loading.value && !view.control.value"
         :my-operator-id="auth.me?.operatorId"
         @send="send"
         @discard="discard"
@@ -439,13 +572,15 @@ const title = computed(() =>
     -->
     <template v-if="conversationId && panel.visible.value">
       <!-- 收合態沒有可調寬度，把手一併隱藏 -->
-      <div
+      <ConversationResizeHandle
         v-if="!panel.collapsed.value"
-        class="w-1 shrink-0 cursor-col-resize transition-colors"
-        :style="{ background: copilotDragging ? 'var(--navy-2)' : 'transparent' }"
-        role="separator"
-        aria-orientation="vertical"
-        @pointerdown.prevent="startCopilotDrag"
+        :dragging="copilotPane.dragging.value"
+        :value="copilotPane.width.value"
+        :min="copilotPane.min"
+        :max="copilotPane.max"
+        :label="$t('layout.resizeCopilot')"
+        @pointerdown="copilotPane.startDrag"
+        @keydown="copilotPane.onKeydown"
       />
 
       <!-- 收合態：窄直條（對照 docs/wireframe/03-workspace_toggleCopilot.png） -->
@@ -476,7 +611,7 @@ const title = computed(() =>
       <div
         v-else
         class="shrink-0 space-y-3 overflow-y-auto border-l p-3"
-        :style="{ width: `${copilotWidth}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
+        :style="{ width: `${copilotPane.width.value}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
       >
         <CopilotPanelHeader
           :collapsed="panel.collapsed.value"

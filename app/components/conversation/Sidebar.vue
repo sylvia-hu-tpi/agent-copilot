@@ -13,52 +13,11 @@
 import type { Conversation } from '#shared/types/conversation'
 import { someoneElseCanSend } from '#shared/types/conversation'
 
-/** 頭像色階：沿用既有 token 配對，不另外發明新色票 */
-const AVATAR_PALETTE = [
-  { bg: 'var(--navy-soft)', fg: 'var(--navy)' },
-  { bg: 'var(--active-bg)', fg: 'var(--active)' },
-  { bg: 'var(--ai-bg)', fg: 'var(--ai)' },
-  { bg: 'var(--agent-bg)', fg: 'var(--navy-2)' },
-  { bg: 'var(--warn-bg)', fg: 'var(--warn)' },
-  { bg: 'var(--open-bg)', fg: 'var(--open)' },
-] as const
-
-/** 依名稱／代號決定固定的頭像配色，同一對話每次渲染都要拿到同一組顏色 */
-function avatarColor(key: string): { bg: string, fg: string } {
-  let hash = 0
-  for (const ch of key) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length]!
-}
-
 /**
- * 頭像縮寫：`TWN#GW4772` 這類代號取 `#` 後兩個字母（如 `GW`）；
- * 真人姓名（如「高翊庭」）無此樣式，中文取首字、其餘取前兩碼並轉大寫。
+ * ⚠️ 頭像／status 色／頻道 icon 一律從 `app/utils/conversation-display.ts` 取，
+ *    **不要在這裡另寫一份** —— 中欄標題列用的是同一組規則，兩處長不一樣時
+ *    客服點進對話會看到「換了一個對話」的錯覺，而那不會有任何型別錯誤。
  */
-function avatarLabel(c: Conversation): string {
-  const src = (c.name || c.contactId || '').trim()
-  const coded = src.match(/#([a-zA-Z]{2})/)
-  if (coded) return coded[1]!.toUpperCase()
-  if (!src) return '?'
-  return /[一-鿿]/.test(src[0]!) ? src.slice(0, 1) : src.slice(0, 2).toUpperCase()
-}
-
-/**
- * 頻道 icon：自訂圖檔，放在 `public/icons/`（見檔名對應）。
- * 沒有對應圖檔的頻道維持原本的文字徽記。
- */
-/**
- * 對話 status 的圓點配色（畫布 §8.2 逐字）。
- * ⚠️ 未列出的 status **不畫圓點**——憑空給一個顏色等於發明一個設計稿沒有的狀態。
- */
-const STATUS_DOT: Record<string, string | undefined> = {
-  active: 'var(--active)',
-  open: 'var(--open)',
-}
-
-const CHANNEL_ICON: Record<string, string> = {
-  web: '/icons/channel-web.png',
-  line: '/icons/channel-line.png',
-}
 
 const props = defineProps<{
   items: Conversation[]
@@ -74,12 +33,20 @@ const props = defineProps<{
   hasMore: boolean
   /** 已載到背景輪詢的涵蓋上限 —— 要說明原因，不能只是讓按鈕消失 */
   atCoverageLimit: boolean
+  /**
+   * 這一頁支不支援收合側欄（畫布 §8.1 的收合鈕在搜尋列右側）。
+   *
+   * ⚠️ 首頁（`index.vue`）刻意**不給**：那一頁的內容就是這份清單，收掉它之後
+   *    整頁只剩一個空狀態，等於做出一個「把唯一內容藏起來」的按鈕。
+   */
+  collapsible?: boolean
 }>()
 
 const emit = defineEmits<{
   select: [string]
   refresh: []
   loadMore: []
+  collapse: []
   'update:query': [string]
 }>()
 
@@ -123,16 +90,28 @@ const visible = computed(() => {
   return props.items.filter(c => c.channel === f.value)
 })
 
-/** 分組鍵：畫布只畫了「今天／昨天」，更早的用日期本身當標題 */
-function groupKeyOf(c: Conversation): string {
+/**
+ * 分組：畫布只畫了「今天／昨天」，更早的用日期本身當標題。
+ *
+ * 回傳**兩個**值：`key` 是穩定的日期識別（收合狀態掛在它上面），
+ * `label` 是會隨時間改變的顯示文字。理由見函式內的說明。
+ */
+function groupKeyOf(c: Conversation): { key: string, label: string } {
   const iso = c.lastMessageAt ?? c.updatedAt
   const d = new Date(iso)
-  if (Number.isNaN(d.getTime())) return '—'
+  if (Number.isNaN(d.getTime())) return { key: '-', label: '—' }
   const day = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
   const diff = Math.round((day(new Date()) - day(d)) / 86_400_000)
-  if (diff <= 0) return '今天'
-  if (diff === 1) return '昨天'
-  return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
+  /*
+    ⚠️ **`key` 是日期本身，不是顯示文字。** 收合狀態掛在 `key` 上，而顯示文字會變
+       ——今天的那一組明天就叫「昨天」。用文字當 key 的話，跨過午夜或使用者長時間開著
+       分頁時，收合狀態會**留在「今天」這個位置上**而不是跟著那批對話走，
+       看起來就像自己跳到別組去了。這不會有型別錯誤。
+  */
+  const key = `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`
+  if (diff <= 0) return { key, label: '今天' }
+  if (diff === 1) return { key, label: '昨天' }
+  return { key, label: `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}` }
 }
 
 /**
@@ -141,15 +120,34 @@ function groupKeyOf(c: Conversation): string {
  *    重排會讓側欄的順序與其他地方不一致。
  */
 const sections = computed(() => {
-  const out: Array<{ key: string, items: Conversation[] }> = []
+  const out: Array<{ key: string, label: string, items: Conversation[] }> = []
   for (const c of visible.value) {
-    const key = groupKeyOf(c)
+    const { key, label } = groupKeyOf(c)
     const last = out.at(-1)
     if (last && last.key === key) last.items.push(c)
-    else out.push({ key, items: [c] })
+    else out.push({ key, label, items: [c] })
   }
   return out
 })
+
+/**
+ * 日期區間的收合（畫布 §8.2，2026-08-31 新增）。
+ *
+ * ⚠️ **記「收起來的」而不是「展開的」** —— 新的一天會長出新的區間，
+ *    存展開集合的話新區間預設會是收合的（不在集合裡），而預設必須是展開。
+ *
+ * ⚠️ **刻意不存 `localStorage`**（左右欄與中欄資訊列都有存）。
+ *    這裡的 key 是日期，存下去等於在瀏覽器裡累積一份永遠不會被清掉的舊日期清單，
+ *    而「三週前那天是收合的」對明天的工作沒有任何意義。畫布也只是元件狀態。
+ */
+const collapsedGroups = ref(new Set<string>())
+
+function toggleGroup(key: string): void {
+  // ⚠️ 換一個新的 Set —— 直接 mutate 的話 `has()` 的依賴追蹤不會觸發重繪
+  const next = new Set(collapsedGroups.value)
+  if (!next.delete(key)) next.add(key)
+  collapsedGroups.value = next
+}
 
 /**
  * 列項時間 —— 畫布 §8.2 是**絕對時間** `14:32`，不是相對時間。
@@ -159,6 +157,17 @@ const sections = computed(() => {
  * ⚠️ 只給時分、不給日期是安全的——跨日由日期分組標題（今天／昨天／MM/DD）承擔。
  *    若日後拿掉分組，這裡必須一併補上日期，否則昨天 14:32 與今天 14:32 看起來一樣。
  */
+/**
+ * 「清除搜尋與篩選」（畫布 §9）。
+ * ⚠️ 只有真的有東西可清才顯示按鈕 —— 見 template 的說明。
+ */
+const canClear = computed(() => query.value.trim() !== '' || filter.value.kind !== 'all')
+
+function clearFilters(): void {
+  query.value = ''
+  filter.value = { kind: 'all' }
+}
+
 function clockTime(iso?: string): string {
   if (!iso) return ''
   const d = new Date(iso)
@@ -195,6 +204,21 @@ function clockTime(iso?: string): string {
       >
         <UIcon name="i-lucide-refresh-cw" class="size-3.5" :class="{ 'animate-spin': loading }" />
       </button>
+
+      <!-- 收合鈕（畫布 §8.1）：在搜尋列右側，不在中欄標題列 —— 收合的對象是這一欄，
+           按鈕就該在這一欄上，而不是在被它擠開的那一欄上 -->
+      <button
+        v-if="collapsible"
+        type="button"
+        class="flex size-[30px] shrink-0 items-center justify-center rounded-lg border transition-opacity hover:opacity-70"
+        :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
+        :aria-label="$t('sidebar.collapse')"
+        :aria-expanded="true"
+        :title="$t('sidebar.collapse')"
+        @click="emit('collapse')"
+      >
+        <UIcon name="i-lucide-panel-left-close" class="size-3.5" />
+      </button>
     </div>
 
     <!--
@@ -229,7 +253,7 @@ function clockTime(iso?: string): string {
           : { border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
         @click="filter = { kind: 'status', value: st }"
       >
-        <span class="size-1.5 shrink-0 rounded-full" :style="{ background: STATUS_DOT[st] }" aria-hidden="true" />
+        <span class="size-1.5 shrink-0 rounded-full" :style="{ background: STATUS_COLOR[st]?.fg }" aria-hidden="true" />
         {{ st }} {{ counts[st] }}
       </button>
 
@@ -261,31 +285,92 @@ function clockTime(iso?: string): string {
       <span>{{ error }}</span>
     </p>
 
+    <!-- 骨架：畫布 §9 是 **6 列**，每列為圓形頭像 ＋ 兩行文字 —— 列數與形狀都照抄，
+         否則載入完成的瞬間版面會抽動一下（骨架與真實列不同高） -->
     <div v-else-if="loading && items.length === 0" class="space-y-3 p-3">
-      <div v-for="n in 5" :key="n" class="space-y-1.5">
-        <div class="ac-skel ac-skel-shimmer h-3" :style="{ width: `${70 - n * 6}%` }" />
-        <div class="ac-skel h-2 w-1/3" />
+      <div v-for="n in 6" :key="n" class="flex items-center gap-2.5">
+        <div class="ac-skel size-[30px] shrink-0 rounded-full" />
+        <div class="flex-1 space-y-1.5">
+          <div class="ac-skel ac-skel-shimmer h-2.5 w-[64%]" />
+          <div class="ac-skel h-2 w-[86%]" />
+        </div>
       </div>
     </div>
 
-    <p
+    <!--
+      清單為空（畫布 §9 / 1d-empty）：icon ＋ 標題 ＋ 說明 ＋「清除搜尋與篩選」。
+      ⚠️ 按鈕**只在真的有東西可清時才出現**。組織本來就沒有對話時按它不會有任何變化，
+         那種「按了沒反應」的按鈕比沒有按鈕更讓人懷疑系統壞了。
+    -->
+    <div
       v-else-if="visible.length === 0"
-      class="px-3 py-8 text-center text-[0.90625rem]"
-      :style="{ color: 'var(--text-3)' }"
+      class="flex flex-col items-center gap-2 px-5 py-8 text-center"
     >
-      {{ $t('sidebar.empty') }}
-    </p>
+      <UIcon name="i-lucide-search-x" class="size-5" :style="{ color: 'var(--text-3)' }" />
+      <p class="text-[0.90625rem] font-medium">{{ $t('sidebar.emptyTitle') }}</p>
+      <p class="text-[0.84375rem] leading-relaxed" :style="{ color: 'var(--text-2)' }">
+        {{ $t('sidebar.emptyHint') }}
+      </p>
+      <button
+        v-if="canClear"
+        type="button"
+        class="mt-1 h-7 rounded-lg border px-2.5 text-[0.84375rem]"
+        :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface-2)', color: 'var(--text)' }"
+        @click="clearFilters"
+      >
+        {{ $t('sidebar.clearFilters') }}
+      </button>
+    </div>
 
     <div v-else class="min-h-0 flex-1 overflow-y-auto">
       <template v-for="section in sections" :key="section.key">
-        <!-- 日期分組（畫布 §8.2）：sticky，捲動時仍看得到目前在哪一天 -->
+        <!--
+          日期分組（畫布 §8.2）：sticky，捲動時仍看得到目前在哪一天。
+          右端是收合鈕（畫布 2026-08-31 新增）—— 20×20、無邊框、透明底，
+          hover 才浮出 `--surface-3`。它是次要控制項，常態下不該與列項搶注意力。
+        -->
         <div
-          class="sticky top-0 z-[1] border-b px-3 py-1 text-[0.8125rem] font-bold tracking-[.08em]"
-          :style="{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-3)' }"
+          class="sticky top-0 z-[1] flex items-center gap-2 border-b py-[3px] pl-3 pr-1.5"
+          :style="{ background: 'var(--surface-2)', borderColor: 'var(--border)' }"
         >
-          {{ section.key }}
+          <span
+            class="text-[0.8125rem] font-bold tracking-[.08em]"
+            :style="{ color: 'var(--text-3)' }"
+          >{{ section.label }}</span>
+
+          <span class="min-w-0 flex-1" />
+
+          <!--
+            ⚠️ 收合後**必須讓「裡面還有幾個」看得見**（畫布只畫了箭頭）。
+               收起來之後那一整批對話從畫面上消失，沒有數量的話這一列等於在說
+               「這裡什麼都沒有」——而客服收合的目的正是「先擱著，等一下回來看」。
+               同一個理由已經用在左欄收合態的徽記上（D-21）。
+          -->
+          <span
+            v-if="collapsedGroups.has(section.key)"
+            class="ac-mono shrink-0 text-[0.75rem]"
+            :style="{ color: 'var(--text-3)' }"
+          >{{ section.items.length }}</span>
+
+          <button
+            type="button"
+            class="ac-group-toggle flex size-5 shrink-0 items-center justify-center rounded-[5px]"
+            :aria-expanded="!collapsedGroups.has(section.key)"
+            :aria-label="collapsedGroups.has(section.key)
+              ? $t('sidebar.expandGroup', { date: section.label })
+              : $t('sidebar.collapseGroup', { date: section.label })"
+            :title="collapsedGroups.has(section.key)
+              ? $t('sidebar.expandGroupHint')
+              : $t('sidebar.collapseGroupHint')"
+            @click="toggleGroup(section.key)"
+          >
+            <UIcon
+              :name="collapsedGroups.has(section.key) ? 'i-lucide-chevron-down' : 'i-lucide-chevron-up'"
+              class="size-3.5"
+            />
+          </button>
         </div>
-        <ul>
+        <ul v-if="!collapsedGroups.has(section.key)">
           <li v-for="c in section.items" :key="c.id">
         <button
           type="button"
@@ -304,7 +389,7 @@ function clockTime(iso?: string): string {
             <span
               class="ac-mono flex size-7 shrink-0 items-center justify-center rounded-full text-[0.8125rem] font-semibold"
               :style="{ background: avatarColor(c.name || c.contactId).bg, color: avatarColor(c.name || c.contactId).fg }"
-            >{{ avatarLabel(c) }}</span>
+            >{{ avatarLabel(c.name || c.contactId) }}</span>
 
             <span class="ac-mono min-w-0 truncate text-[0.9375rem] font-medium">
               {{ c.name || c.contactId }}
@@ -317,9 +402,9 @@ function clockTime(iso?: string): string {
               ⚠️ 憲法 8.1：顏色不是唯一資訊來源，故一律帶 title/aria-label。
             -->
             <span
-              v-if="STATUS_DOT[c.status]"
+              v-if="STATUS_COLOR[c.status]"
               class="size-1.5 shrink-0 rounded-full"
-              :style="{ background: STATUS_DOT[c.status] }"
+              :style="{ background: STATUS_COLOR[c.status]?.fg }"
               :title="c.status"
               :aria-label="c.status"
             />
@@ -401,3 +486,28 @@ function clockTime(iso?: string): string {
     </div>
   </aside>
 </template>
+
+<style scoped>
+/*
+ * 日期分組的收合鈕 —— 畫布逐字：常態 `--text-3` ＋ 透明底，
+ * hover 才是 `--surface-3` 底 ＋ `--text-2` 字。
+ *
+ * ⚠️ 寫在 CSS 而不是 `:style` ＋ `hover:` utility：**inline style 會蓋過 hover class**，
+ *    顏色用 `:style` 綁上去的話 hover 那半永遠不會生效（而且不會報錯）。
+ */
+.ac-group-toggle {
+  color: var(--text-3);
+  transition: background-color .12s ease, color .12s ease;
+}
+
+.ac-group-toggle:hover {
+  background: var(--surface-3);
+  color: var(--text-2);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ac-group-toggle {
+    transition: none;
+  }
+}
+</style>

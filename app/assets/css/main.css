@@ -124,6 +124,62 @@ body {
 }
 
 /*
+ * 捲軸 —— 畫布的**每一個**捲動容器都逐字帶著同一組值
+ * （左欄清單、訊息流、右欄面板、建議卡與附件的內捲區，無一例外）：
+ *
+ *     scrollbar-width: thin;
+ *     scrollbar-color: var(--border-strong) transparent;
+ *
+ * ⚠️ **寬度刻意偏離畫布：改用固定 8px**（2026-08-31 使用者裁示）。
+ *    `thin` 的實際像素由瀏覽器決定（Chromium 約 11px、Firefox 約 12px），
+ *    標準屬性沒有再調細的手段，而使用者判定那個寬度在四欄並排時過重。
+ *    畫布只寫了 `thin`、沒有給 px 值，所以這是**我方補上的數字**，不是對齊畫布 ——
+ *    日後畫布若給出 px 值，以畫布為準。（已記入 docs/DESIGN_FEEDBACK.md）
+ *
+ * ⚠️ **兩套規則不能並存在同一個元素上。** Chromium 只要看到 `scrollbar-width` 或
+ *    `scrollbar-color` 是非初始值，就會**整組忽略** `::-webkit-scrollbar`。
+ *    因此標準屬性用 `@supports not selector(::-webkit-scrollbar)` 關進 Firefox 專用分支，
+ *    Chromium／Safari 走 webkit 那組。寫成兩者都給，等於 Chromium 永遠拿不到 8px。
+ *
+ * ⚠️ 顏色 MUST 用 `var(--border-strong)`，不可寫死 `#cfd4dc`：
+ *    深色主題的 `--border-strong` 是 `#3a4250`，寫死會在深色主題留下一條淺灰捲軸。
+ *
+ * ⚠️ 這兩個標準屬性**會繼承**，webkit 那組則是對所有元素生效，
+ *    兩邊都不必逐一標註捲動容器 —— 日後新增捲動容器不會漏掉。
+ *    漏掉的症狀是「只有那一欄的捲軸比較寬」，不報錯也沒有型別錯誤，只能靠眼睛抓。
+ */
+@supports not selector(::-webkit-scrollbar) {
+  html {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 4px;
+}
+
+/* 滑鼠移上去時稍微加深，讓「這條可以拖」看得出來 */
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-3);
+}
+
+/* 兩軸交會的小方塊預設是淺灰實心，不處理會在深色主題變成一個亮點 */
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/*
  * 瀏覽器對 <button> 的預設游標是箭頭而非手指（不同於 <a>），
  * Tailwind preflight 也不會補上 —— 專案內所有可點擊的 button 因此都要靠這條規則，
  * 而不是逐一在元件上補 cursor-pointer class。

@@ -96,6 +96,14 @@ export interface Conversation {
    *    必須退回逐對話輪詢（見 `PollingMessageSource` 的 `listCovered`）。
    */
   lastMessageAt?: string
+  /**
+   * 對話建立時間（畫布 §8.3 中欄 meta 列「建立於 08/25 13:58」）。
+   *
+   * ⚠️ 與 `lastMessageAt` 不同，這一個實測填充率 **100%**
+   *    （`scripts/spike/out/08-D1-conversation-shape.json`：`created_at`），
+   *    因此 meta 列不需要為「拿不到」另備一套呈現。
+   */
+  createdAt?: string
   updatedAt: string
 }
 

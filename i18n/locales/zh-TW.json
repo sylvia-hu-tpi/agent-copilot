@@ -8,7 +8,7 @@
     "refresh": "重新整理",
     "loading": "載入中…",
     "search": "搜尋對話…",
-    "loadMore": "載入更早的訊息",
+    "loadMore": "載入較早的訊息",
     "justNow": "剛剛",
     "minutesAgo": "{n} 分鐘前",
     "hoursAgo": "{n} 小時前"
@@ -18,7 +18,6 @@
   },
   "sidebar": {
     "title": "對話",
-    "empty": "沒有符合的對話。",
     "loadFailed": "讀取對話清單失敗",
     "unread": "有新訊息",
     "filter": "依狀態篩選",
@@ -29,17 +28,26 @@
     "sortedBy": "依最新訊息排序",
     "coverageLimit": "只列出最近 {n} 筆；更早的請用上方搜尋",
     "collapse": "收合側欄",
-    "expand": "展開側欄"
+    "expand": "展開側欄",
+    "collapseGroup": "收合{date}的對話",
+    "expandGroup": "展開{date}的對話",
+    "collapseGroupHint": "收合此日期區間",
+    "expandGroupHint": "展開此日期區間",
+    "emptyTitle": "找不到符合的對話",
+    "emptyHint": "客戶僅有代號，請輸入完整代號片段（例：GW4772）或清除篩選。",
+    "clearFilters": "清除搜尋與篩選"
   },
   "stream": {
     "connecting": "連線中…",
     "reconnecting": "連線中斷，重新連線中…",
     "resyncing": "正在補齊斷線期間的訊息…",
-    "offline": "即時更新已中斷。畫面上的內容可能不是最新的。"
+    "offline": "即時更新已中斷。畫面上的內容可能不是最新的。",
+    "connected": "已連線"
   },
   "presence": {
     "inThisConversation": "在此對話中",
     "youViewing": "你正在檢視",
+    "shortOthers": "你＋{n} 人",
     "lastUpdated": "最後更新 {time}",
     "viewing": "正在檢視",
     "composing": "正在輸入…",
@@ -76,27 +84,44 @@
     "close": "結案",
     "closing": "結案中…",
     "closeFailed": "結案失敗",
-    "exitHint": "離開＝僅退出不寫入・結案＝產生摘要供確認後寫入",
+    "exitHint": "離開＝僅退出不寫入 · 結案＝產生摘要供確認後寫入",
     "joinFailed": "加入對話失敗",
     "leaveFailed": "離開對話失敗",
     "empty": "這個對話還沒有訊息。",
     "loadFailed": "讀取訊息失敗",
     "notFound": "找不到這個對話",
-    "selectPrompt": "從左側選擇一個對話開始。",
-    "messageCount": "共 {n} 則訊息"
+    "createdAt": "建立於 {time}",
+    "messagesTotal": "訊息 {n} 則",
+    "messagesLoaded": "已載入 {n} 則",
+    "loadingMessages": "正在載入訊息…",
+    "dateToday": "{date}（今天）",
+    "dateYesterday": "{date}（昨天）",
+    "sentSecondsAgo": "{n} 秒前送出",
+    "sentMinutesAgo": "{n} 分鐘前送出",
+    "noneSelected": "尚未選擇對話",
+    "noneSelectedHintBefore": "從左側列表選擇一個對話開始處理。標記",
+    "noneSelectedHintAfter": "的對話代表客戶正在等待回覆，建議優先處理。",
+    "openOldestActive": "處理最舊的 active 對話",
+    "collapseHeader": "收合對話資訊列",
+    "expandHeader": "展開對話資訊列",
+    "jumpToLatest": "回到最新訊息"
   },
   "sender": {
     "customer": "客戶",
     "agent": "客服",
-    "ai": "AI",
+    "ai": "AI 自動回覆",
     "unknown": "未知來源",
-    "workflowInternal": "AI 內部訊息（客戶收不到）"
+    "workflowInternal": "AI 內部訊息（客戶收不到）",
+    "agentRole": "真人客服",
+    "agentRoleMine": "真人客服 · 你"
   },
   "attachment": {
-    "image": "圖片",
-    "pdf": "PDF",
-    "file": "檔案",
-    "noPreview": "（此版本尚無法預覽附件，僅顯示檔名）"
+    "desc": {
+      "image": "圖片 · 可預覽縮圖",
+      "pdf": "PDF · 檔名僅供辨識，無法預覽",
+      "file": "舊型附件 · 僅有檔名，無法預覽"
+    },
+    "download": "下載"
   },
   "composer": {
     "placeholder": "輸入回覆…",
@@ -110,7 +135,8 @@
     "notJoined": "尚未接手此對話，無法輸入回覆。請先點右上角「接手對話」。",
     "readonlyAutomation": "這個對話目前是「全自動（唯讀）」模式，任何人都無法送出訊息。",
     "locked": "{name} 已強制介入此對話。",
-    "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。"
+    "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。",
+    "initializing": "連線建立後才可輸入"
   },
   "copilot": {
     "summary": {
@@ -153,7 +179,9 @@
       "alert": {
         "frustrated": "客戶情緒：挫折",
         "angry": "客戶情緒：生氣"
-      }
+      },
+      "scale": "情緒量表",
+      "scaleNow": "情緒量表，目前為「{label}」"
     },
     "suggestion": {
       "title": "AI 即時回覆建議",
@@ -181,11 +209,13 @@
       "supersededBy": {
         "agent": "同事已回覆類似內容",
         "ai": "AI 已回覆類似內容"
-      }
+      },
+      "rationale": "推薦理由：{text}",
+      "requiresData": "需補：{fields} — 帶入前請先填寫"
     },
     "knowledgeSearch": {
       "title": "知識庫快查",
-      "placeholder": "輸入問題查詢知識庫…",
+      "placeholder": "用一句話問，例：發票補寄要多久",
       "empty": "尚未輸入查詢",
       "noResults": "查無相關結果",
       "notJoined": "需先加入對話才能使用",
@@ -224,5 +254,14 @@
     "review": "先看最新訊息",
     "draftHeld": "草稿已保留 · 送出鍵已鎖定",
     "secondsAgo": "{n} 秒前"
+  },
+  "layout": {
+    "resizeHint": "拖曳調整寬度",
+    "resizeSidebar": "調整對話列表寬度",
+    "resizeCopilot": "調整 Copilot 面板寬度"
+  },
+  "auth": {
+    "logout": "登出",
+    "accountMenu": "帳號選單"
   }
 }

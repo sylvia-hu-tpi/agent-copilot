@@ -13,7 +13,7 @@ import type { KnowledgeHit } from '#shared/types/knowledge'
 const props = defineProps<{ conversationId: string }>()
 const emit = defineEmits<{ insert: [text: string] }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 const conversationId = computed(() => props.conversationId)
 const search = useKnowledgeSearch(conversationId)
 
@@ -24,9 +24,17 @@ function isStale(updatedAt: string | null): boolean {
   return ms > 365 * 24 * 60 * 60 * 1000
 }
 
+/**
+ * 更新日期 —— 畫布 2a 是 `2026/05`（年／月，等寬字），不是完整日期。
+ *
+ * ⚠️ 只到月份是刻意的：知識庫文件的「更新日」精確到天並不會改變客服的判斷
+ *    （要判斷的是「這份夠不夠新」），而完整日期在 420px 寬的面板裡會逼標題再縮一截。
+ */
 function formatDate(updatedAt: string | null): string {
   if (!updatedAt) return t('copilot.knowledgeSearch.updatedAtUnknown')
-  return new Date(updatedAt).toLocaleDateString(locale.value)
+  const d = new Date(updatedAt)
+  if (Number.isNaN(d.getTime())) return t('copilot.knowledgeSearch.updatedAtUnknown')
+  return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
 /** ref（sourceRef.ref）→ 展開全文取回的片段列表；只有按過「展開全文」的項目才有值 */
@@ -51,13 +59,21 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
   <CopilotBlockShell :title="t('copilot.knowledgeSearch.title')">
     <div class="space-y-3">
 
-    <input
-      v-model="search.query.value"
-      type="text"
-      class="w-full rounded-lg border px-3 py-2 text-[0.9375rem]"
-      :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
-      :placeholder="t('copilot.knowledgeSearch.placeholder')"
+    <!-- 畫布 2a：搜尋框內含放大鏡 icon、`--surface-2` 底、`--border-strong` 框 -->
+    <div
+      class="flex h-9 items-center gap-2 rounded-lg border px-2.5"
+      :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface-2)' }"
     >
+      <UIcon name="i-lucide-search" class="size-3.5 shrink-0" :style="{ color: 'var(--text-3)' }" />
+      <input
+        v-model="search.query.value"
+        type="text"
+        class="h-full w-full bg-transparent text-[0.90625rem] outline-none placeholder:opacity-70"
+        :style="{ color: 'var(--text)' }"
+        :aria-label="t('copilot.knowledgeSearch.title')"
+        :placeholder="t('copilot.knowledgeSearch.placeholder')"
+      >
+    </div>
 
     <!-- 需先 JOIN -->
     <p v-if="search.notJoined.value" class="ac-alert-warn flex items-start gap-2 px-3 py-2">
@@ -101,7 +117,7 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
         <div class="flex items-center justify-between gap-2">
           <span class="text-[0.9375rem] font-medium">{{ hit.title }}</span>
           <span
-            class="flex items-center gap-1 text-[0.8125rem]"
+            class="ac-mono flex shrink-0 items-center gap-1 text-[0.8125rem]"
             :style="{ color: isStale(hit.updatedAt) ? 'var(--warn)' : 'var(--text-3)' }"
           >
             <UIcon v-if="isStale(hit.updatedAt)" name="i-lucide-alert-triangle" class="size-3" />
@@ -117,22 +133,33 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
           <p class="text-[0.75rem]" :style="{ color: 'var(--text-3)' }">{{ t('copilot.knowledgeSearch.expandDisclaimer') }}</p>
         </div>
 
-        <div class="flex justify-end gap-2">
+        <!--
+          畫布 2a 的按鈕列**靠左**，且「插入為回覆」在前、「展開全文」在後（無框、帶 chevron）。
+          ⚠️ 兩顆都不是 primary —— 快查的每一筆都是候選，把其中一顆做成 primary
+             等於暗示「就選這個」，而知識庫命中排序沒有強到可以那樣暗示。
+        -->
+        <div class="flex items-center gap-2">
           <button
             type="button"
-            class="h-7 rounded-lg border px-2.5 text-[0.8125rem]"
-            :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
-            :disabled="expanding[hit.sourceRef.ref]"
-            @click="onExpand(hit)"
-          >
-            {{ t('copilot.knowledgeSearch.expand') }}
-          </button>
-          <button
-            type="button"
-            class="ac-btn-primary h-7 px-2.5 text-[0.8125rem]"
+            class="h-6 rounded-md border px-2 text-[0.84375rem] transition-opacity hover:opacity-70"
+            :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface-2)', color: 'var(--text)' }"
             @click="emit('insert', hit.snippet)"
           >
             {{ t('copilot.knowledgeSearch.insert') }}
+          </button>
+          <button
+            type="button"
+            class="flex h-6 items-center gap-1 px-1 text-[0.84375rem] transition-opacity hover:opacity-70 disabled:opacity-50"
+            :style="{ color: 'var(--text-2)' }"
+            :disabled="expanding[hit.sourceRef.ref]"
+            @click="onExpand(hit)"
+          >
+            <UIcon
+              :name="expanding[hit.sourceRef.ref] ? 'i-lucide-loader-circle' : 'i-lucide-chevron-down'"
+              class="size-3"
+              :class="{ 'animate-spin': expanding[hit.sourceRef.ref] }"
+            />
+            {{ t('copilot.knowledgeSearch.expand') }}
           </button>
         </div>
       </li>

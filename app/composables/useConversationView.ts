@@ -37,6 +37,8 @@ interface ConversationDetailResponse {
     mode: ConversationControl['mode']
     teamConversationId?: string
     viewerJoined: boolean
+    /** 畫布 §8.3 meta 列的「建立於 …」。實測填充率 100%，見 shared/types/conversation.ts */
+    createdAt?: string
   }
   control: ConversationControl
   presence: PresenceSnapshot

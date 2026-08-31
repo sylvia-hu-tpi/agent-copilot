@@ -74,8 +74,8 @@ const lastUpdatedText = computed(() => (
 
 <template>
   <div
-    class="flex min-h-[30px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-[0.875rem]"
-    :style="{ color: 'var(--text-3)' }"
+    class="flex min-h-[34px] flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-1.5 text-[0.875rem]"
+    :style="{ color: 'var(--text-3)', background: 'var(--surface-2)', borderColor: 'var(--border)' }"
   >
     <span class="ac-status-label shrink-0">{{ t('presence.inThisConversation') }}</span>
 

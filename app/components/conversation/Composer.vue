@@ -26,6 +26,14 @@ const props = defineProps<{
   sendError: string | null
   collision: CollisionReport | null
   draft: string
+  /**
+   * 對話詳情還沒回來（畫布 §9 / 1d：「連線建立後才可輸入」）。
+   *
+   * ⚠️ **這個狀態不能併進 `composerBlockReason()`。** 那支函式回答的是「授權上為什麼
+   *    不能送」，而載入中根本還不知道答案 —— 併進去等於在資料還沒到之前就宣稱
+   *    「尚未接手此對話」，那是**猜的**，而且多數情況下猜錯（客服點進來的多半是自己已接手的）。
+   */
+  initializing?: boolean
   myOperatorId?: string
 }>()
 
@@ -55,7 +63,7 @@ const blockedReason = computed(() => composerBlockReason({
   myOperatorId: props.myOperatorId,
 }))
 
-const disabled = computed(() => blockedReason.value !== null || props.sending)
+const disabled = computed(() => props.initializing || blockedReason.value !== null || props.sending)
 
 const value = computed({
   get: () => props.draft,
@@ -106,9 +114,19 @@ defineExpose({ focus })
       @review="emit('dismissCollision')"
     />
 
+    <!-- 載入中：還不知道能不能送，只講「還沒好」，不編一個理由 -->
+    <div
+      v-if="initializing"
+      class="flex items-center gap-2 rounded-md border px-2.5 py-1.5 text-[0.875rem]"
+      :style="{ background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text-2)' }"
+    >
+      <UIcon name="i-lucide-loader-circle" class="size-3.5 shrink-0 animate-spin" />
+      <span>{{ t('composer.initializing') }}</span>
+    </div>
+
     <!-- ① 不能送出時，一定要說明是哪一種原因 -->
     <div
-      v-if="blockedReason"
+      v-else-if="blockedReason"
       class="flex items-start gap-2 rounded-md border px-2.5 py-1.5 text-[0.875rem]"
       :style="{
         background: 'var(--surface-2)',
@@ -140,7 +158,7 @@ defineExpose({ focus })
         v-model="value"
         rows="2"
         :disabled="disabled"
-        :placeholder="blockedReason ? t('composer.placeholderReadonly') : t('composer.placeholder')"
+        :placeholder="initializing ? t('composer.initializing') : blockedReason ? t('composer.placeholderReadonly') : t('composer.placeholder')"
         :aria-label="t('composer.placeholder')"
         class="max-h-40 min-h-[42px] w-full resize-y bg-transparent text-[0.96875rem] leading-relaxed outline-none placeholder:opacity-60 disabled:cursor-not-allowed"
         :style="{ color: 'var(--text)' }"

@@ -81,7 +81,57 @@ const alertLabel = computed<'frustrated' | 'angry' | null>(() => {
 })
 
 const alertColor = computed(() => (alertLabel.value === 'angry' ? 'var(--danger)' : 'var(--warn)'))
+const alertBg = computed(() => (alertLabel.value === 'angry' ? 'var(--danger-bg)' : 'var(--warn-bg)'))
+const alertBd = computed(() => (alertLabel.value === 'angry' ? 'var(--danger-bd)' : 'var(--warn-bd)'))
 const strokeColor = computed(() => (alertLabel.value ? alertColor.value : 'var(--navy-2)'))
+
+/**
+ * 情緒量表圖例（畫布 2a：五段橫條，目前所在區間以
+ * `box-shadow: inset 0 -3px 0 <色>` 的底線強調）。
+ *
+ * ⚠️ **標籤用中文，不用畫布的 `calm`／`neutral`／…英文。** 與 D-17（語氣標籤）
+ *    同一個理由：這是給客服看的即時輔助，不是給工程師看的列舉值。
+ *    i18n 的 `copilot.sentiment.label.*` 早就是這五個中文詞，沿用同一組不另立。
+ * ⚠️ 「生氣」在畫布上是反白的 `--warn`，這裡改用 `--danger` 系 ——
+ *    FR-003 要求「挫折」與「生氣」可互相區分，兩級共用 `--warn` 就分不出來了。
+ */
+const SCALE = [
+  { key: 'calm', fg: 'var(--active)', bg: 'var(--active-bg)' },
+  { key: 'neutral', fg: 'var(--text-2)', bg: 'var(--surface-2)' },
+  { key: 'concerned', fg: 'var(--open)', bg: 'var(--open-bg)' },
+  { key: 'frustrated', fg: 'var(--warn)', bg: 'var(--warn-bg)' },
+  { key: 'angry', fg: 'var(--danger)', bg: 'var(--danger-bg)' },
+] as const
+
+/** 目前落在量表的哪一段 —— 取最新的一個評分點，沒有點就不強調任何一段 */
+const currentLabel = computed(() => {
+  for (let i = props.block.timeline.length - 1; i >= 0; i--) {
+    const e = props.block.timeline[i]!
+    if (e.kind === 'point') return e.label
+  }
+  return null
+})
+
+/**
+ * 分數與走向（畫布 2a：`score 0.72 ↑`）。
+ *
+ * ⚠️ **我方的 score 是 0–100，畫布示範的是 0.72（0–1）。這裡照我方的刻度顯示 72，
+ *    不做 /100 的換算** —— 換算出來的 `0.72` 與 `SentimentPoint.score` 的定義不一致，
+ *    對照日誌或 API 回應時會變成兩套數字。
+ */
+/** 折線末端（最新的一個評分點）—— 供圖上的實心端點 */
+const lastPoint = computed(() => pointsOnly.value.at(-1) ?? null)
+
+const scoreText = computed(() => {
+  const pts = pointsOnly.value
+  const last = lastPoint.value
+  if (!last) return null
+  const prev = pts.at(-2)
+  const arrow = !prev || last.entry.score === prev.entry.score
+    ? '→'
+    : last.entry.score > prev.entry.score ? '↑' : '↓'
+  return `score ${Math.round(last.entry.score)} ${arrow}`
+})
 
 const hasContent = computed(() => props.block.timeline.length > 0)
 
@@ -131,16 +181,25 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
       </button>
     </template>
 
-    <!-- 示警：顏色＋圖示＋文字三者並呈（FR-003、憲法 8.1），frustrated／angry 可互相區分 -->
-    <p
-      v-if="alertLabel"
-      class="mt-2 flex items-center gap-1.5 text-[0.90625rem] font-medium"
-      :style="{ color: alertColor }"
-      aria-live="polite"
-    >
-      <UIcon :name="alertLabel === 'angry' ? 'i-lucide-flame' : 'i-lucide-alert-triangle'" class="size-4 shrink-0" />
-      <span>{{ t(`copilot.sentiment.alert.${alertLabel}`) }}</span>
-    </p>
+    <!--
+      示警 pill（畫布 2a）：圓角膠囊、`--warn` 系底＋框，顏色＋圖示＋文字三者並呈
+      （FR-003、憲法 8.1），frustrated／angry 可互相區分。
+      右側是走勢分數 `score NN ↑` —— 畫布把兩者放在同一列。
+    -->
+    <div v-if="alertLabel || scoreText" class="mt-2 flex items-center gap-2">
+      <span
+        v-if="alertLabel"
+        class="flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1 text-[0.90625rem] font-medium"
+        :style="{ color: alertColor, background: alertBg, borderColor: alertBd }"
+        aria-live="polite"
+      >
+        <UIcon :name="alertLabel === 'angry' ? 'i-lucide-flame' : 'i-lucide-alert-triangle'" class="size-3.5 shrink-0" />
+        {{ t(`copilot.sentiment.alert.${alertLabel}`) }}
+      </span>
+      <span v-if="scoreText" class="ac-mono ml-auto shrink-0 text-[0.78125rem]" :style="{ color: 'var(--text-3)' }">
+        {{ scoreText }}
+      </span>
+    </div>
 
     <!-- empty：尚無可分析內容（FR-009） -->
     <p v-if="block.status === 'empty'" class="mt-3 text-[0.9375rem]" :style="{ color: 'var(--text-3)' }">
@@ -181,6 +240,23 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
           />
         </svg>
 
+        <!--
+          折線末端的實心圓點（畫布 2a：`circle r=2.6`）——「現在在哪」是這張圖最重要的
+          一個位置，而折線的尾端在 50 點壓縮之後很難一眼定位。
+          ⚠️ 用 CSS 的絕對定位而非 SVG `<circle>`：SVG 的 `preserveAspectRatio="none"`
+             會把圓點壓成橢圓（viewBox 是 100×100、實際容器是寬扁的）。
+        -->
+        <span
+          v-if="lastPoint && pointsOnly.length > 1"
+          class="absolute size-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+          :style="{
+            left: `${lastPoint.xPct}%`,
+            top: `${100 - lastPoint.entry.score}%`,
+            background: strokeColor,
+          }"
+          aria-hidden="true"
+        />
+
         <!-- 恰好一個評分點：畫不出折線，但那個分數本身仍是資訊，以圓點呈現而非留白 -->
         <span
           v-if="singlePoint"
@@ -209,6 +285,55 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
       <p v-if="singlePoint" class="mt-2 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
         {{ t('copilot.sentiment.singlePoint') }}
       </p>
+
+      <!--
+        走勢文字摘要（畫布 2a、D-19）。
+        ⚠️ `narrative` 為 `null` 時**整段不顯示**（尚未產出／產出失敗／只有一個評分點）——
+           不放預設句、不放骨架。這一段是次要內容，缺了不影響上面的分數與示警，
+           而一個永遠佔位的空框會讓客服以為系統壞了。
+        ⚠️ `advice` 與 `trend` 同段呈現（畫布是一整段），但 `advice` 加粗 ——
+           客服真正要用的是那一句，走勢那半在折線圖上已經看得到。
+      -->
+      <p
+        v-if="block.narrative"
+        class="mt-2.5 text-[0.875rem] leading-relaxed"
+        :style="{ color: 'var(--text-2)' }"
+      >
+        {{ block.narrative.trend }}
+        <span class="font-medium" :style="{ color: 'var(--text)' }">{{ block.narrative.advice }}</span>
+      </p>
+
+      <!--
+        情緒量表圖例（畫布 2a）：五段等寬橫條，目前所在區間以底線強調。
+        ⚠️ 強調用的是 `inset 0 -3px 0`（底線）而不是換底色 —— 五段本來就各有底色，
+           再換一次色會讓「目前在哪一段」與「這一段代表什麼」兩件事混在一起。
+      -->
+      <div
+        class="mt-2.5 flex overflow-hidden rounded-lg border"
+        :style="{ borderColor: 'var(--border)' }"
+        role="img"
+        :aria-label="currentLabel ? t('copilot.sentiment.scaleNow', { label: t(`copilot.sentiment.label.${currentLabel}`) }) : t('copilot.sentiment.scale')"
+      >
+        <!--
+          ⚠️ 條件用**展開**而不是 `key: cond ? x : undefined` —— 後者會讓 Vue 執行
+             `style.borderLeft = ''`，而把**簡寫屬性**設成空字串等於 `removeProperty()`，
+             會連帶清掉同一個物件稍早寫入的長寫。這裡目前沒有東西可被清掉
+             （元素上沒有 border utility），但同樣的寫法在 MessageBubble.vue 已經真的
+             造成過一條多餘的深色左框，寫法統一才不會下次又中。詳見該檔的註解。
+        -->
+        <span
+          v-for="(seg, i) in SCALE"
+          :key="seg.key"
+          class="flex-1 py-1 text-center text-[0.78125rem]"
+          :class="{ 'font-bold': seg.key === currentLabel }"
+          :style="{
+            color: seg.fg,
+            background: seg.bg,
+            ...(i === 0 ? {} : { borderLeft: '1px solid var(--border)' }),
+            ...(seg.key === currentLabel ? { boxShadow: `inset 0 -3px 0 ${seg.fg}` } : {}),
+          }"
+        >{{ t(`copilot.sentiment.label.${seg.key}`) }}</span>
+      </div>
 
       <p v-if="block.status === 'error'" class="ac-alert-warn mt-2 flex items-start gap-2 px-3 py-2">
         <UIcon name="i-lucide-alert-circle" class="mt-px size-3.5 shrink-0" />
