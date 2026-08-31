@@ -462,6 +462,35 @@ setCookie(event, 'ac_session', signed(sessionId), {
 | Session TTL | **8 小時滑動視窗** | 客服常共用工作站，30 天 token 直接對應到瀏覽器是高風險 |
 | Token 過期 | 偵測 401 → 清 session → 導回登入 | **URL 保留 `conversationId`，登入後回到原處** |
 
+### 7.2b 客服的顯示名稱 —— **平台沒有人名，只有 email**
+
+> ⚠️ **實測結論（2026-08-31）**：我們探測過的兩個來源都拿不到客服的人名。
+> 這不是我方的對應寫錯，而是資料本身就沒有。
+
+| 來源 | 欄位 | 實測 |
+|---|---|---|
+| `loginWithOtp()` 的回應 | `display_name`／`name` | **兩個欄位都不存在** → `server/services/imbrace.ts` 退回 `email` |
+| `conversations.get()` 的 `users[]`（團隊名冊） | `display_name` | **12/12 全部是 email 格式**（`scripts/spike/out/03-operators-snapshot.json`，兩個對話的樣本，經 `scrubPii()` 全數命中 email 規則） |
+
+**影響三個位置**，全都是客服彼此辨識的關鍵處：頂列的「我是誰」、
+presence 列的「誰在這個對話裡」（`server/services/directory.ts`）、訊息泡泡上的真人客服姓名。
+
+#### 三條處理原則
+
+1. **MUST NOT 從 email 推導人名。** `agent.lin@company.com` → 「Lin」在同名同姓、
+   共用信箱、非英文名字的情況下都會產生錯的名字 —— 而**認錯同事**正是撞單防護（§10.4）
+   與 presence（§10.2）最不能出錯的地方。這與「查不到名字時用通稱、不可編一個名字」
+   （`directory.ts`）是同一條規則。
+2. **頭像縮寫可以用 email，那是縮寫不是名字。** `avatarLabel()` 取前兩碼只是一個視覺錨點，
+   不宣稱那是誰的姓名，因此不受上一條約束。
+   ⚠️ 頂列（`app/layouts/console.vue`）因此**只放頭像**，姓名／email 文字收進下拉選單 ——
+   畫布畫的是頭像＋常駐姓名，但我們沒有人名可放，把一串 email 攤在頂列上
+   既佔寬度、又讓「身分」看起來像一個沒設定好的欄位。這是刻意偏離畫布的決定。
+3. **這是待對方回覆的問題，不是待實作的功能** —— 見 `IMBRACE_QUESTIONS.md` 的 **H-9**：
+   平台有沒有讓 operator 設定顯示名稱的地方、有沒有單一使用者資料端點。
+   若對方回覆「設計上就只有 email」，我方改為**明示地**顯示 email
+   （例如加上「以帳號顯示」的說明），而不是繼續讓它看起來像一個名字。
+
 ### 7.3 SDK Client Factory
 
 每個請求依 session 中的 token 建立 client：
@@ -582,17 +611,35 @@ export interface KnowledgeProvider {
 export interface AIProvider {
   summarize(input: { history: Message[]; previousSummary?: ConversationSummary }): Promise<ConversationSummary>
   analyzeSentiment(input: { messages: Message[] }): Promise<SentimentPoint[]>
-  suggest(input: { history: Message[]; knowledgeHits: KnowledgeHit[] }): Promise<SuggestionCard[]>
+  narrateSentiment(input: { points: Array<Pick<SentimentPoint, 'score' | 'label' | 'drivers'>> }): Promise<SentimentNarrative>
+  suggest(input: { history: Message[]; knowledgeHits: KnowledgeHit[]; aiReplies: boolean }): Promise<SuggestionCard[]>
 }
 ```
 
-> **2026-08-27**：`suggest()` 尚未落地（建議卡屬後續功能），目前 `shared/types/copilot.ts` 的
-> `AIProvider` 介面只有 `summarize`／`analyzeSentiment` 兩個方法——刻意不預先加上用不到的方法，
-> 等建議卡動工時再擴充（見該檔案內的介面註解）。
+> **2026-08-31 更新**：上面四個方法**全部已落地**。
+> （先前這裡寫著「`suggest()` 尚未落地」，那是 2026-08-27 的狀態，
+> `specs/002-suggestion-knowledge-search` 完成後就不成立了。）
+>
+> ### `narrateSentiment()` 的三條硬性規則
+>
+> 它產出情緒區塊的一段走勢文字摘要（畫布 2a「近 3 輪情緒持續上升…建議先安撫語氣…」）。
+> 這是**唯一一個被允許失敗而不影響所屬區塊狀態**的 AI 呼叫，因此規則要寫清楚：
+>
+> 1. **輸入是評分結果，不是訊息原文。** 走勢與建議可以從 `score`／`label`／`drivers` 推出來；
+>    重送一次全部訊息只是把同一批個資再送一趟，prompt 也長好幾倍（憲法 1.5 的精神）。
+> 2. **分數先發、敘述後補。** 折線與示警是有時效的（客戶正在生氣），MUST NOT 為了一段散文
+>    多等一次 AI 往返。`finishSentimentSuccess()` 先發 `ready`（`narrative: null`），
+>    `narrateSentimentTrend()` 完成後再發一次。
+> 3. **失敗一律吞掉，`sentimentBlock` 維持 `ready`。** 分數與示警是這個區塊的主體，
+>    為了一段敘述把折線圖一起打掉是本末倒置。
+>
+> ⚠️ 另有一條同樣重要的資料規則：**新的評分點落地時 `narrative` MUST 歸零**。
+> 敘述描述的是「當時那條時間軸」，多了幾點之後「近 3 輪持續上升」可能已經不成立——
+> 留著舊敘述是在畫面上放一句可能已經錯了的斷言，而空白只是暫時沒有資訊。
 
 | 順位 | 實作 | 狀態 |
 |---|---|---|
-| 1 | `ImbraceAgentProvider` | ✅ **已實作**（`server/services/ai/imbrace-agent-provider.ts`，2026-08-27）——呼叫 `aiAgent.streamChat`，兩個 agent 由使用者於 iMBrace 後台手動建立（`AgentCopilot_摘要_agent`／`AgentCopilot_情緒評分_agent`，`assistant_id` 存於 `.env.local` 的 `IMBRACE_SUMMARY_AGENT_ID`／`IMBRACE_SENTIMENT_AGENT_ID`）。結構化輸出靠 prompt（非平台原生 `response_format`），Zod 驗證 + 重試 + 降級見 §11.7 與下方「JSON 抽取」小節。實測 `summarize()`／`analyzeSentiment()` 各連續 9/9 次成功（`scripts/spike/16-verify-copilot-provider.ts`，含真實語意品質，如「客戶多次反應網路斷線」正確標出 `repeat_contact`／`churn` 風險旗標） |
+| 1 | `ImbraceAgentProvider` | ✅ **已實作**（`server/services/ai/imbrace-agent-provider.ts`，2026-08-27）——呼叫 `aiAgent.streamChat`，兩個 agent 由使用者於 iMBrace 後台手動建立（`AgentCopilot_摘要_agent`／`AgentCopilot_情緒評分_agent`，`assistant_id` 存於 `.env.local` 的 `IMBRACE_SUMMARY_AGENT_ID`／`IMBRACE_SENTIMENT_AGENT_ID`）。結構化輸出靠 prompt（非平台原生 `response_format`），Zod 驗證 + 重試 + 降級見 §11.7 與下方「JSON 抽取」小節。⚠️ `narrateSentiment()` 與 `analyzeSentiment()` **共用同一個情緒 agent**（`IMBRACE_SENTIMENT_AGENT_ID`），只是 prompt 不同——沒有為它另開一個 agent，因為那會多一個要在後台手動建立、且忘了建就整段安靜消失的相依。實測 `summarize()`／`analyzeSentiment()` 各連續 9/9 次成功（`scripts/spike/16-verify-copilot-provider.ts`，含真實語意品質，如「客戶多次反應網路斷線」正確標出 `repeat_contact`／`churn` 風險旗標） |
 | 開發期／降級 | `MockAIProvider` | ✅ 保留——`useAIProvider()` 缺 `IMBRACE_API_KEY`／組織 id／兩個 agent id 任一項時自動退回，並印出警告（`server/services/ai/index.ts`），供沒有正式憑證的開發環境使用 |
 | 備援 | `VikiAIProvider` | 🟡 介面已預留，未實作——打 viki public API，`SuggestionCard.confidence` 會開始有真實值 |
 
@@ -1738,6 +1785,29 @@ boards.linkItems()                                      # 關聯至 Contact
 
 > ⚠️ 「只畫 50 點」不等於「只留 50 點」。評分點本身必須全數保留——`ClosureSummary.sentimentTrough` 要的是**全程**最低點，若只留最近 50 點，它會安靜地算成「近期最低點」，而且要到 M3 寫進 Data Board 之後才會被發現。保留成本極低（每點只有分數、標籤與幾個關鍵詞），真正昂貴的是產生它的 AI 呼叫，那筆錢已經花了。詳見 `specs/001-sentiment-panel/spec.md` FR-015。
 
+#### ⚠️ 虛擬滾動的高度契約 —— 一個沒有任何自動檢查看得見的地雷
+
+`useVirtualList` 用 `itemHeight(index)` 決定 wrapper 的高度與每一列的位移。
+**估算偏高或偏低都會壞，而且症狀完全不同，兩種都不會報錯**：
+
+| 偏誤 | 症狀 |
+|---|---|
+| **低估** | 實際內容溢出 wrapper ⇒ 容器的 `scrollHeight` 永遠比 wrapper 宣告的大 ⇒ 每往下捲一點就渲染出更多內容、`scrollHeight` 又長高 ⇒ **永遠捲不到底**，「回到最新訊息」按鈕永遠不消失 |
+| **高估** | wrapper 宣告的高度大於實際內容 ⇒ **底部留下一大段空白**（約等於「每列高估量 × 列數」，300 則時是數百 px） |
+
+> 2026-08-31 一天之內兩個方向各踩過一次：先是改了 `MessageBubble` 的版面（發送者列補代號／pill、
+> 附件改成圖示卡）而沒回頭調常數 → 低估；接著把常數往上調過頭 → 高估。
+
+**因此「寧可高估」是錯的，沒有安全的偏誤方向。** 現行作法是**量測回饋**：
+渲染後量每一列的 `offsetHeight` 存進一個 `shallowRef` 的 Map，`itemHeight()` 優先讀它
+（`totalHeight`／`offsetTop` 都是 `computed`，讀響應式資料就會自己重算）。
+估算只服務「還沒渲染過」的列 —— 那只影響捲軸長度，不影響視窗內的正確性。
+⚠️ **欄寬改變時 MUST 清掉量測結果**（文字會重新斷行），而左右兩欄都可拖曳（§14.1）。
+
+> ⚠️ **這一類 bug 對 `typecheck`／`vitest`／`smoke` 完全隱形** —— jsdom 沒有版面計算，
+> `offsetHeight` 恆為 0，量不出任何東西。唯一的檢查方式是**真的用眼睛看**。
+> 動到 `MessageBubble.vue` 的版面之後，請實際捲一個長對話到底部確認。
+
 ### 14.7 i18n
 
 第一版即導入 `@nuxtjs/i18n`，預設 `zh-TW`。即使目前只有繁中，文案集中管理對客服系統仍然重要——事後補 i18n 是最痛的重構之一。
@@ -1885,25 +1955,38 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 **時效與行為**
 
-- [ ] JOIN 後 3 秒內面板區塊出現並標示分析中（不要求該時點已有實質內容）
+- [x] JOIN 後 3 秒內面板區塊出現並標示分析中（不要求該時點已有實質內容）
+      —— `analyzing` 事件在任何 AI 呼叫 resolve 之前就發布，時點不取決於模型延遲
+      （`test/copilot-analysis.test.ts`「analyzing 事件在 AIProvider 呼叫 resolve 之前已發布」）
 - [ ] JOIN 後 10 秒內**摘要與情緒**的實質內容呈現（90 百分位，可逐欄漸進填入）
-      ⚠️ 真實環境計時從未執行（002 `tasks.md` T069）
+      ⚠️ **M2 唯一未驗的項目**：真實環境計時從未執行。假 gateway ＋ Mock provider 量到的是
+      自己設的 `suggestDelayMs`，不是真實 AI 呼叫，因此 002 刻意不列自動化任務——這是取捨不是漏做
 - [x] JOIN 後 **20 秒**內首批建議卡呈現（90 百分位）
       2026-08-29 實測 n=12：p90 **10.5 秒**、12/12 在 20 秒內（004 T032）。
-      ⚠️ 門檻 2026-08-29 由 10 秒改為 20 秒（建議卡 agent 單次生成 p90 10.31 秒，10 秒必然不過；
-      摘要／情緒餘裕充足，不跟著放寬）。⚠️ 此處量的是**第一批可用的卡**；帶 SOP 來源的版本
-      由 004 第二段換上，最慢實測 33.4 秒（上限 50 秒），兩者是不同門檻
-- [ ] 一鍵帶入可用，且帶入後仍會做撞單檢查
-- [ ] 背景對話重算情緒與建議卡但**不重算摘要**，且並行數未超過上限（憲法 6.2）
-- [ ] 切換至背景對話時立即顯示已更新的情緒與建議卡（不得空白或重新產生），僅摘要於此時補跑並標示「更新中」
-- [ ] 知識庫快查回傳含標題與更新日期（或「更新日期未知」）的結果，不顯示獨立編號；
+      ⚠️ 門檻是 20 秒不是 10 秒（建議卡 agent 單次生成 p90 就有 10.31 秒），**不要調回去**；
+      摘要／情緒餘裕充足，不跟著放寬。
+      ⚠️ 此處量的是**第一批可用的卡**；帶 SOP 來源的版本由 004 第二段換上，最慢實測 33.4 秒
+      （上限 50 秒），兩者是不同門檻
+- [x] 一鍵帶入可用，且帶入後仍會做撞單檢查
+      （`test/suggestion-send-path.test.ts`：insert 與手動輸入寫進同一個 `draft.text`，
+      因此必然走同一條撞單檢查；介面上不存在可「略過檢查」的參數）
+- [x] 背景對話重算情緒與建議卡但**不重算摘要**，且並行數未超過上限（憲法 6.2）
+      （`test/copilot-analysis.test.ts`「背景並行與 debounce（US4）」：FR-019／FR-020，
+      並斷言 `BACKGROUND_CONCURRENCY_LIMIT` 滿載時超額對話不執行、也不顯示為錯誤）
+- [x] 切換至背景對話時立即顯示已更新的情緒與建議卡（不得空白或重新產生），僅摘要於此時補跑並標示「更新中」
+      （`stream.get.ts` attach 時先送快照再 `catchUpSummaryIfStale()`；
+      `SummaryCard.vue` 於 `ready → analyzing` 保留舊內容疊加「更新中」）
+- [x] 知識庫快查回傳含標題與更新日期（或「更新日期未知」）的結果，不顯示獨立編號；
       空白查詢不觸發呼叫；「查無結果」與「尚未輸入查詢」視覺可區分
+      （`test/knowledge-search-api.test.ts` 斷言四種狀態在 API 層即互斥可辨；
+      `KnowledgeSearch.vue` 的 `formatDate()` 在 `updatedAt` 為 null／不合法時顯示「更新日期未知」）
 - [x] AI 失敗時訊息流與 Composer 完全可用（2026-08-28 實測：三區塊全數失敗逾 20 分鐘期間，
       中欄照常收發、草稿在離開對話後仍保留）
 - [x] 建議卡的 `sopId` 不在白名單即整卡丟棄（2026-08-29 實測：10 次帶命中的第二段生成中
       2 次整批捨棄、2 次部分捨棄）。⚠️ 「通過」指**防線有效**，不是模型不會杜撰——
       44% 的呼叫至少含一張杜撰引用，該品質問題另案（004 spec SC-002）
-- [ ] `confidence` 無真實分數來源時留空，不得以模型自評頂替（§11.6②）
+- [x] `confidence` 無真實分數來源時留空，不得以模型自評頂替（§11.6②）
+      （`forceNullConfidence()` 在 Zod 之後強制覆寫；`test/suggestion-whitelist.test.ts`）
 - [x] Copilot 面板可見性依 003 FR-016～FR-017b：未 JOIN 時整欄不呈現、JOIN 時展開可收合、
       收合狀態 per 客服 per 對話存 `localStorage`，且伺服器不推分析事件給未 JOIN 的連線（FR-016a）
       ⚠️ FR-016a 的真實環境驗證**缺一組第二個客服帳號**（真實登入是 email + OTP），
@@ -1914,25 +1997,17 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [x] SC-002：離開或結案後 5 秒內不再有新分析事件，中欄與草稿不受影響
       ⚠️ 5 秒時窗以 `smoke:realtime` ⑥ 的自動化量測為準，真實環境未逐秒計時
 
-**UI 與設計核對**
+**UI 與設計核對**（逐項紀錄見 `docs/M2-UI-PARITY.md`，該檔為暫時性工作清單）
 
 - [x] 中欄標題列改為狀態驅動的兩態（未接手→「接手對話」＋下拉；已接手→「離開對話」＋「結案」），
-      已對照 `docs/wireframe/03-workspace_assignment01/02/_lightTheme.png`（003 T032）
-- [ ] Copilot 面板五大區塊（`SummaryCard.vue`、`SentimentGauge.vue`、建議卡、知識庫快查、
-      對話紀錄／結案摘要——**後者尚未實作**）之圖示、色票、文案與 `error`／`retrying` 狀態，
-      已對照 Claude Design 畫布 artboard 2a（`docs/DESIGN_TOKENS.md` §7）逐一核實；
-      有落差者已訂正或已記錄不採用的理由。
-      ✅ 2026-08-29：§7 已由肉眼讀圖升級為**逐字規格**（元件原始檔在 artifact 的 manifest 裡，
-      解法見該文件附錄），先前「須向畫布擁有者索取 `CopilotPanel.dc.html`」的前置條件已消失。
-      ⚠️ 核對時特別注意 §7.5 訂正表的兩項：附件有**第三型**「舊型附件 · 僅有檔名，無法預覽」，
-      以及 `COPILOT` 徽章是 **10.5px** 而非 eyebrow 的 11px
-- [ ] 左側清單（`Sidebar.vue`）與中欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、
-      `PresenceBar.vue`、`ModeSelect.vue`）已對照畫布 artboard 1c 核實。
-      ⚠️ 1c **不只兩張**：另有 10 個狀態變體（未接手／兩欄收合／撞單／結案五態等），
-      核對範圍 MUST 涵蓋全部；索引見 `DESIGN_TOKENS.md`「1c 的狀態變體」。
-      ✅ 2026-08-29：1c 已有**逐字規格**（`DESIGN_TOKENS.md` §8，含版面尺寸、三欄各自的文案、
-      撞單攔截與結案各態），先前「只有截圖、須向畫布擁有者取得規格」的封鎖已解除。
-      **仍不得憑既有 token 臨場判斷後就視為已核實** —— 現在有逐字規格可比，這條只會更嚴格
+      已對照畫布 artboard 1c（003 T032）
+- [x] Copilot 面板（artboard 2a）五個區塊的圖示、色票、文案與 `error`／`retrying` 狀態逐一核實完成。
+      ⚠️ **摘要卡是第六個區塊，畫布上完全沒有**——目前的樣子由實作自訂，已列入 `DESIGN_FEEDBACK.md` C-4
+      向 Design 索取設計。對話紀錄／結案摘要屬 M3
+- [x] 左側清單（`Sidebar.vue`）與中欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、
+      `PresenceBar.vue`、`ModeSelect.vue`）已對照畫布 artboard 1c 及其 10 個狀態變體核實完成。
+      ⚠️ 唯一未關閉的是 **1c-C6 夾帶檔案按鈕（M3 範圍**，且卡在 `IMBRACE_QUESTIONS.md` H-6c
+      附件送出流程未知）。刻意背離畫布之處（字級、WCAG AA 的等效混色等）記於 `DESIGN_FEEDBACK.md`
 
 **未修的缺陷**（皆為真實環境挖出、皆不報錯；已決議另開 005 收，不阻塞 004）
 
@@ -1944,39 +2019,22 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       移除時無條件 filter，同一客服關掉一個分頁即歸零 → `deleteCopilotSession()` 被呼叫。
       ⚠️ 同一函式裡的 `pipeline.refs` **有** refcount 且正確——同一件事兩個計數器給出不同答案，
       這個不變式破裂本身就是 bug 的形狀。症狀較輕：錨點不再前推，自己送出的訊息會被當新訊息再 fan-out
-- [x] **`runColdStart()` 重啟復原缺口已修**（2026-08-29）：`CopilotAnalysisState` 原本只由
-      `join.post.ts` 建立，而平台側的 JOIN 是持久的。伺服器重啟後客服畫面仍顯示「已接手」、
-      面板照常展開，但 `runIncremental()` 卡在 `if (!state) return` → **面板永遠空白、無日誌、
-      不報錯**，唯一復原方式是客服自己想到 LEAVE 再 JOIN。
-      修法：`sendAnalysisSnapshotAndResume()` 發現沒有狀態時補跑冷啟動（`recoverColdStart()`，
-      限已 JOIN 的連線）。代價是重啟後每個已 JOIN 且有連線的對話各跑一次冷啟動，
-      刻意接受——它換回的正是 JOIN 當初承諾的東西。M4 換 Redis 後此路徑不再觸發
-- [x] **第一層清單輪詢從頭到尾沒有跑過已修**（2026-08-29 由 `smoke:realtime` ⑤ 定位並修復）：
-      症狀是 ⑤ 的客戶訊息要 **15019ms** 才被偵測到——分毫不差等於 `POLL_BACKGROUND_JOINED_MS`，
-      即第二層自己的計時器。
-      **根因（兩個缺陷相乘）**：① runtime 由最先到的請求建立（`join.post.ts` 也會建），
-      那一刻還沒有任何憑證，`fetchConversationList()` 靜默回空陣列；
-      ② `intervalMs()` 只在排下一拍時算一次，那一拍因此照**背景 30 秒**排，
-      之後客服上線、切回前景都不會讓它變快。整場 smoke（9.4 秒）第一層只 tick 過一次、
-      `conversations.search()` **零筆**，所有偵測其實都由第二層完成。詳見 §9.3.1 的警告。
-      **修法**：`ConversationListPoller.wake()` ＋ `credentials.ts` 的 `onCredentialUpgrade()`
-      通知（相依方向維持 `copilot-runtime → credentials`，不得反向 import）。
-      ⚠️ **先前記錄的兩個候選都已證偽**，留在此處以免有人重走：假 gateway 的 `_search` **有**
-      正確更新 `last_message_at` 與 `updated_at`（只是從沒被呼叫）；`LIST_PAGE_SIZE` 分頁也不成立
-      （假 gateway 只有 1 個對話、limit 是 100）。
-      ⚠️ **兩層在前景都是 3 秒**，所以 ① 的「3007ms」其實是第二層量到的——
-      這個巧合正是缺陷藏了那麼久的原因，改動任一層的頻率前要記得它。
-      ⚠️ 修復前一併發現：`test/nitro-harness.ts`／`test/smoke-http.ts` 只轉發伺服器的 stderr，
-      stdout 開了管線卻沒人讀——`console.log` 的探針完全看不到，而且緩衝區滿了會**阻塞伺服器程序**。
-      兩支都已補上排空
-- [x] **`SentimentGauge.vue` 恰好 1 點的空白框已修**（2026-08-29）：`hasContent` 用
-      `timeline.length > 0` 決定是否渲染，折線卻要 `pointsOnly.length > 1`；恰好 1 點時走進
-      繪圖分支卻畫不出線，呈現一個 64px 高、無數字無文字的空白框。補上「有資料但不足以繪圖」
-      這個狀態——以圓點呈現那一個分數（分數本身仍是資訊，不該留白）＋一行說明
 - [ ] **自動恢復不補算先前失敗的批次**：故障排除後由新發言觸發的恢復走 `runIncremental()`，
       只拿到新訊息，先前失敗那批的情緒點永久缺席（除非重新 JOIN 走冷啟動）。
-      `SENTIMENT_CHUNK_SIZE` 的註解只承諾了手動 `retryBlock()` 會全部重算，未涵蓋這條路徑。
-      實測即因此讓 timeline 只剩 1 點，連帶觸發上一條的空白框
+      `SENTIMENT_CHUNK_SIZE` 的註解只承諾了手動 `retryBlock()` 會全部重算，未涵蓋這條路徑
+
+**已修的缺陷**（2026-08-29；此處只留一行索引與仍然有效的教訓）
+
+- [x] **`runColdStart()` 重啟復原缺口**：平台側的 JOIN 是持久的，但 `CopilotAnalysisState` 原本只由
+      `join.post.ts` 建立 → 伺服器重啟後畫面仍顯示「已接手」、面板照常展開，卻**永遠空白、無日誌、
+      不報錯**。修法：`sendAnalysisSnapshotAndResume()` 對已 JOIN 的連線補跑 `recoverColdStart()`。
+      代價（重啟後每個已 JOIN 且有連線的對話各跑一次冷啟動）刻意接受；M4 換 Redis 後此路徑不再觸發
+- [x] **第一層清單輪詢從頭到尾沒有跑過**：由 `smoke:realtime` ⑤ 定位（客戶訊息 15019ms 才被偵測到，
+      分毫不差等於第二層自己的計時器）。**根因、修法與兩個已證偽的候選都寫進 §9.3.1**。
+      ⚠️ **兩層在前景都是 3 秒**，這個巧合正是缺陷藏那麼久的原因——改動任一層的頻率前要記得它
+- [x] **`SentimentGauge.vue` 恰好 1 點的空白框**：`hasContent` 用 `timeline.length > 0` 決定是否渲染，
+      折線卻要 `pointsOnly.length > 1`；恰好 1 點時走進繪圖分支卻畫不出線，呈現一個 64px 高、
+      無數字無文字的空白框。補上「有資料但不足以繪圖」狀態——以圓點呈現那一個分數＋一行說明
 
 **外部依賴**：無
 

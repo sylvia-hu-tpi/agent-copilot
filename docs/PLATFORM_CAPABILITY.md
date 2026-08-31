@@ -91,6 +91,7 @@
 | 對話 | 對話列表 | `conversations.search({businessUnitId})` | ✅ |
 | 對話 | 對話詳情（`tcu_` id / `mode` / `is_joined` / `users[]`） | `conversations.get(id)` → `GET /v1/team_conversations/{id}` | ✅ 裸 UUID 與 `conv_` 前綴皆可 |
 | 對話 | 該對話的 operator 清單 | 詳情的 `users[]` | ❌ 是團隊名冊，不是參與者（見 `ARCHITECTURE.md` §10.2） |
+| 使用者 | 客服的**人名** | `loginWithOtp()` 的 `display_name`／名冊的 `users[].display_name` | ❌ **兩處都只有 email**（登入回應無此欄位；名冊實測 12/12 為 email）。見 §7.2b 與 `IMBRACE_QUESTIONS.md` H-9 |
 | 對話 | ~~以對話 id 反查詳情~~ | ~~`conversations.getByConversationId`~~ | ❌ 兩種 id 形式皆回 `{data:[],total:0}`，**不要用**；改用 `conversations.get(id)` |
 | 對話 | 未處理佇列／檢視計數／可邀請同事 | `getOutstanding`／`getViewsCount`／`getInvitableUsers` | ✅ |
 | 訊息 | 取單一對話訊息 | `GET conversation_messages?conversation_id` | ✅（SDK 未公開此參數，需繞過） |
@@ -227,11 +228,17 @@ created_at/updated_at  2026-08-24T06:15:30.283Z      ← **真實時間戳，不
 「AI 即時生成、無來源引用」的通用建議（FR-004），罐頭訊息這批人工維護、已審核的文字理論上
 可作為憲法 4.3 白名單的第二個來源。但建議卡的職責是「系統主動判斷後產生的完整回覆」，範本是
 「客服主動挑選的現成文字」，兩者使用情境不同，且佔位符的處置未收斂（見上）——不因技術可行就
-納入。範本更適合做成**輸入框旁的獨立快速插入功能**（鄰近夾帶檔案按鈕），與現有設計稿
-`docs/wireframe/03-workspace_lightTheme.png` 已畫出的「常用回覆」按鈕吻合，該按鈕目前僅存在於
-截圖、`docs/DESIGN_TOKENS.md` 尚無文字規格（1c 主工作區本就只有截圖，屬既有缺口，非本次新發現）。
-此獨立功能未排入任何里程碑；本節的實測結論（端點形狀、`pub_` id 裝配路徑、佔位符取捨）留存供
-屆時直接沿用。
+納入。範本更適合做成**輸入框旁的獨立快速插入功能**（鄰近夾帶檔案按鈕）。
+
+> ⚠️ **2026-08-31 訂正：畫布上的「常用回覆」按鈕已經不存在了。**
+> 本段原本寫「與設計稿 `docs/wireframe/03-workspace_lightTheme.png` 已畫出的『常用回覆』按鈕吻合」——
+> 那張截圖是 08-28 版；畫布 08-31 版**已把「常用回覆」與字數一併移除**，該位置現在是
+> **夾帶檔案按鈕**（`docs/DESIGN_TOKENS.md` §8.4）。實作側也早已裁定兩者都不做
+> （`M2-UI-PARITY.md` D-10）。
+>
+> 這**不影響本節的實測結論** —— 端點形狀、`pub_` id 裝配路徑、佔位符取捨都照舊有效，
+> 變的只是「設計稿上有沒有一顆對應的按鈕」。此獨立功能仍未排入任何里程碑；
+> 屆時要做的話，等於是**在畫布上新開一個元素**，不是實作既有設計。
 
 ---
 
