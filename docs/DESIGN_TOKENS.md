@@ -44,15 +44,18 @@
 | # | 項目 | 畫布 | 實作 | 為什麼 |
 |---|---|---|---|---|
 | 1 | **字級** | 見 §2 表列數字 | 全面加大約 **2.5px**，且改用 `rem` | 分兩輪、使用者確認過的刻意調整。核對字級時**只比對相對關係與 weight／letter-spacing**，絕對數值不比 |
-| 2 | **頂列右上角** | 「(林) 林佩君」＋常駐姓名文字＋chevron | **只有頭像**，身分與登出收進下拉 | 平台沒有人名只有 email（見 §8.1、`IMBRACE_QUESTIONS.md` H-9）。把 email 攤在頂列既佔寬度、又像一個沒設定好的欄位 |
-| 3 | **捲軸寬度** | `scrollbar-width:thin` | 固定 **8px**（顏色照畫布） | `thin` 的像素由瀏覽器決定（Chromium ~11px／Firefox ~12px），不足以當規格。已請畫布補 px 值（`DESIGN_FEEDBACK.md` C-7） |
-| 4 | **AI 泡泡的淡化** | 整顆 `opacity:.82` | 逐項混色，**文字不透明** | 量測後 `.82` 的內文對比只有 3.74:1，過不了 WCAG AA 的 4.5:1。底色／邊框／色條與畫布同色，只有文字不同（`DESIGN_FEEDBACK.md` F-1） |
-| 5 | **情緒分數刻度** | `score 0.72`（0–1） | `score 72`（0–100） | 我方 `SentimentPoint.score` 就是 0–100，換算後與 API／日誌的數字對不起來 |
-| 6 | **建議卡「rationale：」** | 英文欄位名 | 「**推薦理由：**」 | 面板是給客服看的即時輔助，不是給工程師看的欄位名（同 §7.2 的區塊標題、語氣標籤） |
-| 7 | **語氣標籤** | 已從畫布移除 | 保留，且**中文＋依語氣上色** | 「這句話是致歉還是升級」是客服掃一眼就要判斷的事。刻意擴充，已請畫布加回 |
-| 8 | **拖曳把手 hover 色** | 畫布自己不一致（左 `--border-strong`／右 `--navy-2`） | 統一 `--navy-2` | 同一種控制項沒有理由給不同回饋。理由寫在 `ResizeHandle.vue` |
-| 9 | **連線狀態文案** | 畫布自己不一致（1c「已連線 · 即時同步」／1d「已連線」） | 統一「**已連線**」，且改為**常駐** | 前者過長；常駐是因為「畫面上沒有東西」有兩種解讀 —— 一切正常，或這顆元件本身卡住了 |
-| 10 | **OTP 有效期／字元集** | 「10 分鐘」／只收數字 | 「15 分鐘」／數字＋大寫英文 | **畫布這兩處是錯的**（平台 OTP 信件與實際驗證碼為準），詳見 §4.2、§6 |
+| 2 | **情緒走勢圖寬度** | 128×34 靠右 | **整欄寬** | 要放最多 50 個評分點 ＋ 附件標記，128px 下每點只剩 2.5px |
+| 3 | **頭像下拉裡的 email** | `text-overflow:ellipsis` 截斷 | **等寬字並允許換行，不截斷** | 那是要逐字核對「是不是我的帳號」的東西，而截斷正好蓋掉最能區分帳號的網域部分 |
+| 4 | **服務模式說明** | 只描述模式本身 | 多一句「，包含在 iMBrace 官方介面工作的同事」 | 我們的鎖只在 AgentCopilot 內有效，這個邊界必須講清楚 |
+| 5 | **拖曳把手的鍵盤操作** | 只畫滑鼠拖曳 | `role="separator"` ＋ 方向鍵／Home／End | 5px 的線對只用鍵盤的人等於不存在（憲法 8.2） |
+
+> ✅ **先前的多數偏離已於 2026-08-31 消失** —— 畫布都改成與實作一致了，**不要再當成落差**：
+> AI 泡泡的 `opacity`、語氣標籤、捲軸 8px、頂列只有頭像、兩條拖曳把手的 hover 色、
+> 連線狀態文案、OTP 有效期與字元集、情緒量表的中文標籤與「生氣」獨立色、
+> **情緒分數改 0–100**、**「推薦理由：」**、**「AI 即時回覆建議」／「知識庫快查」**、
+> **presence 空狀態「沒有偵測到其他人」**、**快查每筆的兩行摘錄**。
+>
+> ⚠️ **`--danger` 系反過來要以畫布為準**：畫布新增了這三個 token，實作先前自訂的值已改為對齊（見 §1）。
 
 > ⚠️ 另有兩處**畫布畫得到、但平台資料拿不到**因而實作缺席或改寫的（左欄最後一則訊息摘要、
 > 各種「N 則」數字、客戶正在輸入…）。那些不是取捨而是沒有資料，清單見 `DESIGN_FEEDBACK.md` B 段。
@@ -75,6 +78,10 @@
 >
 > ⚠️ **逐字文案與尺寸看 §8，不要從截圖判讀。** 下表記的是「哪張截圖對應哪個狀態、
 > 實作時該注意什麼」—— 那是導覽資訊，是 §8 的逐字規格答不出來的部分。
+>
+> ⚠️ **這批截圖早於 2026-08-31 的數輪改版**，畫面上仍有「林佩君」等已被移除的元素
+> （見檔頭第三層的說明：截圖是備存留查，不必跟著更新）。下表照截圖的實際內容描述，
+> **不代表現行規格** —— 文案一律以 §8 為準。
 >
 > 規格出處：接手／離開／結案三個出口與 Copilot 面板可見性的行為定義在
 > `specs/003-analysis-trigger-policy/spec.md`（FR-016～FR-023 與「Session 2026-08-28」兩節）；
@@ -135,6 +142,7 @@
   --ai:#5348a8; --ai-bg:#f2f1fb; --ai-bd:#d9d6f0;
   --agent-bg:#e9eff8; --agent-bd:#c9d7ea;
   --warn:#a24a06; --warn-bg:#fdf1e3; --warn-bd:#eec69b;
+  --danger:#a3202a; --danger-bg:#fbeaec; --danger-bd:#eebfc4;
   --skel:#e7e9ee; --skel-hi:#f2f3f7;
   --shadow:0 1px 2px rgba(16,24,40,.05);
 }
@@ -147,12 +155,17 @@
   --ai:#a79cf2; --ai-bg:#1d1e2e; --ai-bd:#343559;
   --agent-bg:#1b2433; --agent-bd:#2b384c;
   --warn:#e2a469; --warn-bg:#2a2015; --warn-bd:#553f22;
+  --danger:#f0868f; --danger-bg:#2c1719; --danger-bd:#5c2b31;
   --skel:#232833; --skel-hi:#2c323d;
   --shadow:0 1px 2px rgba(0,0,0,.3);
 }
 ```
 
-`--ai`／`--agent-bg`／`--agent-bd`／`--open`／`--open-bg` 是 1c（主工作區）用的發送者／對話狀態標籤色，1a/1b 不會用到，先列在這裡備查。
+`--ai`／`--agent-bg`／`--agent-bd`／`--open`／`--open-bg` 是 1c（主工作區）用的發送者／對話狀態標籤色，1a/1b 不會用到。
+
+⚠️ **`--danger` 系是情緒量表「生氣」專用**，2026-08-31 由畫布新增 —— 在那之前實作曾自訂過一組
+（`#c0311d`／`#fbeae7`／`#f0bcb3`），現已對齊畫布，**不要改回自訂值**。它與 `--warn`（「挫折」）
+必須看得出差別：需求明訂這兩級要可互相區分，同色只靠反白在小尺寸與深色主題下辨識度不足。
 
 ---
 
@@ -313,56 +326,87 @@ box-shadow: var(--shadow)
 
 ### 7.1 版面／寬度
 
-- **展開寬度 420px**，可拖曳 **320–520px** —— 四種 variant（展開／載入中／準備結案／收合）共用，
-  **結案態沒有獨立寬度**（380/420 的差異來自畫布當時尚未統一，不是設計區分）。
-  實作 `copilotWidth` 已對齊（003 T031）。
+- **展開寬度 420px**，可拖曳 **320–720px** —— 四種 variant（展開／載入中／準備結案／收合）共用，
+  **結案態沒有獨立寬度**。
+  ⚠️ **上限 720 遠大於預設 420，是刻意的**：面板在某些情境下會成為客服主要在看的畫面
+  （逐條讀建議卡、展開知識庫全文），不是永遠的輔助欄。拉到 720 時中欄會被壓縮 ——
+  中欄是 `min-width:0` 可壓縮，這是畫布允許的取捨，不是要擋掉的邊界。
 - ⚠️ **收合態不另立寬度 token**：收合時整欄改渲染窄直條，寬度由元件自己決定，
   `copilotWidth` 只在展開態生效 —— 多一個 token 就多一個要跟畫布同步的數字。
-- **五個區塊皆可獨立折疊**（wrapper 原文：「五區塊皆可折疊」）
+- **六個區塊皆可獨立折疊**（第六塊「對話摘要」由畫布於 2026-08-31 新增）
 - 支援淺色／深色主題
 - 支援「載入骨架」與「準備結案收合」兩種特殊狀態
 
-### 7.2 五個可折疊區塊
+### 7.2 六個可折疊區塊
 
-由上到下：
+由上到下（`order` 決定，結案階段會把 ⑤ 提前）：
 
-1. **客戶情緒提示**（tag「近 5 輪」）—— 情緒警示 pill（逐字「焦慮偏高」＋`alert-triangle`，`--warn` 字／`--warn-bg` 底／`--warn-bd` 框／`radius:20px`／`padding:5px 12px`）＋ 折線走勢圖（128×34，主線 `stroke-width:2.25` ＋ 0.3 透明度的疊影線 ＋ 端點 `r:2.6` 圓點）＋ 右下角 `score 0.72 ↑`（`IBM Plex Mono` 10px）＋ 一段文字摘要（近幾輪情緒變化與建議）＋ 情緒量表圖例（五段等寬，`calm`→`--active`／`neutral`→`--text-2`／`concerned`→`--open`／`frustrated`→`--warn`／`angry` 為 `--warn` 反白；目前所在區間 `font-weight:700` ＋ `box-shadow:inset 0 -3px 0 <該段色>`）
-   ✅ 「一段文字摘要」已實作為 `SentimentNarrative { trend, advice }` ＋ `AIProvider.narrateSentiment()`，
-   在分數發布**之後**多跑一次 AI 呼叫。三條硬性規則（輸入是評分結果而非訊息原文／分數先發敘述後補／
-   失敗不影響區塊狀態）與「新評分點落地時舊敘述一律歸零」的理由見 `shared/types/copilot.ts` 的型別註解。
-   ⛔ **score 刻度**：畫布 0–1（`0.72`），我方是 **0–100**，顯示 `score 72 ↑` 不換算（偏離第 5 項）。
-2. **AI 語意即時建議**（tag「N 則建議」，載入中顯示「產生中 x/y」）—— 一張或多張建議卡：知識庫來源標題（前置 `book-open` icon）＋ 建議回覆全文（放在白底框內）＋「rationale：」推薦理由（⛔ 實作用中文「**推薦理由：**」，偏離第 6 項）＋「需補：… — 帶入前請先填寫」（僅缺資料時，`--open` 系）＋「↵ 一鍵帶入」；卡片本身是 `--ai-bg` 底 ＋ `--ai-bd` 框、`radius:10px`；卡片間可捲動（「可捲動查看其餘建議」）。
-   ⛔ 畫布**沒有**語氣標籤與「複製」按鈕；實作保留中文語氣標籤並依語氣上色（偏離第 7 項）。
-   ⚠️ 卡片標題**沒有 SOP 編號徽章** —— iMBrace 沒有這套編號制度（`specs/002-.../research.md` #2）。
+1. **客戶情緒提示**（tag「近 5 輪」）—— 情緒警示 pill（逐字「焦慮偏高」＋`alert-triangle`，`--warn` 字／`--warn-bg` 底／`--warn-bd` 框／`radius:20px`／`padding:5px 12px`）＋ 折線走勢圖（128×34，主線 `stroke-width:2.25` ＋ 0.3 透明度的疊影線 ＋ 端點 `r:2.6` 圓點）＋ 右下角 `score 72 ↑`（`IBM Plex Mono` 10px，**0–100 刻度**）＋ 走勢文字摘要 ＋ 情緒量表圖例（五段等寬，逐字為中文：「平靜」→`--active`／「普通」→`--text-2`／「擔憂」→`--open`／「挫折」→`--warn`／**「生氣」→`--danger` 系**；目前所在區間 `font-weight:700` ＋ `box-shadow:inset 0 -3px 0 <該段色>`）
+   ✅ **走勢文字摘要包在 `sc-if trendNote` 裡** —— 畫布明訂它**可能不存在**，此時整段不顯示。
+   我方的 `SentimentNarrative { trend, advice }` 在產生失敗或評分點少於 2 個時為 `null`，正是這個狀態。
 
-   **「信心度 NN%」pill**（`border-radius:20px`／`padding:2px 8px`／`IBM Plex Mono`／
-   `--surface` 底＋`--ai-bd` 框＋`--ai` 字）**不是每張卡都有** —— 截圖裡第一張卡有、第二張沒有，
-   設計稿本身就是條件式呈現，與憲法 4.4「`confidence` 沒有真實依據時 MUST 為 `null`、
-   UI 依 `null` 決定顯示或留空」一致。
-3. **知識庫自然語言快查** —— 搜尋輸入框（`height:34px`、`--surface-2` 底、`--border-strong` 框、內含放大鏡 icon；placeholder 逐字為「**用一句話問，例：發票補寄要多久**」）＋ 結果清單，每筆：標題 ＋ 更新年月（`2026/05`，`IBM Plex Mono`，靠右）＋ **靠左**的「插入為回覆」（有框）／「展開全文」（無框＋`chevron-down`）兩顆按鈕；過期文件會多一條警示列（「⏱ 已超過 12 個月未更新，引用前請確認」，`--warn` 系）。
-   ⚠️ 同第 2 區塊：**沒有 SOP 編號**，只有標題＋更新年月。
-4. **AI 階段完整對話紀錄**（tag「共 N 則訊息」，示範值「共 18 則訊息」）—— 逐則對話紀錄（客戶／AI／客服三種發送者），附件有**三種**型別，各自的說明文字逐字為：「PDF · 檔名僅供辨識，無法預覽」／「圖片 · 可預覽縮圖」／「舊型附件 · 僅有檔名，無法預覽」；區塊內可捲動，底部一行逐字為「**顯示 AI 階段 7 / 18 則，可捲動**」（2026-08-29 確認動詞是「顯示」，且分隔為全形逗號）
-5. **結案摘要自動填入**（tag「AI 草稿 · 可修改」，⚠️ 分隔是 U+00B7 不是「・」）—— 可編輯文字區塊（AI 生成的結案摘要草稿）＋ 三個分類 pill（「意圖：…」／「處理結果：…」／「情緒結果：…」）＋「draft {{時間}}」時間戳 ＋「↻ 重新產生」／「▤ 一鍵寫入 CRM」兩個按鈕 ＋ 一行提醒文字：「「一鍵寫入 CRM」是本面板唯一會寫入資料庫的動作，寫入後不可自動回復。」
+2. **對話摘要**（tag「AI 產生 · 接手前必讀」）—— **第六個區塊，`order:2`，位置在情緒與建議之間。**
+   - **ready**：一段摘要正文（`12.5px`／`line-height:1.75`／`--text`）＋ 分類 pill 列
+     （`radius:20px`／`padding:3px 9px`／`11px`；一般類別用 `--navy-2` 字＋`--navy-soft` 底＋`--navy-soft-bd` 框＋`tag` icon，
+     風險類別如「重複進線」改用 `--open` 字＋`--open-bg` 底＋`repeat` icon）
+     ＋ 底列 `generated HH:MM:SS`（mono／`--text-3`）＋ 右側「重新產生」（`refresh-cw`，`26px` 高、`--border-strong` 框）
+   - **loading**：四條 skeleton（首條帶 `shimmer` 動畫，寬度 100%／94%／62%）＋ 兩顆 `radius:20px` 的 pill skeleton
+   - **error**：`--warn-bg` 底／`--warn-bd` 框／`radius:9px` 的告示框，內含 `alert-triangle`
+     ＋ 標題「**摘要產生失敗**」＋ 說明「**其餘區塊不受影響，可直接閱讀完整對話紀錄。**」＋「重試」按鈕
 
-> ⚠️ 第 5 區塊的「一鍵寫入 CRM 不可回復」提醒，語氣上與 `ARCHITECTURE.md`／`CONSTITUTION.md` 裡對「寫入類操作需明確、不可靜默」的既有原則一致，**這點在 2a 是設計稿本身就強調的，不是本文件外推**。
+3. **AI 即時回覆建議**（tag：ready 時「**本次回傳 3 則**」、載入中「**產生中 2 / 3**」）—— 一張或多張建議卡（`--ai-bg` 底／`--ai-bd` 框／`radius:10px`／`padding:10px 11px`／`gap:7px`），每張由上到下：
+   - 標題列：`book-open` icon（`--ai`）＋ 知識庫來源標題（`12px`／`--text`／`500`）
+     ＋ **語氣標籤** ＋ 彈性空白 ＋ **信心度 pill**
+   - **語氣標籤**（`10.5px`／`500`／`radius:4px`／`padding:1px 6px`，各帶一個 icon）：
+     「致歉」`heart-handshake`／`--warn` 系、「說明」`info`／`--navy-2`＋`--navy-soft`、
+     「挽留」`hand-heart`／`--open` 系
+   - **信心度 pill**：`10.5px`／`700`／`radius:20px`／`padding:2px 8px`／mono／`--surface` 底＋`--ai-bd` 框＋`--ai` 字，逐字「信心度 92%」。**不是每張卡都有**（截圖裡第二張沒有），與憲法 4.4「`confidence` 沒有真實依據時 MUST 為 `null`、UI 依 `null` 決定顯示或留空」一致
+   - 建議回覆全文（`12.5px`／`line-height:1.75`，放在 `--surface` 底＋`--border` 框＋`radius:8px` 的框內）
+   - 「**推薦理由：**…」（`11px`／`--text-3`）
+   - 「需補：… — 帶入前請先填寫」（僅缺資料時，`--open` 系）
+   - 底列靠右「↵ 一鍵帶入」（`28px` 高／`--navy` 底／`--navy-fg` 字／`radius:7px`／`corner-down-left` icon）
+   - 卡片區可捲動（`max-height:392px`）
+
+4. **知識庫快查** —— 搜尋輸入框（`height:34px`、`--surface-2` 底、`--border-strong` 框、內含放大鏡 icon；placeholder 逐字為「**用一句話問，例：發票補寄要多久**」）＋ 結果清單，每筆由上到下：
+   - 標題（`12.5px`／`500`／單行 `ellipsis`）＋ 靠右的更新年月（`2026/05`，mono `10.5px`）
+   - **摘錄**（`11.5px`／`--text-2`／`line-height:1.65`），**兩行截斷**
+     （`display:-webkit-box`／`-webkit-line-clamp:2`／`-webkit-box-orient:vertical`／`overflow:hidden`）
+   - **靠左**的「插入為回覆」（`25px` 高、`--border-strong` 框、`--surface-2` 底）／
+     「展開全文」（無框＋`chevron-down`）兩顆按鈕
+
+   過期文件多一條警示列（「⏱ 已超過 12 個月未更新，引用前請確認」，`--warn` 系）。
+   ⚠️ **沒有 SOP 編號**，只有標題＋更新年月。
+
+5. **AI 階段完整對話紀錄**（tag「AI 階段」）—— 逐則對話紀錄（客戶／AI／客服三種發送者），附件有**三種**型別，各自的說明文字逐字為：「PDF · 檔名僅供辨識，無法預覽」／「圖片 · 可預覽縮圖」／「舊型附件 · 僅有檔名，無法預覽」；區塊內可捲動，底部一行逐字為「**顯示 AI 階段 7 / 18 則，可捲動**」（動詞是「顯示」，分隔為全形逗號）
+
+6. **結案摘要自動填入**（tag「AI 草稿 · 可修改」，⚠️ 分隔是 U+00B7 不是「・」）—— 可編輯文字區塊（AI 生成的結案摘要草稿）＋ 三個分類 pill（「意圖：…」／「處理結果：…」／「情緒結果：…」）＋「draft {{時間}}」時間戳 ＋「↻ 重新產生」／「▤ 一鍵寫入 CRM」兩個按鈕 ＋ 一行提醒文字：「「一鍵寫入 CRM」是本面板唯一會寫入資料庫的動作，寫入後不可自動回復。」
+   ⚠️ `order` 由階段決定（結案階段會被提前），其餘五塊固定。⚠️ 摘要過期時多一列「對話有新內容，建議重新產生」。
+
+> ⚠️ 第 6 區塊的「一鍵寫入 CRM 不可回復」提醒，語氣上與 `ARCHITECTURE.md`／`CONSTITUTION.md` 裡對「寫入類操作需明確、不可靜默」的既有原則一致，**這點在 2a 是設計稿本身就強調的，不是本文件外推**。
 
 ### 7.3 面板 Header
 
-`COPILOT` 徽章 ＋ 依狀態變化的副標文字 ＋ 面板寬度數字 ＋ 右側圖示按鈕。
+`height:42px`／`--surface` 底／`border-bottom:1px solid var(--border)`／`padding:0 13px`／`gap:9px`。
+由左到右：
 
-徽章樣式逐字：`background:var(--navy)`／`color:var(--navy-fg)`／`font-size:10.5px`／`font-weight:700`／`letter-spacing:.06em`／`padding:3px 8px`／`border-radius:5px`。
-⚠️ **10.5px，不是 §2 表列 eyebrow 的 11px** —— 面板徽章比登入頁的小 0.5px，是設計稿本身的差異。
-
-副標（原始檔 `headNote` 三元式，逐字）：展開態「即時輔助」／載入中「分析中」／準備結案「準備結案」。
+- `COPILOT` 徽章：`background:var(--navy)`／`color:var(--navy-fg)`／`font-size:10.5px`／`font-weight:700`／`letter-spacing:.06em`／`padding:3px 8px`／`border-radius:5px`。
+  ⚠️ **10.5px，不是 §2 表列 eyebrow 的 11px** —— 面板徽章比登入頁的小 0.5px，是設計稿本身的差異。
+- 副標 `headNote`（`11px`／`--text-2`）三態，逐字：載入中「**分析中**」／準備結案「**準備結案**」／其餘「**即時輔助**」
+- 彈性空白
+- **「全部重試」按鈕**（僅 `anyError` 時出現）：`24px` 高／`--warn-bd` 框／`--warn-bg` 底／`--warn` 字／`radius:6px`／`refresh-cw` icon／`title="重新產生所有失敗的區塊"`
+- 面板目前寬度數字 `{{ width }}px`（`10.5px`／mono／`--text-3`）
+- 收合鈕：`26×26`／`--border` 框／`--surface-2` 底／`radius:6px`／`panel-right-close` icon
 
 ### 7.4 三種特殊狀態
 
-- **載入中（漸進顯示）**：header 副標「分析中」，下方有一行狀態列（如「AI 分析中・約 5 秒完成（最長 12 秒）・區塊會依序出現」）；各區塊尚未產出的內容以骨架屏（shimmer 灰色色塊）呈現，已完成的區塊（如第 1 區塊「客戶情緒提示」）標題列右側會出現完成勾選 icon；第 2 區塊在部分完成時 tag 顯示「產生中 x/y」而非最終的「N 則建議」。
-- **準備結案（其餘區塊收合）**：header 副標「準備結案」，下方有一行提示列（如「⚑ 偵測到準備結案階段・已收合其餘區塊」）；除「結案摘要自動填入」外，其餘四個區塊全部收合成單行（標題 ＋ tag ＋ 展開箭頭），只有結案摘要維持展開可編輯。
-- **展開態（一般狀態）**：五個區塊皆可各自獨立展開／收合，非上述兩種特殊狀態時的預設互動樣式。
+- **載入中（漸進顯示）**：header 副標「分析中」；最上方一條狀態列（`--surface-2` 底／`--border` 框／`radius:8px`／`padding:7px 10px`）內含旋轉的 `loader-2` ＋ 逐字「**AI 分析中 · 約 5 秒完成（最長 12 秒），區塊會逐一出現**」；各區塊依 ①已完成／②進行中／③④⑤尚未開始 三種樣態呈現 —— 已完成的標題列右側出現完成勾選 icon，進行中與尚未開始的以 skeleton（`--skel`／`--skel-hi` 的 `shimmer` 漸層）呈現。
+- **準備結案（其餘區塊收合）**：header 副標「準備結案」，下方一行提示列（「⚑ 偵測到準備結案階段・已收合其餘區塊」）；除「結案摘要自動填入」外其餘區塊全部收合成單行（標題 ＋ tag ＋ 展開箭頭）。
+- **展開態（一般狀態）**：六個區塊皆可各自獨立展開／收合。
+
+> ⚠️ **折疊的無障礙屬性是逐字規格**：標題列是 `role="button"` ＋ `tabIndex` ＋ `aria-expanded`
+> ＋ `outline-offset:-2px` ＋ `style-focus="background:var(--surface-2)"`，不是純 `<div>` 加 onClick。
 
 ---
-
 
 ## 8. 1c — 主工作區
 
@@ -377,12 +421,12 @@ box-shadow: var(--shadow)
 | Artboard 全寬 | 1440px |
 | 左欄（對話清單）展開 | **預設 280px，可拖曳 220–400px** |
 | 左欄收合 | **48px** 窄直條 |
-| 右欄（Copilot 面板）展開 | **預設 420px，可拖曳 320–520px**（與 §7.1 同一個值） |
+| 右欄（Copilot 面板）展開 | **預設 420px，可拖曳 320–720px**（與 §7.1 同一個值） |
 | 右欄收合 | **44px** 窄直條 |
 | 中欄 | 剩餘空間（`min-width:0`，可壓縮） |
 
 > ⚠️ **兩欄的拖曳範圍在畫布的 script 裡是逐字寫死的**，不是示意：
-> `startDragLeft` → `Math.min(400, Math.max(220, …))`、`startDrag` → `Math.min(520, Math.max(320, …))`。
+> `startDragLeft` → `Math.min(400, Math.max(220, …))`、`startDrag` → `Math.min(720, Math.max(320, …))`。
 >
 > ⚠️ 收合寬度左 **48px**／右 **44px** 不對稱，是因為左欄要放按鈕＋徽記、右欄要放直排 `COPILOT` 標籤。
 
@@ -392,29 +436,36 @@ box-shadow: var(--shadow)
 `title="拖曳調整寬度"`。
 ⚠️ hover 色畫布自己不一致（左 `--border-strong`／右 `--navy-2`），實作統一取 `--navy-2`。
 
-**捲軸**（逐字，⚠️ 畫布的**每一個**捲動容器都帶著同一組值，無一例外 ——
-左欄清單、訊息流、右欄面板本體、建議卡內捲區、對話紀錄內捲區）：
+**捲軸**（逐字，全域一組，套用在所有捲動容器上）：
 
 ```css
-scrollbar-width: thin;
-scrollbar-color: var(--border-strong) transparent;   /* 滑塊 ＋ 透明軌道 */
+*::-webkit-scrollbar        { width:8px; height:8px; }
+*::-webkit-scrollbar-thumb  { background:var(--border-strong); border-radius:4px; }
+*::-webkit-scrollbar-track  { background:transparent; }
 ```
 
-> ⛔ **寬度刻意偏離為固定 8px**（偏離第 3 項），顏色維持畫布的 `--border-strong` 滑塊 ＋ 透明軌道。
+> ⚠️ **不要再加 `scrollbar-width`／`scrollbar-color`。** Chromium 只要看到某個元素的
+> `scrollbar-width` 是非初始值，就會**整組忽略該元素的 `::-webkit-scrollbar`** ——
+> 兩套並存會讓那些元素退回瀏覽器預設寬度（約 11px），同一頁出現兩種捲軸。
+> 畫布曾經兩套並存，2026-08-31 已移除標準屬性那組。
 >
-> ⚠️ **兩套規則不能並存**：Chromium 只要看到 `scrollbar-width`／`scrollbar-color` 是非初始值，
-> 就會**整組忽略** `::-webkit-scrollbar`。實作因此把標準屬性關進
-> `@supports not selector(::-webkit-scrollbar)`（Firefox 專用），Chromium／Safari 走 webkit 那組。
-> 兩者都給等於 Chromium 永遠拿不到 8px。
+> ⚠️ 但 `::-webkit-scrollbar` 在 **Firefox 無效**。實作若要兩個瀏覽器都精確，
+> 必須把標準屬性關進 `@supports not selector(::-webkit-scrollbar)` 讓兩組**互斥**，
+> 而不是並列 —— 見 `app/assets/css/main.css`。
 >
 > ⚠️ 顏色 MUST 走 `var(--border-strong)`：深色主題是 `#3a4250`，寫死淺色值會在深色主題留一條淺灰捲軸。
 
 wrapper 副標（逐字）：
-「左欄可收合、可拖曳調寬 · **中欄資訊列可收合** · 中／右欄之間可拖曳 · 訊息可分辨 客戶／AI／真人客服 · Composer 撞單攔截」
+「左欄可收合、可拖曳調寬 · **中欄資訊列可收合** · 中／右欄之間可拖曳**（320–720px）** · 訊息可分辨 客戶／AI／真人客服 · Composer 撞單攔截」
 
 ### 8.2 左欄 — 對話清單
 
-- 品牌區：徽章「AGENTCOPILOT」／「台灣客服中心」／「已連線 · 即時同步」／頭像「林」＋「林佩君」
+- 品牌區：徽章「AGENTCOPILOT」／組織名／連線 pill「**已連線**」（`--active` 小圓點 ＋ `radius:20px`）
+- 頂列右上角：**只有 28px 圓形頭像**（`--navy-soft` 底／`--navy-soft-bd` 框／`--navy-2` 字／
+  mono 縮寫如「AG」／`aria-haspopup="menu"`），**沒有姓名文字、沒有 chevron**。
+  下拉（`236px` 寬／`radius:9px`／`box-shadow:0 8px 24px rgba(16,24,40,.14)`）由上到下：
+  eyebrow「**已登入身分**」＋ email（mono）→ 分隔線 → 「登出」（`role="menuitem"`）。
+  ⛔ 畫布的 email 用 `text-overflow:ellipsis` 截斷，**實作刻意允許換行不截斷**（偏離第 3 項）
 - 篩選 chip：「全部 24」／「active 14」／「open 10」
 - 分組標題：「今天」／「昨天」（更早的用 `MM/DD`）。
   `position:sticky; top:0`／`--surface-2` 底／`border-bottom:1px solid var(--border)`
@@ -480,13 +531,14 @@ icon `chevrons-up`（收合）／`chevrons-down`（展開）13px ·
 結案中轉唯讀，提示「結案中無法切換服務模式，請先取消結案」
 
 **Presence 列**「在此對話中」：
-- 無人：「無人／未知」＋「presence 資料未提供」
-- 同事正在結案：頭像「林」＋「林佩君」＋標籤「正在結案」＋「你仍可回覆或自行結案」
+- 無人：「**沒有偵測到其他人**」
+- 同事正在結案：頭像 ＋ email ＋ 標籤「正在結案」（`--navy-2` 字／`--navy-soft` 底／
+  `--navy-soft-bd` 框／`radius:20px`／`clipboard-check` icon）＋「你仍可回覆或自行結案」
 - 自己：「你正在檢視」
 - 右側：「最後更新 14:32:11」
 
 **訊息流**：頂端「載入較早的 305 則訊息」／日期分隔「08/25（今天）」
-發送者三種：「客戶」／「AI 自動回覆」／「林佩君 · 真人客服 · 你」
+發送者三種：「客戶」／「AI 自動回覆」／「`agent.lin@company.com` · 真人客服 · 你」（自己的訊息才有「· 你」）
 
 每一列是 `display:flex` 橫列（`gap:8px`／`padding:5px 16px`），內容欄 `max-width:62%`：
 - **只有客戶那一側有頭像** —— `26×26` 圓、`--surface-3` 底 ＋ `--border` 框 ＋ `--text-2` 字、
