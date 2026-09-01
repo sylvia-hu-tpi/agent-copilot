@@ -69,6 +69,7 @@
 | 1b | 選擇組織 | §5、§6 | `02-organization_lightTheme.png` / `_darkTheme.png` |
 | 1c | 主工作區 | §8 | `03-workspace_lightTheme.png` / `_darkTheme.png`，**另有 10 個狀態變體，見下表** |
 | 1d | 載入中／空狀態 | §9 | `04-workspace-empty_lightTheme.png` / `_darkTheme.png` |
+| 3a | **語氣標籤色票**（`3a-light`／`3a-dark`） | §10 | 無截圖 |
 | 2a | Copilot 面板（取代 1c／1d 右欄佔位） | §7 | `05-copilot-panel_4status_01.png`（四狀態總覽）、`05-copilot-panel_2status_02.png`（補齊第一張被裁掉的下半部） |
 
 ### 1c 的 10 個狀態變體
@@ -138,7 +139,9 @@
   --border:#e2e5ea; --border-strong:#cfd4dc; --border-dash:#c7ccd6;
   --text:#1b2230; --text-2:#596274; --text-3:#8b93a3;
   --navy:#1b3a6b; --navy-2:#274d88; --navy-fg:#ffffff; --navy-soft:#eaeff7; --navy-soft-bd:#cbd8ea;
-  --active:#17845c; --active-bg:#e7f5ef; --open:#a3700a; --open-bg:#fbf2df;
+  --active:#17845c; --active-bg:#e7f5ef;
+  --open:#8a5d05; --open-bg:#fbf2df; --open-bd:#e0c58c;
+  --info:#20406f;
   --ai:#5348a8; --ai-bg:#f2f1fb; --ai-bd:#d9d6f0;
   --agent-bg:#e9eff8; --agent-bd:#c9d7ea;
   --warn:#a24a06; --warn-bg:#fdf1e3; --warn-bd:#eec69b;
@@ -151,7 +154,9 @@
   --border:#2a303a; --border-strong:#3a4250; --border-dash:#414a58;
   --text:#e5e8ee; --text-2:#9fa8b8; --text-3:#6f7889;
   --navy:#2e5896; --navy-2:#3a6cb4; --navy-fg:#eef4fc; --navy-soft:#1c2635; --navy-soft-bd:#2c3d57;
-  --active:#3cbb8c; --active-bg:#14251f; --open:#d8a340; --open-bg:#271f12;
+  --active:#3cbb8c; --active-bg:#14251f;
+  --open:#d8a340; --open-bg:#271f12; --open-bd:#4d3d1c;
+  --info:#9dc0f2;
   --ai:#a79cf2; --ai-bg:#1d1e2e; --ai-bd:#343559;
   --agent-bg:#1b2433; --agent-bd:#2b384c;
   --warn:#e2a469; --warn-bg:#2a2015; --warn-bd:#553f22;
@@ -163,7 +168,14 @@
 
 `--ai`／`--agent-bg`／`--agent-bd`／`--open`／`--open-bg` 是 1c（主工作區）用的發送者／對話狀態標籤色，1a/1b 不會用到。
 
-⚠️ **`--danger` 系是情緒量表「生氣」專用**，2026-08-31 由畫布新增 —— 在那之前實作曾自訂過一組
+⚠️ **`--info` 專供 `--navy-soft` 底上的文字**（建議卡的「說明」語氣標籤）。
+**不要改用 `--navy-2`** —— 它同時是按鈕的 hover 底色，為了這裡調亮會讓按鈕上的白字失去對比。
+
+⚠️ **`--open` 2026-09-01 由 `#a3700a` 調深為 `#8a5d05`**：舊值疊在 `--open-bg` 上只有 **3.87:1**，
+過不了 WCAG AA 內文的 4.5:1（新值 5.17:1）。這一改同時修好所有拿 `--open` 當文字的地方 ——
+摘要過期提示、知識庫過期註記、`open` 狀態標籤、建議卡的「挽留」語氣標籤。
+
+⚠️ **`--danger` 系是情緒量表「生氣」與建議卡「升級」語氣專用**，2026-08-31 由畫布新增 —— 在那之前實作曾自訂過一組
 （`#c0311d`／`#fbeae7`／`#f0bcb3`），現已對齊畫布，**不要改回自訂值**。它與 `--warn`（「挫折」）
 必須看得出差別：需求明訂這兩級要可互相區分，同色只靠反白在小尺寸與深色主題下辨識度不足。
 
@@ -631,6 +643,41 @@ wrapper 副標：「初次載入骨架 · 未選擇對話 · 對話清單為空 
 
 ⚠️ 最後一列是 **1d 自己的右欄佔位文字**，已由 §7 的 2a 取代——實作不應照抄這兩句。
 骨架列數 `skelRows: [1,2,3,4,5,6]`（6 列）。
+
+---
+
+## 10. 3a — 語氣標籤色票
+
+> 畫布 artboard `3a-light`／`3a-dark`（畫布最下方），**只有色票、沒有版面** ——
+> 它存在的目的就是把建議卡的五種語氣一次定義清楚。
+
+共用形狀：`font-size:10.5px`／`font-weight:500`／`border-radius:4px`／`padding:1px 6px`，
+各帶一個 **10px** 的 lucide icon。
+
+| 語氣 | fg | bg | bd | icon | 淺色對比 | 深色對比 |
+|---|---|---|---|---|---|---|
+| 致歉 | `--warn` | `--warn-bg` | `--warn-bd` | `heart-handshake` | 5.36:1 | 7.41:1 |
+| 說明 | `--info` | `--navy-soft` | `--navy-soft-bd` | `info` | 8.98:1 | 8.17:1 |
+| 挽留 | `--open` | `--open-bg` | `--open-bd` | `hand-heart` | 5.17:1 | 7.15:1 |
+| 結案 | `--text-2` | `--surface-3` | `--border-strong` | `circle-check` | 5.38:1 | 5.94:1 |
+| 升級 | `--danger` | `--danger-bg` | `--danger-bd` | `circle-arrow-up` | 6.46:1 | 6.84:1 |
+
+> 對比欄是我方實算的（sRGB 相對亮度，文字 vs 該標籤自己的底色）。
+> 標籤文字 10.5px 屬**內文**，門檻是 AA 的 4.5:1 —— 十組全部通過。
+
+⚠️ **這五種是封閉集合**，模型每次產生建議卡都會落在其中之一（`shared/types/copilot.ts`
+的 `SuggestionCard.tone`）。少一種配色，那張卡在畫面上就是實作自己編的。
+
+⚠️ **「升級」是整份設計裡唯一使用紅色系的標籤。** 這是刻意的 —— 它與「致歉」的琥珀 `--warn`
+分屬兩個色相（紅 vs 橙），兩者的處置強度差最遠，色相分開後在小尺寸與深色主題下才分得出來。
+**不要為了「整齊」把它併回 `--warn` 系。**
+
+⚠️ **「結案」刻意用中性灰**，不佔用任何有情緒的色系 —— 收尾是「無事發生」的訊號。
+
+⚠️ 形狀是 `radius:4px` 的**小方角標籤**，不是 pill；圓角 pill（`radius:20px`）在畫布上
+是信心度那一顆，兩者不要混用。
+
+實作對應：`app/components/copilot/SuggestionCard.vue` 的 `TONE`。
 
 ---
 
