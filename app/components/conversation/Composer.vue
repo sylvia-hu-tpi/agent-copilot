@@ -102,10 +102,16 @@ function focus(): void {
 /**
  * 輸入框高度（畫布 1c，2026-09-01 新增）—— 可拖曳，也可鍵盤調整。
  *
- * ⚠️ **範圍的下限 72px 是「兩行」，不是隨手取的數字**（畫布副標逐字「兩行 72px – 320px」）。
- *    再低就會讓「Shift+Enter 換行」看起來像壞掉 —— 換了行卻看不到第二行。
- *    ⚠️ 預設值也是 72（畫布 3a 的 `composerH: 72`）—— 即「預設就是最小」，
- *    客服要更高時自己拖，而不是一開始就吃掉訊息流的空間。
+ * ⚠️ **下限 46px ＝「一行」，2026-09-01 由畫布的 72px（兩行）調降**（使用者裁定，
+ *    起因是小螢幕筆電上訊息流被壓得看不到幾則）。46 ＝ 一行 `16px × 1.6` 的 25.6px
+ *    ＋ 上下 `py-2.5` 各 10px，無條件進位。⚠️ 這是**刻意偏離畫布**（登記於
+ *    `docs/DESIGN_FEEDBACK.md`），畫布副標逐字是「兩行 72px – 320px」。
+ *    ⚠️ 原本訂在兩行的理由是「再低會讓 Shift+Enter 換行看起來像壞掉 —— 換了行卻看不到
+ *    第二行」。那個顧慮**沒有被推翻，只是不再由下限承擔**：`rows` 已改為 1，
+ *    一行是誠實的一行而不是被切掉一半的兩行，換行時 textarea 內部照常捲動。
+ *    ⚠️ **下限不是預設值。** 預設仍是 72（畫布 3a 的 `composerH: 72`）——
+ *    多數螢幕上兩行是對的起點，46 是給需要的人拖下去的空間，而高度會存進 `localStorage`，
+ *    拖一次就記住。把預設一起降下去等於讓所有人替少數螢幕付代價。
  *    ⚠️ 步進 12／Shift 48 同樣照畫布，**與欄寬的 16／64 不同**，見 `usePaneSize` 的說明。
  * ⚠️ 高度**存在 `localStorage`**，與欄寬同一套機制：客服調整輸入框高度多半是因為
  *    自己的打字習慣（長回覆 vs 一句話），那是跨對話、跨 session 穩定的偏好。
@@ -114,7 +120,7 @@ function focus(): void {
 const composer = usePaneSize({
   key: 'ac.composerHeight',
   def: 72,
-  min: 72,
+  min: 46,
   max: 320,
   axis: 'y',
   invert: true,
@@ -244,7 +250,7 @@ defineExpose({ focus })
       <textarea
         ref="textarea"
         v-model="value"
-        rows="2"
+        rows="1"
         :disabled="disabled"
         :placeholder="initializing ? t('composer.initializing') : blockedReason ? t('composer.placeholderReadonly') : t('composer.placeholder')"
         :aria-label="t('composer.placeholder')"
