@@ -1056,6 +1056,67 @@ const someoneElseCanSend = mode === 'manual' || mode === 'hybrid'
 
 ② 不可顯示成「正在檢視」——「曾經發言」不等於「現在還在」，誤導比不顯示更糟。③ 不可寫成「目前沒有其他人在看」或捏造姓名。**空狀態是常態，不是例外**——① 在單人使用時為空、② 在無人發言時為空，設計上要讓「無人／未知」看起來正常，而不是壞掉。
 
+#### 10.2.1 左欄清單能知道「誰在裡面」到多少 —— `npm run spike:join-visibility`（2026-09-01）
+
+§10.2 的四來源是為**中欄的 PresenceBar** 設計的（那裡有 SSE，且能排除自己）。
+**左欄清單是另一回事**：它一次要標 N 則對話，而清單 payload 的資訊比詳情少。
+實測 16 筆（`scripts/spike/out/23-list-join-fields.json`）：
+
+| 清單欄位 | 有值嗎 | 語意 |
+|---|---|---|
+| `mode` | 10/16（其餘為 `null`） | 同 §10.2 ③。`null` ＝ 從未 JOIN 過 |
+| `is_agent_joined` | 10/16（其餘為 `null`，**沒有任何一筆是 `false`**） | 「**曾經**有人 JOIN 過」。單向黏著，見 §「presence 的其他候選欄位」 |
+| `is_joined`（我的視角） | **0/16 —— 清單完全沒有這個欄位** | 只有單筆 `conversations.get()` 才有 |
+
+⚠️ **也沒有「只列出我 JOIN 的」這種端點。** SDK 的 `getViewsCount()` 註解逐字寫著
+「Count conversations per view (**all/joined/yours**)」，`list()` 也有一個未說明的 `type?: string` ——
+實測 `getViewsCount()` 回的是 **status** 分組（`{active: 12, open: 4}`），
+`list({type:'all'|'joined'|'yours'})` 三種全回 **0 筆**。可用的清單端點只有
+`search({ businessUnitId })`。這是「§ SDK 型別與實際 API 不一致」的又一例（`out/23-views.json`）。
+
+兩欄的組合恰好把對話分成三類（實測分布：6／9／1）：
+
+| `mode` | `is_agent_joined` | 意思 |
+|---|---|---|
+| `null` | `null` | 從未有人 JOIN 過 |
+| `automation` | `true` | 曾經有人 JOIN，**現在沒人**（或有人但選了 Automation Only ← §10.2 的盲區） |
+| `manual`／`hybrid` | `true` | **現在有人**且能送出訊息 |
+
+⚠️ **`is_agent_joined` 不能拿來顯示「無客服在此」。** 本次再次實測 LEAVE 後它仍是 `true`
+（`mode` 正確轉回 `automation`、`is_joined` 正確轉 `false`）—— 與 §「presence 的其他候選欄位」
+從 spike 12 得到的結論一致，兩次獨立實測同向。
+
+⚠️ **左欄標不出「你在此對話中」，也標不出「是哪位同事」。**
+前者需要 `is_joined`（清單沒有），後者需要參與者清單（`users[]` 是團隊名冊）。
+因此左欄第二行的 presence 措辭**只能是不指名、也不區分是不是自己的說法**
+（見 `DESIGN_TOKENS.md` §8.2 的偏離說明）。
+
+#### 10.2.1a 「標出我 JOIN 的每一則」怎麼做的（2026-09-01 已實作）
+
+正典程式碼在 `server/services/viewer-joined.ts`，那裡的檔頭有完整的成本模型與盲區清單，
+**這一節只放不看程式碼也必須知道的三件事**：
+
+1. **候選集合是 `mode ∈ {manual, hybrid}`，不是 `is_agent_joined`。**
+   後者單向黏著、只增不減（上表），上線幾個月後會趨近全部對話，等於退化成「查每一列」。
+   而「現在有人在」量的是**團隊規模 × 每人並行數**，與一天進來幾則無關 ——
+   一天 500 則、10 位客服每人同時開 3 則，候選仍是 30。
+2. **刻意不設 TTL**（2026-09-01 使用者以「上線後一天可能上百則」為由裁定）。
+   失效訊號是 `mode` 變動（清單輪詢免費偵測）＋ 我方自己的 JOIN／LEAVE／切換 mode
+   （寫穿快取）＋ 開啟對話時回填。**穩定狀態的額外呼叫是 0** ——
+   前景清單輪詢 3 秒一次，全部命中快取。
+3. **`Conversation.viewerJoined` 的 `undefined` 不等於 `false`。**
+   單輪解析有上限（`VIEWER_JOINED_RESOLVE_LIMIT`），排不進來的留到下一輪。
+   UI MUST 用 `=== true` 判斷 —— 反推會在還沒解析完的瞬間說出我們還不知道的結論。
+
+⚠️ **不可改用 `store.listJoinedConversations()` 單獨兜** —— 那份記錄在記憶體裡，
+重啟／HMR 後歸零，也記不到官方介面的 JOIN（同一個家族的不同步已經害過一次，
+見 `conversation-context.ts::isViewerJoined()` 的註解）。它在新設計裡是**快路徑**，
+不是真相來源。
+
+⚠️ **`joinedConversations` 與「判定快取」是兩個不同的東西，不可合併**：
+前者只記得住 `true`，後者必須連「答案是 false」都記得住 ——
+否則同事的對話每一輪都會再向平台問一次，那正是這個快取要避免的成本。
+
 **僅存的盲區**：`automation` 對「真的沒人」與「有人但純觀察」無法區分——但這不構成撞單風險。`IMBRACE_QUESTIONS.md` A-1 要求 webhook payload 附帶完整 operator 清單，就是為了補上這個 presence 語意上的缺口（非撞單防護所需）。在 webhook 到位前，撞單防護仍以 §10.4 的送出前檢查兜底——那一層本來就是真正有效的防線。
 
 ### 10.3 第二層：JOIN 意圖廣播（advisory lock）
@@ -1347,6 +1408,13 @@ export type SentimentTimelineEntry = SentimentPoint | SentimentMarker
 
 /** 對話摘要（冷啟動與增量共用同一結構） */
 export interface ConversationSummary {
+  /**
+   * 摘要正文（畫布 2a「對話摘要」的主體，2026-09-01 新增）。
+   * ⚠️ 選填 —— 見下方「⚠️ narrative／topics 為什麼必須是選填」。
+   */
+  narrative?: string
+  /** 主題標籤（「發票未收到」「地址確認」），最多 4 個、每個 ≤ 16 字。同樣選填 */
+  topics?: string[]
   intent: string                // 客戶主要意圖
   keyFacts: string[]            // 已確認的事實（如「已重啟設備 ×3」）
   attempted: string[]           // 已嘗試但無效的處理
@@ -1356,7 +1424,27 @@ export interface ConversationSummary {
   updatedAt: string
   basedOnMessageId: string      // 版本錨點，用於增量與快取
 }
+```
 
+> ⚠️ **`narrative`／`topics` 為什麼必須是選填，而且驗不過時要轉 `undefined` 而非拋錯**
+>
+> 摘要的**輸出欄位定義寫在 iMBrace 後台 `AgentCopilot_摘要_agent` 的 system prompt 裡，
+> 不在這個 repo**（repo 內的 prompt 只有一句「請摘要以下客服對話」＋語言規則，
+> 見 `server/services/ai/imbrace-agent-provider.ts`）。也就是說：
+> **一個 repo 外、任何人都能改的設定，決定了這兩個欄位存不存在。**
+>
+> 若把它們標成必填，後台一被改回舊版（或某一次模型回了空字串、回了不是陣列的 `topics`），
+> 這裡就會整份摘要驗不過 → 摘要區塊全面轉 `error`。因此 `schemas.ts` 讓這兩個欄位走
+> `z.unknown().transform()`：**任何驗不過的值一律轉成 `undefined`，不拋錯**。
+> UI 在 `narrative` 缺值時退回以 `intent` 當正文。
+>
+> ⚠️ 這與 `intent`／`advice` 用 `.min(1)`（空字串視同分析失敗）**刻意不同** ——
+> 那兩個是摘要的主體，沒有它們這份摘要本來就沒有意義；`narrative`／`topics` 是版面的加分項。
+>
+> ⚠️ **後台 prompt 與這裡的 schema 會各自漂移，而漂移不會報錯**（只會安靜地少一段正文）。
+> 動到摘要欄位時，兩邊都要改，並用 `npm run spike:verify-provider` 實測輸出是否仍合規。
+
+```ts
 /** 建議回覆卡 */
 export interface SuggestionCard {
   id: string
@@ -1702,7 +1790,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 - Sidebar 可收合；中／右欄之間可拖曳調寬（不同客服對「對話 vs 建議」的比重偏好差異很大）；右欄可暫時全屏（閱讀長 SOP 時需要）；分欄寬度存於 `localStorage`
 
-> 右欄的五個區塊以 §14.1.1 為準，本圖與該節必須一致。**「AI 轉接摘要」不在右欄**——依 demo 對照它屬於左欄（見 `PLATFORM_CAPABILITY.md` §2）。
+> 右欄的六個區塊以 §14.1.1 為準，本圖與該節必須一致。**「AI 轉接摘要」不在右欄**——依 demo 對照它屬於左欄（見 `PLATFORM_CAPABILITY.md` §2）。
 >
 > 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 **420px**（可拖曳 320–720px）、五區塊皆可折疊、支援載入骨架與「準備結案」收合態。
 >
@@ -1719,7 +1807,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ### 14.1.1 右欄的區塊與捲動
 
-依 `demo_agentCopilot02.png`（後由畫布 artboard 2a 確認，見 `DESIGN_TOKENS.md` §7.2），右欄自上而下共五個區塊：① 客戶情緒提示（處理中最常看）② AI 語意即時建議（處理中最常用）③ 知識庫自然語言快查（隨時可能用）④ AI 階段完整對話紀錄（可折疊，偶爾回顧）⑤ 結案摘要自動填入（只在結案時使用）。
+依 `demo_agentCopilot02.png`（後由畫布 artboard 2a 確認，見 `DESIGN_TOKENS.md` §7.2），右欄自上而下共**六個區塊**，依處理中的使用頻率排：① 客戶情緒提示（處理中最常看）② **對話摘要**（接手前必讀）③ AI 語意即時建議（處理中最常用）④ 知識庫自然語言快查（隨時可能用）⑤ AI 階段完整對話紀錄（可折疊，偶爾回顧）⑥ 結案摘要自動填入（只在結案時使用）。⚠️ 第②塊是畫布 2026-08-31 新增的，先前這裡寫「五個區塊」且不含它。
 
 > ⚠️ **2026-08-28：⑤ 的「只在結案時使用」是硬性的 —— 未進入結案流程時 MUST 完全不呈現該區塊。**
 > 兩個理由：① 常駐會讓「這個區塊」與「結案按鈕」的關係曖昧不明；② 區塊若常駐就得在某個時機
@@ -1943,7 +2031,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M2 — Copilot 核心
 
-**內容**：摘要卡、情緒 sparkline、建議卡、一鍵帶入、知識庫自然語言快查（inline 面板，見 §12.3；
+**內容**：對話摘要、情緒 sparkline、建議卡、一鍵帶入、知識庫自然語言快查（inline 面板，見 §12.3；
 2026-08-27 由 M3 併入——快查與建議卡共用同一個 `KnowledgeProvider` 裝配，拆開反而要重複組裝）；
 前景／背景分級、debounce、快取；知識庫直接採 `AgentKnowledgeProvider`（§8.2）。
 **不含**客戶資料卡（§19.1 #21）、語音與舊資料型 `file` 附件、圖片／PDF 的 vision 分析（皆延至 M3）。
@@ -2002,9 +2090,16 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 - [x] 中欄標題列改為狀態驅動的兩態（未接手→「接手對話」＋下拉；已接手→「離開對話」＋「結案」），
       已對照畫布 artboard 1c（003 T032）
-- [x] Copilot 面板（artboard 2a）五個區塊的圖示、色票、文案與 `error`／`retrying` 狀態逐一核實完成。
-      ⚠️ **摘要卡是第六個區塊，畫布上完全沒有**——目前的樣子由實作自訂，已列入 `DESIGN_FEEDBACK.md` C-4
-      向 Design 索取設計。對話紀錄／結案摘要屬 M3
+- [x] Copilot 面板（artboard 2a）各區塊的圖示、色票、文案與 `error`／`retrying` 狀態逐一核實完成。
+      對話紀錄／結案摘要屬 M3。
+      ✅ **「對話摘要」已成為畫布的第六個區塊**（畫布 2026-08-31 新增，實作 2026-09-01 對齊）——
+      先前它是實作自訂、畫布沒有的區塊（舊 `DESIGN_FEEDBACK.md` C-4，已結清）。
+      ⚠️ 它的正文與主題標籤（`narrative`／`topics`）由 **iMBrace 後台的 agent prompt** 決定，
+      不在這個 repo 裡；兩者在 schema 一律選填，理由見 §11.5 的說明框
+- [x] 面板 header 改為 `flex:none` 的 42px 固定列（畫布 2a），不再隨內容捲動；
+      「全部重試」改為**只在有區塊失敗時出現**（畫布 `sc-if anyError`，2026-09-01 使用者裁定）
+- [x] 中欄的對話標頭與服務模式改為**兩個各自帶 `border-bottom` 的區塊**（畫布 1c）——
+      先前兩段包在同一個 `<header>` 裡，中間那條分隔線整條不見
 - [x] 左側清單（`Sidebar.vue`）與中欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、
       `PresenceBar.vue`、`ModeSelect.vue`）已對照畫布 artboard 1c 及其 10 個狀態變體核實完成。
       ⚠️ 唯一未關閉的是 **Composer 的夾帶檔案按鈕（M3 範圍**，且卡在 `IMBRACE_QUESTIONS.md` H-6c

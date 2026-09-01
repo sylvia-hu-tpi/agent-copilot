@@ -21,6 +21,7 @@
 | `OrganizationMembership` 帶 `role`／`is_admin` | ✅ 成立，可望沿用平台角色（值域待確認） | `ARCHITECTURE.md` §10.6 |
 | `auth.exchangeAccessToken()` 回傳 `refresh_token` | ✅ 成立 | `ARCHITECTURE.md` §7.1 |
 | `Environment` 型別含 `sandbox` | ✅ 成立 | — |
+| `getViewsCount()` 的 view 是 all／joined／yours（SDK 註解逐字如此） | ❌ **推翻**：實測回的是 **status** 分組 `{active, open}`；`list({type})` 四種型別全回 0 筆 —— **沒有「只列出我 JOIN 的」這條路** | `ARCHITECTURE.md` §10.2.1、`out/23-views.json` |
 
 > 📌 **唯一該記住的方法論教訓**：型別宣告只說「有這個欄位」，不說「這個欄位是什麼意思」。
 > `users[]` 是最典型的例子——欄位存在、有值、型別完全對，但語意跟預期完全不同。
