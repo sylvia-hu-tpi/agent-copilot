@@ -118,6 +118,18 @@ watch(() => view.control.value?.mode, (mode) => {
   if (item) item.mode = mode ?? null
 })
 
+/**
+ * 同上，但同步的是「你在此對話中」（`viewerJoined`，§10.2.1）。
+ *
+ * ⚠️ **不能只靠伺服器端的快取寫穿。** 那一份要等側欄下一次 `load()` 才會被讀到，
+ *    而 `load()` 只在掛載與搜尋字串變動時才跑 —— 客服按下「接手對話」之後，
+ *    中欄立刻變了、左欄卻要等到下次重新整理才改，看起來像是接手沒有生效。
+ */
+watch(() => view.viewerJoined.value, (joined) => {
+  const item = conversations.items.find(c => c.id === conversationId.value)
+  if (item) item.viewerJoined = joined
+})
+
 function select(id: string): void {
   if (id === conversationId.value) return
   void router.push(`/c/${id}`)

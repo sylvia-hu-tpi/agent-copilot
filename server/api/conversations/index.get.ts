@@ -9,6 +9,8 @@ import type { Conversation as SdkConversation } from '@imbrace/sdk'
 import { toConversation, unwrapPaged } from '../../sources/mappers.js'
 import { searchConversations } from '../../services/imbrace.js'
 import { resolveBusinessUnitId } from '../../services/business-unit.js'
+import { annotateViewerJoined } from '../../services/viewer-joined.js'
+import { useStateStore } from '../../state/index.js'
 import { imbraceClientFor } from '../../utils/imbrace-client.js'
 import { requireActiveBffSession } from '../../utils/session.js'
 import { getQueryAs } from '../../utils/validate.js'
@@ -32,6 +34,17 @@ export default defineEventHandler(async (event) => {
 
   const res = await searchConversations(client, { businessUnitId, q, limit, offset: skip })
   const items = unwrapPaged<SdkConversation>(res).map(toConversation)
+
+  /*
+    補上「你在此對話中」的 `viewerJoined`（畫布 §8.2）。
+
+    ⚠️ 這是**加值步驟，不是必要步驟**：平台清單根本沒有 `is_joined`（實測 0/16，§10.2.1），
+       要標就得自己補查詳情。成本控制、候選集合為什麼是 `mode` 而不是 `is_agent_joined`、
+       以及兩個已知盲區，全部寫在 `annotateViewerJoined()` 的檔頭。
+    ⚠️ 它**不會拋錯**（內部 `allSettled`）—— 補查失敗時清單照常回，只是少了標記。
+       在這裡加 try/catch 會蓋掉真正該冒出來的錯，所以刻意不加。
+  */
+  await annotateViewerJoined(useStateStore(), client, session.operatorId, items)
 
   /**
    * 側欄底部「顯示 N / M」的 M。

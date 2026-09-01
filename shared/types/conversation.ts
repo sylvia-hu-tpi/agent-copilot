@@ -105,6 +105,20 @@ export interface Conversation {
    */
   createdAt?: string
   updatedAt: string
+  /**
+   * **「我」有沒有 JOIN 這一則** —— 左欄列項第二行的「你在此對話中」（畫布 §8.2）。
+   *
+   * ⚠️ **這個欄位不是平台清單 payload 給的，是 BFF 解析後補上的。**
+   *    實測清單 16 筆之中 **0 筆**帶 `is_joined`（§10.2.1、`out/23-list-join-fields.json`），
+   *    那個欄位只有單筆 `conversations.get()` 才有。解析邏輯與成本控制見
+   *    `server/services/viewer-joined.ts`。
+   *
+   * ⚠️ **`undefined` 不等於 `false`。** 它代表「這一輪還沒解析」——
+   *    候選集合有單輪上限，排不進來的會留到下一輪；解析失敗時也是 `undefined`。
+   *    UI MUST 用 `=== true` 判斷，MUST NOT 用 `!viewerJoined` 去斷言「不是我」，
+   *    後者會在還沒解析完的那一瞬間說出一個我們還不知道的結論。
+   */
+  viewerJoined?: boolean
 }
 
 /**

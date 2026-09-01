@@ -5,9 +5,13 @@
  * ⚠️ 對話名稱實際是 `TWN#GW4772` 這類代號而非人名，因此以等寬字顯示 ——
  *    這類代號是要逐字核對的東西。`name` 可能為空，退回 `contactId`。
  *
- * ⚠️ **`mode` 徽記只顯示「有人能送出訊息」，不顯示「有人在看」。**
+ * ⚠️ **第二行的 presence 標記只顯示「有人能送出訊息」，不顯示「有人在看」。**
  *    `automation` 對「沒人」與「有人但唯讀觀察」無法區分（§10.2），
  *    所以沒有值的時候什麼都不標，而不是標成「無人」。
+ *
+ * ⚠️ **`viewerJoined`（「你在此對話中」）不是平台清單給的欄位，是 BFF 解析後補上的**
+ *    —— 清單實測 0/16 沒有 `is_joined`（§10.2.1）。解析有單輪上限，因此它可能是
+ *    `undefined`（＝「還不知道」）。判斷一律用 `=== true`，見 template 內的說明。
  */
 
 import type { Conversation } from '#shared/types/conversation'
@@ -411,26 +415,20 @@ function clockTime(iso?: string): string {
 
             <span class="flex-1" />
 
-            <!--
-              未讀徽記：只在非聚焦對話上亮。
-              ⚠️ **刻意是圓點而不是畫布的數字**（2026-08-29 使用者裁定）：
-                 我方唯一的新訊息訊號是 `last_message_at` 跳動，一次輪詢間隔（前景 3 秒）內
-                 來幾則都只跳一次，數出來的是「批次數」不是「則數」。與其顯示一個會低估的
-                 數字，不如只表達準確的那一件事——「有新訊息」。
-                 平台若日後提供未讀數或訊息則數，這裡再改回數字。
-            -->
-            <span
-              v-if="unread.has(c.id)"
-              class="size-1.5 shrink-0 rounded-full"
-              :style="{ background: 'var(--navy-2)' }"
-              :aria-label="$t('sidebar.unread')"
-            />
-
             <time class="ac-mono shrink-0 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
               {{ clockTime(c.lastMessageAt ?? c.updatedAt) }}
             </time>
           </div>
 
+          <!--
+            第二行（畫布 §8.2，2026-09-01 版）：
+            `[頻道 icon] [presence icon＋文字] ←彈性→ [未讀圓點＋「未讀」]`
+
+            ⚠️ **未讀在第二行右端，不在第一行。** 第一行是「代號 · status · 時間」——
+               那三樣是這則對話的身分，未讀是它此刻的狀態，畫布把兩者分層了。
+            ⚠️ presence 與未讀都是 **icon／圓點 ＋ 文字**，不是純圖示（憲法 8.1：
+               顏色與形狀不是唯一資訊來源）。先前 presence 是一顆沒有文字的綠色 chip。
+          -->
           <div class="mt-1 flex items-center gap-1.5 pl-9 text-[0.8125rem]">
             <img
               v-if="CHANNEL_ICON[c.channel]"
@@ -444,17 +442,64 @@ function clockTime(iso?: string): string {
               class="rounded-full px-1.5 py-0.5"
               :style="{ background: 'var(--surface-3)', color: 'var(--text-2)' }"
             >{{ c.channel }}</span>
+
             <!--
-              ⚠️ 只在「有人能送出訊息」時標記。沒有值的時候什麼都不標 ——
-                 automation 對「沒人」與「有人但唯讀」無法區分（§10.2）
+              presence 標記 —— 畫布有三態（「你在此對話中」／「無客服在此」／「{email} 在此」），
+              我方做得出其中**兩態**（2026-09-01，證據見 §10.2.1 與
+              `scripts/spike/out/23-list-join-fields.json`）：
+
+              ⚠️ **`viewerJoined` 用 `=== true` 判斷，不可用 `!viewerJoined` 反推「不是我」。**
+                 `undefined` 是「這一輪還沒解析」（候選有單輪上限，見 `viewer-joined.ts`），
+                 不是「不是我」—— 反推會在還沒解析完的那一瞬間說出我們還不知道的結論。
+                 此時退回下面那一態（「有客服在此」）是**安全的方向**：它不指名，
+                 頂多是該標成「你」的暫時標成一般的「有客服」，不會把同事的對話標成你的。
+
+              ⚠️ **不寫「無客服在此」** —— `mode` 為 `automation`／`null` 時，「沒人」與
+                 「有人但選了 Automation Only（唯讀觀察）」是同一個值（§10.2）。
+                 ⚠️ 也**不可**改用 `is_agent_joined` 來補：實測它 LEAVE 後仍維持 `true`
+                 （16 筆裡沒有任何一筆是 `false`），代表的是「曾經有人 JOIN 過」而非「現在有人」。
+              ⚠️ **不寫是誰** —— 清單 payload 沒有參與者身分（`users[]` 是團隊名冊）。
+              ⚠️ 第二態的措辭是「有**客服**」而不是「有**同事**」—— 它涵蓋
+                 「`viewerJoined` 還沒解析出來」的情況，那時裡面的人也可能是你自己。
+                 寫「同事」等於斷言那個人不是你。
             -->
             <span
-              v-if="someoneElseCanSend(c.mode)"
-              class="ml-auto flex items-center gap-1 rounded-full px-1.5 py-0.5"
-              :style="{ background: 'var(--active-bg)', color: 'var(--active)' }"
-              :title="$t('presence.unidentified')"
+              v-if="c.viewerJoined === true"
+              class="flex min-w-0 items-center gap-1"
+              :style="{ color: 'var(--navy-2)' }"
+              :title="$t('presence.youHere')"
             >
-              <UIcon name="i-lucide-user-check" class="size-3.5" />
+              <UIcon name="i-lucide-user-check" class="size-3 shrink-0" />
+              <span class="truncate">{{ $t('presence.youHere') }}</span>
+            </span>
+            <span
+              v-else-if="someoneElseCanSend(c.mode)"
+              class="flex min-w-0 items-center gap-1"
+              :style="{ color: 'var(--text-2)' }"
+              :title="$t('presence.someoneHereHint')"
+            >
+              <UIcon name="i-lucide-user-check" class="size-3 shrink-0" />
+              <span class="truncate">{{ $t('presence.someoneHere') }}</span>
+            </span>
+
+            <span class="min-w-0 flex-1" />
+
+            <!--
+              未讀徽記。
+              ⚠️ **刻意是圓點＋「未讀」而不是畫布早期版本的數字**（2026-08-29 使用者裁定）：
+                 我方唯一的新訊息訊號是 `last_message_at` 跳動，一次輪詢間隔（前景 3 秒）內
+                 來幾則都只跳一次，數出來的是「批次數」不是「則數」。與其顯示一個會低估的
+                 數字，不如只表達準確的那一件事——「有新訊息」。
+                 2026-09-01 的畫布本身也已改成「圓點＋『未讀』」，兩邊現在一致。
+            -->
+            <span
+              v-if="unread.has(c.id)"
+              class="flex shrink-0 items-center gap-1"
+              :style="{ color: 'var(--navy-2)' }"
+              :aria-label="$t('sidebar.unread')"
+            >
+              <span class="size-1.5 shrink-0 rounded-full" :style="{ background: 'var(--navy-2)' }" aria-hidden="true" />
+              {{ $t('sidebar.unreadLabel') }}
             </span>
           </div>
         </button>

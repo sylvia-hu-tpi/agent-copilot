@@ -20,6 +20,7 @@
     "title": "對話",
     "loadFailed": "讀取對話清單失敗",
     "unread": "有新訊息",
+    "unreadLabel": "未讀",
     "filter": "依狀態篩選",
     "filterAll": "全部",
     "loadMore": "載入更多對話…",
@@ -55,6 +56,9 @@
     "repliedAgo": "{time}回覆過",
     "unknownName": "另一位同事",
     "unidentified": "有同事正在處理（無法確認身分）",
+    "youHere": "你在此對話中",
+    "someoneHere": "有客服在此",
+    "someoneHereHint": "有客服在此對話中 —— 平台不提供是誰，也分不出是不是你自己",
     "none": "沒有偵測到其他人",
     "sourceHint": "「回覆過」代表對方曾經發言，不代表現在還在線上。"
   },

@@ -293,6 +293,35 @@ async function main(): Promise<void> {
       joinBody?.team_conversation_id?.startsWith('tcu_') === true
       && joinBody?.conversation_id === undefined, JSON.stringify(joinBody))
 
+    /*
+      左欄「你在此對話中」的 HTTP 往返（§10.2.1）。
+
+      ⚠️ **這一段只有 smoke 驗得到。** `viewerJoined` 不是平台清單給的欄位，是 BFF
+         在清單路由裡補上的；單元測試驗的是 `annotateViewerJoined()` 本身，
+         驗不到「它有沒有真的接在 `/api/conversations` 上、有沒有隨回應送出去」——
+         少接一行的症狀是欄位永遠 undefined，而型別與單元測試都不會有任何反應。
+    */
+    /**
+     * 平台的「單筆詳情」請求數 —— 用來驗證快取真的擋掉了補查。
+     * ⚠️ 先接成 const：`gateway` 宣告為 `MockGateway | undefined`，
+     *    在 closure 裡 TS 收斂不到，直接用會是 TS18048。
+     */
+    const gw = gateway
+    const detailCalls = (): number => gw.requests.filter(
+      r => r.path.includes('/team_conversations/') && !r.path.includes('_'),
+    ).length
+
+    const before = detailCalls()
+    const listAfterJoin = await call('/api/conversations')
+    const afterJoinJson = JSON.parse(listAfterJoin.body) as {
+      items?: Array<{ id?: string, viewerJoined?: boolean }>
+    }
+    const mine = afterJoinJson.items?.find(c => c.id === CONV)
+    check('JOIN 後清單標出「你在此對話中」（viewerJoined 為 true）',
+      mine?.viewerJoined === true, JSON.stringify(mine))
+    check('且沒有為此多打一次平台詳情 —— JOIN 已寫穿快取（前景輪詢 3 秒一次，這是成本的關鍵）',
+      detailCalls() === before, `詳情請求數 ${before} → ${detailCalls()}`)
+
     console.log('\n── M1 撞單防護（§10.4 —— 唯一有效的一層）──────────')
     const anchor = msgListJson.lastMessageId ?? null
 

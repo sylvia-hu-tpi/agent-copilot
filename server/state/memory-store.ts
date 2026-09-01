@@ -13,6 +13,7 @@ import type {
   CopilotSession,
   Session,
   StateStore,
+  ViewerJoinedEntry,
 } from './types.js'
 import type { PresenceEntry } from '../../shared/types/conversation.js'
 
@@ -22,6 +23,20 @@ interface Expiring<T> {
 }
 
 const SWEEP_INTERVAL_MS = 60_000
+
+/**
+ * 「我有沒有 JOIN」快取的**每位客服**上限（ARCHITECTURE §10.2.1）。
+ *
+ * ⚠️ 這個快取沒有 TTL —— 它的失效訊號是 `mode` 變動，不是時間（見 `ViewerJoinedEntry`）。
+ *    沒有 TTL 就沒有東西會自然淘汰它，因此必須自己設上限：上線後一天可能有數百則對話，
+ *    每一則被列出來都會留下一筆，不設限就是一條慢速的記憶體洩漏。
+ *
+ * ⚠️ 取 500 是「側欄載入上限 100（`BACKGROUND_COVERAGE`）」的五倍 ——
+ *    要能同時裝下客服來回捲動、切換篩選所觸及的範圍，又不至於無限成長。
+ *    淘汰採插入順序（Map 的天然順序）：最舊的先走，被淘汰的下次會重新解析一次，
+ *    只是多一次 API 呼叫，不會答錯。
+ */
+const VIEWER_JOINED_CACHE_MAX = 500
 
 function alive<T>(e: Expiring<T> | undefined, now: number): e is Expiring<T> {
   return e !== undefined && e.expiresAt > now
@@ -37,6 +52,8 @@ export class MemoryStateStore implements StateStore {
   private seenKeys = new Map<string, number>()
   /** operatorId → 已 JOIN 的 conversationId 集合（specs/002-suggestion-knowledge-search，不設 TTL） */
   private joinedConversations = new Map<string, Set<string>>()
+  /** operatorId → (conversationId → 判定)。⚠️ 記得住 false，這是它與上面那個的關鍵差別 */
+  private viewerJoined = new Map<string, Map<string, ViewerJoinedEntry>>()
 
   private sweeper: NodeJS.Timeout | undefined
 
@@ -168,6 +185,40 @@ export class MemoryStateStore implements StateStore {
 
   async listJoinedConversations(operatorId: string): Promise<string[]> {
     return [...(this.joinedConversations.get(operatorId) ?? [])]
+  }
+
+  // ── 「你在此對話中」的判定快取（§10.2.1）────────────────────────────
+
+  async getViewerJoined(
+    operatorId: string,
+    conversationId: string,
+  ): Promise<ViewerJoinedEntry | undefined> {
+    return this.viewerJoined.get(operatorId)?.get(conversationId)
+  }
+
+  async setViewerJoined(
+    operatorId: string,
+    conversationId: string,
+    entry: ViewerJoinedEntry,
+  ): Promise<void> {
+    let byConv = this.viewerJoined.get(operatorId)
+    if (!byConv) {
+      byConv = new Map()
+      this.viewerJoined.set(operatorId, byConv)
+    }
+    /*
+      ⚠️ 先 delete 再 set —— Map 對「已存在的 key 重新賦值」**不會**更新插入順序，
+         少了這一行，一直在被使用的熱門對話會停在原本的位置，
+         淘汰時反而先被丟掉，而真正冷掉的那些卻留著。
+    */
+    byConv.delete(conversationId)
+    byConv.set(conversationId, entry)
+
+    while (byConv.size > VIEWER_JOINED_CACHE_MAX) {
+      const oldest = byConv.keys().next()
+      if (oldest.done) break
+      byConv.delete(oldest.value)
+    }
   }
 
   // ── 去重 ────────────────────────────────────────────────────────────

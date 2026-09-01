@@ -218,6 +218,33 @@ export interface StateStore {
   removeJoinedConversation(operatorId: string, conversationId: string): Promise<void>
   /** SSE 連線建立時查詢，用於重建背景 watch */
   listJoinedConversations(operatorId: string): Promise<string[]>
+
+  // ── 左欄「你在此對話中」的判定快取（ARCHITECTURE §10.2.1）─────────────
+  //
+  // ⚠️ **與上面三支是不同的東西，不可合併。** `joinedConversations` 是「經我方 BFF
+  //    JOIN 過的」正向集合，只記得住 true；這裡要記的是**問過平台之後的答案**，
+  //    而「答案是 false」同樣必須記得住 —— 否則同事的對話每輪都會再問一次平台，
+  //    那正是這個快取要避免的成本。
+
+  /** `undefined` ＝ 沒問過（或已被淘汰），**不等於 false** */
+  getViewerJoined(operatorId: string, conversationId: string): Promise<ViewerJoinedEntry | undefined>
+  setViewerJoined(operatorId: string, conversationId: string, entry: ViewerJoinedEntry): Promise<void>
+}
+
+/**
+ * 「我有沒有 JOIN 這一則」的快取項。
+ *
+ * ⚠️ **`mode` 是失效訊號，不是除錯欄位。** 平台的 `is_joined` 只有單筆詳情才有，
+ *    我們負擔不起每輪對每一列各查一次（前景清單輪詢是 3 秒一次）。
+ *    但 `mode` 在清單裡是免費的，而且 JOIN／LEAVE 一定伴隨 `mode` 變動
+ *    （`null`／`automation` ⇄ `manual`／`hybrid`，§10.2）——
+ *    所以「解析當下的 mode」與「現在的 mode」不同，就是重新解析的時機。
+ *    少了這個欄位就只剩 TTL，而 TTL 會讓成本隨候選集合線性成長。
+ */
+export interface ViewerJoinedEntry {
+  joined: boolean
+  /** 解析當下該對話的 `mode`；與現值不同即視為過期 */
+  mode: string | null
 }
 
 export type Unsubscribe = () => void

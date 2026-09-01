@@ -41,6 +41,12 @@ export default defineEventHandler(async (event) => {
   // 背景 JOIN 持久追蹤（specs/002-suggestion-knowledge-search/research.md #8）
   await store.removeJoinedConversation(session.operatorId, ctx.id)
 
+  /*
+    左欄判定快取寫穿（§10.2.1）。⚠️ mode 記成 `automation` —— LEAVE 後平台就是把它帶回
+    這個值（見本檔檔頭），寫成別的會讓下一次輪詢誤判成「mode 變了、快取過期」而多查一次。
+  */
+  await store.setViewerJoined(session.operatorId, ctx.id, { joined: false, mode: 'automation' })
+
   const control = controlFromMode('automation')
   if (!duplicate) {
     await useEventBus().publish(conversationTopic(ctx.id), {

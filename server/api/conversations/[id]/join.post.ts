@@ -54,6 +54,16 @@ export default defineEventHandler(async (event) => {
   // 供 SSE 重連復原背景 watch，獨立於 watcher refcount
   await store.addJoinedConversation(session.operatorId, ctx.id)
 
+  /*
+    左欄「你在此對話中」的判定快取（§10.2.1）—— 寫穿，讓側欄下一次輪詢立刻標對，
+    不必再向平台補查一次詳情。
+
+    ⚠️ 這與上一行**不是同一件事**：`addJoinedConversation()` 只記得住 true，
+       而快取必須連「答案是 false」都記得住（否則同事的對話每輪都會重新問平台）。
+       兩個都要寫。
+  */
+  await store.setViewerJoined(session.operatorId, ctx.id, { joined: true, mode })
+
   await reportViewing(
     store,
     ctx.id,

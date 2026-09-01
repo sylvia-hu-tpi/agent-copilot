@@ -46,6 +46,16 @@ export default defineEventHandler(async (event) => {
   const control = controlFromMode(mode)
   const bus = useEventBus()
 
+  /*
+    左欄「你在此對話中」的判定快取（§10.2.1）—— 切換 mode 會讓既有的快取項過期
+    （它以「解析當下的 mode」當失效訊號），寫穿可以省掉下一次輪詢的一次補查。
+
+    ⚠️ 切成 `automation` **不等於離開** —— 那是 Automation Only（唯讀），人還在裡面
+       （§10.6）。因此 `joined` 沿用剛剛查到的 `ctx.viewerJoined`，
+       MUST NOT 因為 mode 變成 automation 就寫成 false。
+  */
+  await store.setViewerJoined(session.operatorId, ctx.id, { joined: ctx.viewerJoined, mode })
+
   await bus.publish(conversationTopic(ctx.id), {
     type: 'control.updated',
     conversationId: ctx.id,
