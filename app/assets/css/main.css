@@ -37,8 +37,20 @@
 
   --active: #17845c;
   --active-bg: #e7f5ef;
-  --open: #a3700a;
+  /*
+   * ⚠️ --open 2026-09-01 由 #a3700a 調深為 #8a5d05：舊值疊在 --open-bg 上只有 3.87:1，
+   * 過不了 WCAG AA 內文的 4.5:1。新值 5.17:1。這一改同時修好所有拿 --open 當文字的地方
+   * （摘要過期提示、知識庫過期註記、open 狀態標籤、建議卡的「挽留」語氣標籤）。
+   */
+  --open: #8a5d05;
   --open-bg: #fbf2df;
+  --open-bd: #e0c58c;
+
+  /*
+   * --info 專供 --navy-soft 底上的文字（建議卡的「說明」語氣標籤）。
+   * ⚠️ 不要改用 --navy-2 —— 它同時是按鈕的 hover 底色，為了這裡調亮會讓按鈕上的白字失去對比。
+   */
+  --info: #20406f;
 
   --ai: #5348a8;
   --ai-bg: #f2f1fb;
@@ -97,6 +109,9 @@
   --active-bg: #14251f;
   --open: #d8a340;
   --open-bg: #271f12;
+  --open-bd: #4d3d1c;
+
+  --info: #9dc0f2;
 
   --ai: #a79cf2;
   --ai-bg: #1d1e2e;
@@ -127,17 +142,12 @@ body {
 }
 
 /*
- * 捲軸 —— 畫布的**每一個**捲動容器都逐字帶著同一組值
- * （左欄清單、訊息流、右欄面板、建議卡與附件的內捲區，無一例外）：
+ * 捲軸 —— **8px 是畫布的規格**（`::-webkit-scrollbar { width:8px }` ＋ `--border-strong`
+ * 滑塊 ＋ 透明軌道），不是我方自訂的數字。
  *
- *     scrollbar-width: thin;
- *     scrollbar-color: var(--border-strong) transparent;
- *
- * ⚠️ **寬度刻意偏離畫布：改用固定 8px**（2026-08-31 使用者裁示）。
- *    `thin` 的實際像素由瀏覽器決定（Chromium 約 11px、Firefox 約 12px），
- *    標準屬性沒有再調細的手段，而使用者判定那個寬度在四欄並排時過重。
- *    畫布只寫了 `thin`、沒有給 px 值，所以這是**我方補上的數字**，不是對齊畫布 ——
- *    日後畫布若給出 px 值，以畫布為準。（已記入 docs/DESIGN_FEEDBACK.md）
+ * ⚠️ 畫布曾經只寫 `scrollbar-width:thin`，那不足以當規格 —— `thin` 的實際像素由瀏覽器決定
+ *    （Chromium 約 11px、Firefox 約 12px），同一份設計在兩個瀏覽器不一樣寬。
+ *    2026-08-31 已請畫布補上 px 值並移除標準屬性那組。
  *
  * ⚠️ **兩套規則不能並存在同一個元素上。** Chromium 只要看到 `scrollbar-width` 或
  *    `scrollbar-color` 是非初始值，就會**整組忽略** `::-webkit-scrollbar`。

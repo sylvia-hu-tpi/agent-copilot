@@ -25,15 +25,32 @@ const emit = defineEmits<{ insert: [text: string] }>()
 
 const { t } = useI18n()
 
-const TONE_CLASS: Record<SuggestionCard['tone'], { background: string, color: string }> = {
-  apologetic: { background: 'var(--warn-bg)', color: 'var(--warn)' },
-  informative: { background: 'var(--surface-3)', color: 'var(--text-2)' },
-  retention: { background: 'var(--warn-bg)', color: 'var(--warn)' },
-  closing: { background: 'var(--surface-3)', color: 'var(--text-2)' },
-  escalating: { background: 'var(--danger-bg, var(--warn-bg))', color: 'var(--danger, var(--warn))' },
+/**
+ * 語氣標籤的五種配色與圖示 —— **逐字取自畫布 artboard 3a 的語氣標籤色票**
+ * （`docs/DESIGN_TOKENS.md` §10），不是自訂的。
+ *
+ * ⚠️ **五種都必須看得出差別**，這是這個元件存在的唯一理由：客服要掃一眼就知道
+ *    「這句話是致歉還是升級」。先前「挽留」與「致歉」同為 `--warn` 系，兩者分不出來。
+ *
+ * ⚠️ **「升級」是整份設計裡唯一使用紅色系的標籤**，刻意與「致歉」的琥珀 `--warn`
+ *    分屬兩個色相 —— 這兩者的處置強度差最遠，色相分開後在小尺寸與深色主題下才分得出來。
+ *
+ * ⚠️ 「說明」的文字用 `--info` 而**不是** `--navy-2`：後者同時是按鈕的 hover 底色，
+ *    為了這裡調亮會讓按鈕上的白字失去對比。
+ */
+const TONE: Record<SuggestionCard['tone'], { color: string, background: string, borderColor: string, icon: string }> = {
+  apologetic: { color: 'var(--warn)', background: 'var(--warn-bg)', borderColor: 'var(--warn-bd)', icon: 'i-lucide-heart-handshake' },
+  informative: { color: 'var(--info)', background: 'var(--navy-soft)', borderColor: 'var(--navy-soft-bd)', icon: 'i-lucide-info' },
+  retention: { color: 'var(--open)', background: 'var(--open-bg)', borderColor: 'var(--open-bd)', icon: 'i-lucide-hand-heart' },
+  closing: { color: 'var(--text-2)', background: 'var(--surface-3)', borderColor: 'var(--border-strong)', icon: 'i-lucide-circle-check' },
+  escalating: { color: 'var(--danger)', background: 'var(--danger-bg)', borderColor: 'var(--danger-bd)', icon: 'i-lucide-circle-arrow-up' },
 }
 
-const toneStyle = computed(() => TONE_CLASS[props.card.tone])
+const tone = computed(() => TONE[props.card.tone])
+const toneStyle = computed(() => {
+  const { icon: _icon, ...style } = tone.value
+  return style
+})
 </script>
 
 <template>
@@ -58,11 +75,14 @@ const toneStyle = computed(() => TONE_CLASS[props.card.tone])
     <!-- 卡片標頭（畫布 2a）：知識庫來源在左、信心 pill 靠右 -->
     <div class="flex items-start gap-2">
       <!--
-        ⚠️ 語氣標籤是**刻意保留的擴充**（D-17）：畫布 2026-08-31 版已把它拿掉，
-           但「這句話是致歉還是升級」是客服掃一眼就要判斷的事，且中文比 `apologetic`
-           好讀。依語氣上色同樣是刻意擴充。日後核對時不要當成落差「訂正」掉。
+        語氣標籤：畫布 artboard 3a 的色票逐字對應（見 `TONE`）。
+        ⚠️ 形狀是 `radius:4px` 的小方角標籤，**不是** pill —— 圓角 pill 在畫布上是信心度那顆。
       -->
-      <span class="shrink-0 rounded-full px-2 py-px text-[0.78125rem]" :style="toneStyle">
+      <span
+        class="flex shrink-0 items-center gap-1 rounded border px-1.5 py-px text-[0.78125rem] font-medium"
+        :style="toneStyle"
+      >
+        <UIcon :name="tone.icon" class="size-2.5 shrink-0" />
         {{ t(`copilot.suggestion.tone.${card.tone}`) }}
       </span>
       <span class="flex min-w-0 items-center gap-1.5">
