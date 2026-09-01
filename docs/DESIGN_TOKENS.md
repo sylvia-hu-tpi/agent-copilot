@@ -14,7 +14,7 @@
 > ⚠️ **③只作視覺參考，任何數值都不要從截圖還原** —— 色票 hex、px、逐字文案一律以本文件為準。
 > 若②與③看起來不一致，**以②為準**（③較可能是舊的）；若②與①不一致，**以①為準並就地訂正②**。
 >
-> **凍結時間點：2026-08-31 版畫布**。五個 artboard（1a／1b／1c／1d／2a）全部是逐字擷取的規格。
+> **凍結時間點：2026-09-01 版畫布（當日第五版）**。六個 artboard（1a／1b／1c／1d／2a／3a）全部是逐字擷取的規格。
 >
 > ⚠️ **本文件不留變更沿革。** 畫布改版後就地訂正即可 —— ①本身就是真相來源，
 > 已比對完、已修完的議題沒有保留價值。**只有這四類該留下**：現存畫布與實作的落差、未解決的議題、
@@ -43,30 +43,32 @@
 
 | # | 項目 | 畫布 | 實作 | 為什麼 |
 |---|---|---|---|---|
-| 1 | **字級** | 見 §2 表列數字 | 全面加大約 **2.5px**，且改用 `rem` | 分兩輪、使用者確認過的刻意調整。核對字級時**只比對相對關係與 weight／letter-spacing**，絕對數值不比 |
-| 2 | **情緒走勢圖寬度** | 128×34 靠右 | **整欄寬** | 要放最多 50 個評分點 ＋ 附件標記，128px 下每點只剩 2.5px |
-| 3 | **頭像下拉裡的 email** | `text-overflow:ellipsis` 截斷 | **等寬字並允許換行，不截斷** | 那是要逐字核對「是不是我的帳號」的東西，而截斷正好蓋掉最能區分帳號的網域部分 |
-| 4 | **服務模式說明** | 只描述模式本身 | 多一句「，包含在 iMBrace 官方介面工作的同事」 | 我們的鎖只在 AgentCopilot 內有效，這個邊界必須講清楚 |
-| 5 | **拖曳把手的鍵盤操作** | 只畫滑鼠拖曳 | `role="separator"` ＋ 方向鍵／Home／End | 5px 的線對只用鍵盤的人等於不存在（憲法 8.2） |
-| 6 | **對話摘要的內容層次**（§7.2 區塊②） | 只有一段正文 ＋ pill 列 | 正文之下多一段**可展開的「詳細內容」**（已知事實／已嘗試處理／尚未解決／建議行動） | 畫布那個形狀是為「接手前 10 秒掃完」設計的，而 `keyFacts`／`openIssues`／`advice` 是掃完之後要查的東西 —— 為了版面丟掉它們不划算。預設收合；`narrative` 缺值時改為預設展開，否則整張卡幾乎是空的 |
-| 7 | **左欄第二行的 presence**（§8.2） | 三態：「你在此對話中」／「無客服在此」／「`{email}` 在此」 | **兩態**：「你在此對話中」與「有**客服**在此」，其餘留白 | 「無客服在此」證明不了（`automation` 對「沒人」與「有人但唯讀」同值，§10.2；`is_agent_joined` 單向黏著補不了）；「`{email}` 在此」清單沒有身分。第二態寫「客服」而非「同事」，因為它也涵蓋「還沒解析出是不是你」的情況 |
-| 8 | **時間戳的措辭**（§7.2 區塊②） | `generated 14:20:11` | 「**產生於** 14:20:11」（時間本身仍是 mono、到秒） | 與「推薦理由：」同一個方向：面板是給客服看的即時輔助，不是給工程師看的欄位名 |
-| 9 | **面板 header 的寬度指示**（§7.3） | `{{ width }}px` | **不做** | 那是畫布給設計師看的除錯資訊，客服用不到 |
-| 10 | **建議卡區的捲動高度**（§7.2 區塊③） | `max-height:392px` | **480px** | 幾何跟著字級一起縮放的少數幾處之一：實作字級整體加大約 1.2 倍，照抄 392px 會比畫布少露出約一張卡 |
+| 19 | **情緒示警 pill 的文案**（§7.2 區塊①） | 逐字「焦慮偏高」 | 「客戶情緒：挫折」／「客戶情緒：生氣」 | 我方是**五級分類**，畫布只示範其中一種情況的措辭。001 FR-003 要求「挫折」與「生氣」在文字上就能互相區分 |
+| 20 | **五段量表的「生氣」配色**（§7.2 區塊①） | 反白的 `--warn`（與「挫折」同色系） | `--danger` 系 | 同上：兩級共用 `--warn` 就分不出來了 |
+| 21 | **五段量表的標籤語言**（§7.2 區塊①） | `calm`／`neutral`／… | **中文**（平靜／普通／擔憂／挫折／生氣） | 面板是給客服看的即時輔助，不是給工程師看的列舉值 |
+| 22 | **走勢摘要的強調**（§7.2 區塊①） | 整段同色、無強調 | 後半的「建議…」加粗 | 客服要用的是那一句；走勢那半在折線圖上已經看得到 |
+| 23 | **走勢圖的 `score` 刻度**（§7.2 區塊①） | `score 0.72`（0–1） | `score 72`（0–100） | `SentimentPoint.score` 的定義就是 0–100，換算會讓畫面與 API／日誌變成兩套數字 |
+| 24 | **走勢圖的輪數**（§7.2 區塊①） | 逐字「近 50 輪」／「第 50 輪」 | **這張圖實際畫了幾輪**（tag 與軸標籤右端同一個數字） | 50 是視窗上限。⚠️ 實務上永遠到不了：分析輸入是最新 50 **則訊息**，其中只有客戶的文字訊息會變成評分點，約佔一半 → 天花板約 25。詳見 `SentimentGauge.vue` 的 `MAX_POINTS` 註解 |
+| 25 | **走勢圖的筆畫縮放**（§7.2 區塊①） | `stroke-width:2`（畫板固定 420px） | 加 `vector-effect="non-scaling-stroke"` | 畫布畫板寬度固定，我方面板**可拖曳 320–720px**；等比 viewBox 之下筆畫會跟著放大，720px 時那條 2 的線會變約 4px |
+| 27 | **摘要「詳細內容」四段的內文**（§7.2 區塊②） | 整段文字 | **項目符號 `<ul>`** | `keyFacts`／`attempted`／`openIssues` 是**字串陣列**，攤平成一段會失去「這是幾件獨立的事」 |
+| 28 | **左欄列項的頭像配色**（§8.2） | 一律 `--surface-3` 單一灰 | **六色輪替**（依代號雜湊） | 讓客服在長清單裡用顏色快速定位同一個對話。⚠️ **但訊息泡泡裡的客戶頭像維持單一灰**：色盤有一組是 `--ai-bg`／`--ai`，而訊息流裡 `--ai` 是語意色（「這則是 AI 發的」）。畫布自己的示範代號 `TWN#GW4772` 雜湊後正好落在那一組 |
+| 29 | **左欄「載入更多對話」**（§8.2） | spinner 自動載入列 | **可按的按鈕** | 自動載入會在往下捲時持續打 API 且無法中止 |
+| 30 | **左欄搜尋列**（§8.2） | 只有搜尋框 ＋ 收合鈕 | 多一顆重新整理鈕 | 輪詢有間隔，客服偶爾需要立刻確認清單是最新的 |
+| 31 | **未接手時的輸入區**（§8.4） | 虛線提示框取代整個輸入區 | **只有「尚未接手」照畫布** | 另兩種不能送出的情況（Automation Only 唯讀、同事鎖）維持「說明框 ＋ 停用的輸入框」：那兩者是**暫時**狀態，客服可能想先打草稿，而畫布沒有涵蓋它們 |
+| 32 | **連續訊息的分組條件**（§8.3） | （只示範連續兩則 AI） | 只看**發送者**，不看時間間隔 | 平台訊息時間戳在同一批可能相同或極接近，加上「N 分鐘內」會產生不穩定的分組。⚠️ 真人客服另比 `sender.id` —— 只看 `type` 會把兩位同事的連續發言併成一組，第二位的 email 就此消失 |
 
-> ✅ **先前的多數偏離已於 2026-08-31 消失** —— 畫布都改成與實作一致了，**不要再當成落差**：
-> AI 泡泡的 `opacity`、語氣標籤、捲軸 8px、頂列只有頭像、兩條拖曳把手的 hover 色、
-> 連線狀態文案、OTP 有效期與字元集、情緒量表的中文標籤與「生氣」獨立色、
-> **情緒分數改 0–100**、**「推薦理由：」**、**「AI 即時回覆建議」／「知識庫快查」**、
-> **presence 空狀態「沒有偵測到其他人」**、**快查每筆的兩行摘錄**。
->
-> ⚠️ **`--danger` 系反過來要以畫布為準**：畫布新增了這三個 token，實作先前自訂的值已改為對齊（見 §1）。
+> ✅ **編號 1–18 已全部消失，不要再當成落差** —— 2026-09-01 的三輪改版裡畫布逐一採納了：
+> 字級全面改 `rem` 並加大約 2.5px（**因此絕對數值現在要逐項比對，見 §2**）、情緒走勢圖整欄寬、
+> 摘要的可展開「詳細內容」與「產生於 …」、「重新產生」只在失敗時可按、header 不顯示寬度數字、
+> 建議卡捲動高度 480px、服務模式說明多一句、拖曳把手的鍵盤操作、頭像下拉的 email 換行不截斷、
+> 中欄標題列的「已載入 N 則」、左欄 presence 兩態、未讀圓點＋「未讀」、篩選 chip 的計數。
+> ⚠️ 編號留缺不遞補，以免與已轉出給 Design 的版本對不上。
+
+> ⚠️ **`--danger` 系反過來要以畫布為準**：畫布定義了這三個 token，實作先前自訂的值已改為對齊（見 §1）。
 
 > ⚠️ 另有數處**畫布畫得到、但平台資料拿不到**因而實作缺席或改寫的（各種「N 則」數字、
-> 客服姓名、未讀則數）。那些不是取捨而是沒有資料，清單見 `DESIGN_FEEDBACK.md` B 段。
->
-> ✅ **左欄的「最後一則訊息摘要」與「客戶正在輸入…」已於 2026-09-01 從畫布移除** ——
-> 兩者正是我方拿不到資料的項目，現在畫布與實作一致，不再是落差。
+> 客服姓名、未讀則數、「只看未回覆」、OTP「還可嘗試 N 次」）。
+> 那些不是取捨而是沒有資料，清單見 `DESIGN_FEEDBACK.md` B 段。
 
 下表的 artboard 編號是**畫布內的 section id**，`docs/wireframe/` 的檔名依它命名。
 ⚠️ 截圖欄只是備存留查的對照，規格看本文件對應章節。
@@ -122,7 +124,7 @@
 |---|---|---|
 | `--navy` | `primary` | 品牌主色 |
 | `--warn` | `error` | 錯誤／警示 |
-| `--active` | `success` | 1b 的「N 個進行中」pill |
+| `--active` | `success` | 連線 pill、`active` 狀態圓點、情緒量表的「平靜」段、服務模式的「全自動」 |
 | `--open` | `warning` | 1c 才用到（對話狀態） |
 | `--ai` / `--agent-bg` | 無對應，需自訂 | 1c 才用到（發送者標籤色） |
 | `--bg`／`--surface*`／`--border*`／`--text*` | 無對應，需自訂 | 結構性色階，非語意色。直接以 CSS 變數進 `assets/css/main.css` 的 `:root`／`.dark`，元件內用 `var(--surface)`，不必勉強套 Nuxt UI 的中性階 |
@@ -191,30 +193,39 @@
 
 ## 2. 字級
 
-| 用途 | size | weight | 備註 |
-|---|---|---|---|
-| 標題（登入／輸入驗證碼） | 19px | 700 | |
-| Eyebrow 徽章（AGENTCOPILOT／選擇組織／artboard 編號） | 11px | 700 | letter-spacing .06em；**實心藍底白字**（`background:var(--navy)`／`color:var(--navy-fg)`），⚠️ 不是純文字 |
-| 說明文字（subtitle） | 12.5px | 400 | line-height 1.6 |
-| 欄位 label | 12px | 500 | |
-| 輸入框文字 | 13.5px | 400 | OTP 格另計，見下 |
-| OTP 數字格 | 22px | 400 | `IBM Plex Mono` |
-| 輔助／meta 文字 | 11–11.5px | 400 | 常搭 `IBM Plex Mono`（org id、版本號、時間） |
-| 主按鈕文字 | 13.5px | 500 | |
-| 組織名稱 | 14px | 500 | |
-| 組織 meta（org_id · role） | 11.5px | 400 | `IBM Plex Mono` |
-| 狀態標籤（1b 的載入中／無組織） | 10.5px | 700 | letter-spacing .08em，color `var(--text-3)`。⚠️ 見下方關於 1a 那三個標籤的警告 |
-| 錯誤內文 | 12px | 400 | color `var(--warn)` |
+⚠️ **2026-09-01 起畫布已全面改用 `rem`，且採納了實作的尺度（較舊版加大約 2.5px）。**
+因此**絕對數值現在要逐項比對** —— 先前那條「只比相對關係、不比絕對值」的紀律**已作廢**。
+
+畫布用的階梯（四位小數是畫布的寫法，實作用等值的精確分數，例如 `0.8438rem` ≡ `0.84375rem`）：
+
+| rem | px | 典型用途 |
+|---|---|---|
+| `0.7188` | 11.5 | 訊息泡泡裡的頭像縮寫 |
+| `0.75` | 12 | 右欄收合態的「已收合」直排字 |
+| `0.7813` | 12.5 | 走勢圖軸標籤、發送者角色、語氣標籤以外的最小輔助字 |
+| `0.8125` | 13 | 狀態標籤（700／`.08em`）、面板 `COPILOT` 徽章、meta 與時間戳（多搭 mono） |
+| `0.8438` | 13.5 | Eyebrow 徽章（700／`.06em`）、區塊徽章、篩選 chip、量表分段 |
+| `0.875` | 14 | 知識庫摘錄、需補資料、error 說明 |
+| `0.9063` | 14.5 | 建議卡標題、摘要「詳細內容」內文、走勢摘要、錯誤內文 |
+| `0.9375` | 15 | 說明文字（`line-height:1.6`）、摘要正文（`1.75`）、知識庫結果標題、組織名稱 |
+| `0.9688` | 15.5 | 情緒示警 pill、訊息泡泡正文、送出鍵 |
+| `1` | 16 | 輸入框文字（含 Composer 的 `textarea`）、主按鈕 |
+| `1.0313` | 16.5 | 1b 組織清單的組織名 |
+| `1.0938` | 17.5 | artboard 標題（畫布自己的說明文字，非 UI） |
+| `1.3438` | 21.5 | 頁面標題（登入／輸入驗證碼） |
+| `1.5313` | 24.5 | OTP 數字格（mono） |
+
+實作值集中在 `app/assets/css/main.css`（`.ac-title`／`.ac-eyebrow`／`.ac-subtitle`／`.ac-label`／
+`.ac-status-label`／`.ac-detail-*`）與各元件的 `text-[…rem]`。
 
 > ⛔ **1a 的「送出中」「錯誤」「驗證碼錯誤」不是 UI 文案，不要實作。**
 > 它們在畫布上位於卡片**外面**、一條 `border-top:1px dashed` 之下，是畫布作者用來標示
 > 「以下是這個狀態的示範」的**註解**。照抄會讓登入頁憑空多出三個標籤。
 > （1b 的「載入中」「無組織」不同：它們在卡片**內**，是真的 UI 文案，實作照做。）
->
-> ⛔ **本表是畫布的凍結數字，不是實作值**（見檔頭「刻意偏離畫布之處」第 1 項）：實作刻意加大約 **2.5px** 並改用 `rem`
-> （如 `12.5px` → `text-[0.90625rem]` ≈ 14.5px），`rem` 也讓瀏覽器／OS 的字級偏好能生效。
-> 實作值見 `app/assets/css/main.css`（`.ac-title`／`.ac-eyebrow`／`.ac-subtitle`）與各元件的
-> `text-[…rem]`。**核對時只比對相對關係與 weight／letter-spacing，不要照畫布數字改回去。**
+
+⚠️ **Eyebrow 徽章的縱向 padding 依所在畫板而異，不是同一個值**：
+1a／1b 是 `4px 8px`、面板 header 是 `3px 8px`、區塊徽章是 `3px 9px`。
+共用的 `.ac-eyebrow` 取面板那組，另外兩處在使用端覆寫。
 
 ---
 
@@ -256,7 +267,7 @@ box-shadow: var(--shadow)
 
 1. Header row：**純圖示返回按鈕**（`arrow-left`，26×26）+「步驟 2 / 2」
    ⚠️ **沒有「改用其他 email」文字連結** —— 只有圖示按鈕，不要多做一個文字連結元件
-2. 標題「輸入驗證碼」+「已寄送至 {{maskedEmail}}，10 分鐘內有效。」（⚠️ **10 分鐘是畫布寫錯的，實際 15 分鐘**，見 §6 的註記）
+2. 標題「輸入驗證碼」+「已寄送至 {{maskedEmail}}，15 分鐘內有效。」
 3. **驗證碼是 6 格分離輸入，不是單一輸入框**（確定答案）：6 個獨立 `<input>`，各 `56×56px`，`text-align:center`，`font-size:22px`，`font-family:'IBM Plex Mono'`，`maxlength=1`，`border-radius:9px`；focus 時 `border-color:var(--navy-2)` + bg 轉 `var(--surface)`
    > ⚠️ **畫布的 `inputmode="numeric"` 與只收數字的 `replace(/[^0-9]/g,'')` 都是錯的，不要照抄。**
    > 平台的 OTP 是**數字 ＋ 大寫英文**（2026-08-29 由使用者確認）。`app/pages/login.vue` 目前的
@@ -276,8 +287,8 @@ box-shadow: var(--shadow)
 - Header（`padding:20px 22px 16px`，底部 border）：「選擇組織」徽章 + 右側使用者 email（mono）；副標說明
 - 每列組織（`padding:12px`，`border-radius:9px`）：
   - 左：38×38 圓角方塊，2 字母縮寫（如 TW/UK/QA）
-  - 中：組織名稱（14px/500）+「org_id · 角色」（11.5px mono）
-  - 右：狀態 pill —— 「N 個進行中」（`var(--active)`/`var(--active-bg)`）／「無進行中」（純文字 `var(--text-3)`）／「唯讀」（外框 pill）
+  - 中：組織名稱（`1.0313rem`／`500`）+「org_id · 角色」（`0.875rem` mono／`--text-2`）
+  - 右：`chevron-right`。⚠️ **沒有狀態 pill** —— 角色寫在第二行的 `org_id · 角色`（mono，如 `org_qa · 唯讀稽核`）
   - 最右 `chevron-right` icon
   - **樣式狀態**：預設透明邊框；hover 時 bg 轉 `var(--surface-2)` + border 轉 `var(--border)`。設計稿把首列畫成「選中」樣式（`var(--navy-soft)` 底）純屬示範 —— 這是點擊即導航的清單，非持久選取的表單，實作成 `:hover` 即可，**不需要 selected 持久態**
   - **沒有 disabled 列樣式** —— 唯讀角色的組織一樣可點擊，只是角色是唯讀
@@ -310,10 +321,7 @@ box-shadow: var(--shadow)
 
 ### 1a-otp
 - 「步驟 2 / 2」
-- 「輸入驗證碼」／「已寄送至 {{maskedEmail}}，10 分鐘內有效。」
-  > ⚠️ **這裡的「10 分鐘」是畫布寫錯的，不要照抄，也不要在下次核對時把實作「訂正」回去。**
-  > 平台 OTP 的實際有效期是 **15 分鐘**，明載於使用者收到的 OTP 信件（2026-08-29 由使用者確認）。
-  > `app/pages/login.vue` 目前寫的 15 分鐘是對的。
+- 「輸入驗證碼」／「已寄送至 {{maskedEmail}}，15 分鐘內有效。」
   > 這是本文件**兩處**「畫布錯、實作對」的落差之一，另一處是 §4.2 的 OTP 字元集。
 - 按鈕「驗證並登入」
 - 「沒收到？」＋「{{mm:ss}} 後可重新寄送」／按鈕「重新寄送」
@@ -361,19 +369,43 @@ box-shadow: var(--shadow)
 
 由上到下（`order` 決定，結案階段會把 ⑤ 提前）：
 
-1. **客戶情緒提示**（tag「近 5 輪」）—— 情緒警示 pill（逐字「焦慮偏高」＋`alert-triangle`，`--warn` 字／`--warn-bg` 底／`--warn-bd` 框／`radius:20px`／`padding:5px 12px`）＋ 折線走勢圖（128×34，主線 `stroke-width:2.25` ＋ 0.3 透明度的疊影線 ＋ 端點 `r:2.6` 圓點）＋ 右下角 `score 72 ↑`（`IBM Plex Mono` 10px，**0–100 刻度**）＋ 走勢文字摘要 ＋ 情緒量表圖例（五段等寬，逐字為中文：「平靜」→`--active`／「普通」→`--text-2`／「擔憂」→`--open`／「挫折」→`--warn`／**「生氣」→`--danger` 系**；目前所在區間 `font-weight:700` ＋ `box-shadow:inset 0 -3px 0 <該段色>`）
-   ✅ **走勢文字摘要包在 `sc-if trendNote` 裡** —— 畫布明訂它**可能不存在**，此時整段不顯示。
-   我方的 `SentimentNarrative { trend, advice }` 在產生失敗或評分點少於 2 個時為 `null`，正是這個狀態。
+1. **客戶情緒提示**（tag「近 N 輪」，mono；畫布示範值為「近 50 輪」。⚠️ N MUST 與軸標籤右端同一個數字 —— 兩者都是「這張圖實際畫了幾輪」）—— 由上到下四段：
+   - **警示列**：情緒 pill（`0.9688rem`／`500`／`--warn` 字／`--warn-bg` 底／`--warn-bd` 框／
+     `radius:20px`／`padding:5px 12px`／`gap:5px`／`alert-triangle` 14px）＋ 彈性空白 ＋
+     `score 72 ↑`（`0.8438rem`／mono／`--text-3`，**0–100 刻度**）
+   - **走勢圖**（⚠️ **2026-09-01 全面改版，舊的 128×34 sparkline 規格已作廢**）：
+     整段包在 `border:1px solid var(--border)`／`radius:8px`／`--surface-2` 底／
+     `padding:8px 9px 6px`／`gap:5px` 的框內。
+     - `<svg viewBox="0 0 320 52">`＋`width:100%; height:auto`（**等比**），繪圖區 x ∈ [6, 314]、y ∈ [6, 42]
+     - 基準線：`y=42`、`x` 由 6 到 314、`stroke-width:1`／`--border-strong`
+     - 折線：`stroke-width:2`／`linecap:round`／`linejoin:round`／`fill:none`，最多 50 點
+     - 端點：`<circle r="2.8">`，同折線色
+     - 附件標記：`x` 位置的**虛線**（`y` 6→42、`--border-strong`、`stroke-dasharray="2 3"`）
+       ＋ 基準線下方的實心小三角（`path d="M<x> 44.5 l3 4.5 h-6 z"`／`--text-3`）
+     - 圖下方一列（`0.7813rem`／`--text-3`）：`第 1 輪`（mono）→ 彈性 → `▲附件`（7×7 三角）→ 彈性 → `第 N 輪`（mono）
+   - **走勢文字摘要**（`0.9063rem`／`--text-2`／`line-height:1.7`）
+     ✅ 包在 `sc-if trendNote` 裡 —— 畫布明訂它**可能不存在**，此時整段不顯示。
+     我方的 `SentimentNarrative { trend, advice }` 在產生失敗或評分點少於 2 個時為 `null`，正是這個狀態。
+   - **情緒量表圖例**：五段等寬（`0.8438rem`），逐字為中文：「平靜」→`--active`／「普通」→`--text-2`／
+     「擔憂」→`--open`／「挫折」→`--warn`／**「生氣」→`--danger` 系**；
+     目前所在區間 `font-weight:700` ＋ `box-shadow:inset 0 -3px 0 <該段色>`；
+     ⚠️ 「生氣」段的左分隔線用 `--danger-bd`（其餘四段 `--border`），且字重固定 500。
+
+   ⚠️ **標題列右側只有 tag，沒有重試按鈕** —— 三個分析區塊皆同，重試入口只在該區塊 error 時出現。
 
 2. **對話摘要**（tag「AI 產生 · 接手前必讀」）—— **第六個區塊，`order:2`，位置在情緒與建議之間。**
-   - **ready**：一段摘要正文（`12.5px`／`line-height:1.75`／`--text`）＋ 分類 pill 列
-     （`radius:20px`／`padding:3px 9px`／`11px`；一般類別用 `--navy-2` 字＋`--navy-soft` 底＋`--navy-soft-bd` 框＋`tag` icon，
+   - **ready**：一段摘要正文（`0.9375rem`／`line-height:1.75`／`--text`）＋ 分類 pill 列
+     （`radius:20px`／`padding:3px 9px`／`0.8438rem`；一般類別用 `--navy-2` 字＋`--navy-soft` 底＋`--navy-soft-bd` 框＋`tag` icon，
      風險類別如「重複進線」改用 `--open` 字＋`--open-bg` 底＋`repeat` icon）
-     ＋ 底列 `generated HH:MM:SS`（mono／`--text-3`）＋ 右側「重新產生」（`refresh-cw`，`26px` 高、`--border-strong` 框）
+     ＋ **「詳細內容」區**（`border-top:1px solid var(--border)`／`padding-top:8px`）：
+     標題列左為 chevron ＋「詳細內容」（`0.9063rem`／`500`／`--text-2`）、右為「**四段 · 掃完摘要後查**」
+     （`0.8125rem`／`--text-3`）；展開後四段（已知事實／已嘗試處理／尚未解決／建議行動），
+     段標 `0.8125rem`／`700`／`letter-spacing:.05em`／`--text-3`，內文 `0.9063rem`／`line-height:1.7`／`--text`
+     ＋ **底列**（`0.8125rem`／`--text-3`）：左「產生於 <mono>HH:MM:SS</mono>」、右「**同一則訊息不會有不同結果，僅產生失敗時可重試**」
+     ⚠️ **ready 態沒有按鈕** —— 重試入口只在 error 告示框裡。
      ⛔ pill 文字實作改用 `--info` 而非 `--navy-2`（B-2：後者同時是按鈕 hover 底色，調亮會破壞按鈕上的白字）。
-     ⛔ 底列時間戳中文化為「產生於 …」、正文之下多一段可展開的「詳細內容」（偏離第 8、6 項）。
-     ⛔ 「重新產生」實作**只在該區塊 error 時可按**（CHK033），畫布是常態可按 ——
-     快取鍵是 `{conversationId}:{lastMessageId}`，同一狀態重按不會有不同結果。
+   - **無正文（`noBody`）**：正文位置改為虛線提示框（`--surface-2` 底／`1px dashed var(--border-dash)`／
+     `radius:8px`／`padding:8px 10px`／`file-question` 13px ＋「**本次未產生摘要正文，已改為預設展開詳細內容。**」）
 
    > **資料來源**：正文與主題標籤對應 `ConversationSummary` 的 `narrative`／`topics`
    > （2026-09-01 新增），風險 pill 對應既有的 `riskFlags`（五個列舉值）。
@@ -381,31 +413,36 @@ box-shadow: var(--shadow)
    > **那份 system prompt 不在這個 repo 裡** —— 因此兩者在 schema 一律是選填，
    > 且驗不過的值轉 `undefined` 而不拋錯（見 `server/services/ai/schemas.ts` 的說明）。
    > 缺值時 UI 退回以 `intent` 當正文。
-   - **loading**：四條 skeleton（首條帶 `shimmer` 動畫，寬度 100%／94%／62%）＋ 兩顆 `radius:20px` 的 pill skeleton
+   - **loading**：**三條** 10px skeleton（首條帶 `shimmer` 動畫，寬度 100%／94%／62%）＋ 兩顆 20px 高、82px／70px 寬的 pill skeleton
    - **error**：`--warn-bg` 底／`--warn-bd` 框／`radius:9px` 的告示框，內含 `alert-triangle`
-     ＋ 標題「**摘要產生失敗**」＋ 說明「**其餘區塊不受影響，可直接閱讀完整對話紀錄。**」＋「重試」按鈕
+     （`padding:9px 11px`／icon 15px）＋ 標題「**摘要產生失敗**」（`0.9063rem`／`500`）
+     ＋ 說明「**其餘區塊不受影響，可直接閱讀完整對話紀錄。**」（`0.875rem`）
+     ＋「**重試**」按鈕（`27px` 高／`padding:0 10px`／`radius:7px`／`0.875rem`）
 
-3. **AI 即時回覆建議**（tag：ready 時「**本次回傳 3 則**」、載入中「**產生中 2 / 3**」）—— 一張或多張建議卡（`--ai-bg` 底／`--ai-bd` 框／`radius:10px`／`padding:10px 11px`／`gap:7px`），每張由上到下：
+3. **AI 即時回覆建議**（tag：ready 時「**本次回傳 3 則**」；⛔ 載入中的「產生中 2 / 3」**實作不做** —— 004 的兩段式生成沒有「已完成 x 張」這種狀態，照抄會顯示一個永遠對不上流程的進度）—— 一張或多張建議卡（`--ai-bg` 底／`--ai-bd` 框／`radius:10px`／`padding:10px 11px`／`gap:7px`），每張由上到下：
    - 標題列：`book-open` icon（`--ai`）＋ 知識庫來源標題（`12px`／`--text`／`500`）
      ＋ **語氣標籤** ＋ 彈性空白 ＋ **信心度 pill**
-   - **語氣標籤**（`10.5px`／`500`／`radius:4px`／`padding:1px 6px`，各帶一個 icon）：
-     「致歉」`heart-handshake`／`--warn` 系、「說明」`info`／`--navy-2`＋`--navy-soft`、
+   - **語氣標籤**（`0.8125rem`／`500`／`radius:4px`／`padding:1px 6px`，各帶一個 icon）：
+     「致歉」`heart-handshake`／`--warn` 系、「說明」`info`／**`--info`**＋`--navy-soft`（畫布本身已改用 `--info`）、
      「挽留」`hand-heart`／`--open` 系
-   - **信心度 pill**：`10.5px`／`700`／`radius:20px`／`padding:2px 8px`／mono／`--surface` 底＋`--ai-bd` 框＋`--ai` 字，逐字「信心度 92%」。**不是每張卡都有**（截圖裡第二張沒有），與憲法 4.4「`confidence` 沒有真實依據時 MUST 為 `null`、UI 依 `null` 決定顯示或留空」一致
-   - 建議回覆全文（`12.5px`／`line-height:1.75`，放在 `--surface` 底＋`--border` 框＋`radius:8px` 的框內）
-   - 「**推薦理由：**…」（`11px`／`--text-3`）
+   - **信心度 pill**：`0.8125rem`／`700`／`radius:20px`／`padding:2px 8px`／mono／`--surface` 底＋`--ai-bd` 框＋`--ai` 字，逐字「信心度 92%」。**不是每張卡都有**（截圖裡第二張沒有），與憲法 4.4「`confidence` 沒有真實依據時 MUST 為 `null`、UI 依 `null` 決定顯示或留空」一致
+   - 建議回覆全文（`0.9375rem`／`line-height:1.75`，放在 `--surface` 底＋`--border` 框＋`radius:8px` 的框內）
+   - 「**推薦理由：**…」（`0.8438rem`／`line-height:1.6`／`--text-3`）
    - 「需補：… — 帶入前請先填寫」（僅缺資料時，`--open` 系）
    - 底列靠右「↵ 一鍵帶入」（`28px` 高／`--navy` 底／`--navy-fg` 字／`radius:7px`／`corner-down-left` icon）
-   - 卡片區可捲動（`max-height:392px`）
+   - 卡片區可捲動（`max-height:480px`，卡片間距 `9px`）
 
 4. **知識庫快查** —— 搜尋輸入框（`height:34px`、`--surface-2` 底、`--border-strong` 框、內含放大鏡 icon；placeholder 逐字為「**用一句話問，例：發票補寄要多久**」）＋ 結果清單，每筆由上到下：
-   - 標題（`12.5px`／`500`／單行 `ellipsis`）＋ 靠右的更新年月（`2026/05`，mono `10.5px`）
-   - **摘錄**（`11.5px`／`--text-2`／`line-height:1.65`），**兩行截斷**
+   - 標題（`0.9375rem`／`500`／單行 `ellipsis`）＋ 靠右的更新年月（`2026/05`，mono `0.8125rem`）
+   - **摘錄**（`0.875rem`／`--text-2`／`line-height:1.65`），**兩行截斷**
      （`display:-webkit-box`／`-webkit-line-clamp:2`／`-webkit-box-orient:vertical`／`overflow:hidden`）
    - **靠左**的「插入為回覆」（`25px` 高、`--border-strong` 框、`--surface-2` 底）／
      「展開全文」（無框＋`chevron-down`）兩顆按鈕
 
-   過期文件多一條警示列（「⏱ 已超過 12 個月未更新，引用前請確認」，`--warn` 系）。
+   過期文件多一條**獨立警示列**：`--open` 字／`--open-bg` 底／`radius:6px`／`padding:4px 8px`／
+   `gap:6px`／`clock-alert` 12px ＋ 逐字「**已超過 12 個月未更新，引用前請確認**」。
+   ⚠️ 色系是 `--open` 不是 `--warn` —— 這不是錯誤，是「引用前請確認」的提醒。
+   ⚠️ **每一筆結果都有 `border-top`，包含第一筆**（上方緊接搜尋框，那條線分開的是「輸入」與「結果」）。
    ⚠️ **沒有 SOP 編號**，只有標題＋更新年月。
 
 5. **AI 階段完整對話紀錄**（tag「AI 階段」）—— 逐則對話紀錄（客戶／AI／客服三種發送者），附件有**三種**型別，各自的說明文字逐字為：「PDF · 檔名僅供辨識，無法預覽」／「圖片 · 可預覽縮圖」／「舊型附件 · 僅有檔名，無法預覽」；區塊內可捲動，底部一行逐字為「**顯示 AI 階段訊息，可捲動**」（⚠️ 2026-09-01 畫布已拿掉「7 / 18 則」——
@@ -421,13 +458,15 @@ box-shadow: var(--shadow)
 `height:42px`／`--surface` 底／`border-bottom:1px solid var(--border)`／`padding:0 13px`／`gap:9px`。
 由左到右：
 
-- `COPILOT` 徽章：`background:var(--navy)`／`color:var(--navy-fg)`／`font-size:10.5px`／`font-weight:700`／`letter-spacing:.06em`／`padding:3px 8px`／`border-radius:5px`。
-  ⚠️ **10.5px，不是 §2 表列 eyebrow 的 11px** —— 面板徽章比登入頁的小 0.5px，是設計稿本身的差異。
-- 副標 `headNote`（`11px`／`--text-2`）三態，逐字：載入中「**分析中**」／準備結案「**準備結案**」／其餘「**即時輔助**」
+- `COPILOT` 徽章：`background:var(--navy)`／`color:var(--navy-fg)`／`0.8125rem`／`font-weight:700`／`letter-spacing:.06em`／`padding:3px 8px`／`border-radius:5px`。
+  ⚠️ 比 1a／1b 的 eyebrow 小半階（`0.8438rem`），是畫布本身的差異，不是抄錯。
+- 副標 `headNote`（`0.8438rem`／`--text-2`）三態，逐字：載入中「**分析中**」／準備結案「**準備結案**」／其餘「**即時輔助**」
 - 彈性空白
-- **「全部重試」按鈕**（僅 `anyError` 時出現）：`24px` 高／`--warn-bd` 框／`--warn-bg` 底／`--warn` 字／`radius:6px`／`refresh-cw` icon／`title="重新產生所有失敗的區塊"`
-- 面板目前寬度數字 `{{ width }}px`（`10.5px`／mono／`--text-3`）
+- **「全部重試」按鈕**（僅 `anyError` 時出現）：`24px` 高／`--warn-bd` 框／`--warn-bg` 底／`--warn` 字／`radius:6px`／`padding:0 9px`／`refresh-cw` icon 11px／`title="重新產生所有失敗的區塊"`
 - 收合鈕：`26×26`／`--border` 框／`--surface-2` 底／`radius:6px`／`panel-right-close` icon
+
+⚠️ **header 是 `flex:none` 的固定列，不屬於捲動區** —— 內容區才是 `flex:1; overflow-y:auto`。
+「全部重試」正是某個區塊失敗時才出現的東西，讓 header 跟著捲走等於在客服最需要它的時候把它藏起來。
 
 ### 7.4 三種特殊狀態
 
@@ -462,11 +501,23 @@ box-shadow: var(--shadow)
 >
 > ⚠️ 收合寬度左 **48px**／右 **44px** 不對稱，是因為左欄要放按鈕＋徽記、右欄要放直排 `COPILOT` 標籤。
 
-**拖曳分隔線**（逐字，左右兩條共用）：
-`width:5px` · `cursor:col-resize` · `background:var(--border)` ·
-內含 `width:1px` / `height:26px` / `background:var(--border-strong)` 的握把短線 ·
-`title="拖曳調整寬度"`。
-⚠️ hover 色畫布自己不一致（左 `--border-strong`／右 `--navy-2`），實作統一取 `--navy-2`。
+**拖曳把手**（逐字）—— 共三條，欄間兩條與**輸入框上方一條**：
+
+| 位置 | 尺寸 | cursor | `aria-orientation` | 鍵盤 |
+|---|---|---|---|---|
+| 左／中欄之間、中／右欄之間 | `width:5px`，握把短線 `1×26px` | `col-resize` | `vertical` | ←／→ 每次 16px、Shift 64px |
+| **輸入框上方**（⚠️ 2026-09-01 新增） | `height:6px`，握把短線 `26×1px` | `row-resize` | `horizontal` | ↑／↓ 每次 12px、Shift 48px |
+
+共通：`background:var(--border)`、握把短線 `--border-strong`、`role="separator"` ＋ `tabIndex` ＋
+`aria-valuenow/min/max`、hover 與 focus 轉 `--navy-2`（focus 另加 `box-shadow:0 0 0 2px var(--navy-soft)`）。
+
+- 欄寬 `title="拖曳，或聚焦後用 ←／→、Home／End 調整寬度"`
+- 輸入框高度 `title="拖曳，或聚焦後用 ↑／↓、Home／End 調整輸入框高度"`，範圍 **72–320px（預設 72）**，
+  未接手時退回一條 1px 的 `--border` 線（沒有輸入框可調，留一個調不動的把手只會讓人以為壞了）
+
+⚠️ 三條共用同一個 `ConversationResizeHandle` 元件與 `usePaneSize()`。
+**不要因為軸向不同而另寫一份 markup** —— 底色寫在 inline `:style` 上，
+而 inline style 的優先權高於任何 class，另寫一份時 `hover:` utility 會被靜默蓋掉（已發生過一次）。
 
 **捲軸**（逐字，全域一組，套用在所有捲動容器上）：
 
@@ -497,8 +548,10 @@ wrapper 副標（逐字）：
   mono 縮寫如「AG」／`aria-haspopup="menu"`），**沒有姓名文字、沒有 chevron**。
   下拉（`236px` 寬／`radius:9px`／`box-shadow:0 8px 24px rgba(16,24,40,.14)`）由上到下：
   eyebrow「**已登入身分**」＋ email（mono）→ 分隔線 → 「登出」（`role="menuitem"`）。
-  ⛔ 畫布的 email 用 `text-overflow:ellipsis` 截斷，**實作刻意允許換行不截斷**（偏離第 3 項）
-- 篩選 chip：「全部 24」／「active 14」／「open 10」
+  email 為 mono、`0.875rem`／`--text`／`white-space:normal; word-break:break-all; line-height:1.55`（不截斷）
+- 篩選 chip（五顆，`0.8438rem`／`line-height:1.35`／`padding:4px 9px`／`radius:20px`／`gap:5px`）：
+  「全部 19」／「● active 15」／「● open 4」／「[icon] web 15」／「[icon] line 4」。
+  ⚠️ **數字是 mono**，未選中時比標籤深一階（標籤 `--text-2`、數字 `--text`）；選中的那顆整顆 `--navy` 底白字。
 - 分組標題：「今天」／「昨天」（更早的用 `MM/DD`）。
   `position:sticky; top:0`／`--surface-2` 底／`border-bottom:1px solid var(--border)`
   （「昨天」以下每一組還多一條 `border-top`）／`padding:3px 6px 3px 12px`／
@@ -520,13 +573,13 @@ wrapper 副標（逐字）：
 
   | 行 | 內容（由左至右） |
   |---|---|
-  | 第一行 | `30px` 圓形頭像縮寫（GW／UK／QT／HN／ZK／MD）＋ 代號（`TWN#GW4772`，mono `12.5px`）＋ **status 圓點**（`6px`，`--active`／`--open`，帶 `title`）＋ 彈性空白 ＋ 時間（mono `10.5px`／`--text-3`／絕對時間 `14:32`） |
-  | 第二行 | 頻道 icon（`11px`）＋ **presence 標記**（icon `10px` ＋ 文字 `10.5px`）＋ 彈性空白 ＋ **未讀**（`6px` `--navy` 圓點 ＋ 逐字「未讀」，`--navy-2`） |
+  | 第一行 | `30px` 圓形頭像縮寫（mono `0.7813rem`／`700`）＋ 代號（`TWN#GW4772`，mono `0.9375rem`）＋ **status 圓點**（`6px`，`--active`／`--open`，帶 `title`）＋ 彈性空白 ＋ 時間（mono `0.8125rem`／`--text-3`／絕對時間 `14:32`） |
+  | 第二行 | 頻道 icon（`13px`）＋ **presence 標記**（icon `12px` ＋ 文字 `0.8125rem`，`line-height:1`）＋ 彈性空白 ＋ **未讀**（`7px` `--navy` 圓點 ＋ 逐字「未讀」，`--navy-2`） |
+  ⚠️ 所有 icon 都帶 `display:block; align-self:center` —— 少了它會被基線對齊頂高半個字。
 
-  - **presence 標記**三態，逐字：
+  - **presence 標記兩態**，逐字（⚠️ 畫布 2026-09-01 已由三態改為兩態，與實作一致）：
     「你在此對話中」（`user-check`／`--navy-2`）／
-    「無客服在此」（`eye-off`／`--text-3`）／
-    「`agent.chen@company.com` 在此」（`eye`／`--text-2`／mono／單行 ellipsis）
+    「有客服在此」（`eye`／`--text-2`）；兩者皆不成立時**留白**
   - **「結案未完成」**（`clipboard-check` ＋ 虛線 `--navy-soft-bd` 框的 pill）出現在**第二行右端**，
     標記結案中途離開的對話
   - ⚠️ **未讀在第二行右端，不在第一行** —— 第一行是這則對話的身分（代號 · status · 時間），
@@ -535,10 +588,8 @@ wrapper 副標（逐字）：
     第二行改為頻道 ＋ presence。實作本來就做不到那個摘要（清單 payload 沒有訊息文字或發送者，
     要顯示就得對每一列各打一次訊息 API，見 `DESIGN_FEEDBACK.md` B-1），現在畫布與實作一致。
 
-  > ⛔ **實作做得出 presence 三態中的兩態**（偏離第 7 項）：
-  > 「**你在此對話中**」（`user-check`／`--navy-2`）與「**有客服在此**」（`user-check`／`--text-2`），
-  > 其餘一律留白。實測證據：`npm run spike:join-visibility`
-  > （16 筆，`scripts/spike/out/23-*.json`）——
+  > **為什麼只有兩態**（畫布已採納，此處保留證據供日後重新核對時不必重跑）。
+  > 實測：`npm run spike:join-visibility`（16 筆，`scripts/spike/out/23-*.json`）——
   >
   > - ✅ **「你在此對話中」做得到，但不是免費的**：清單 payload **完全沒有 `is_joined`**
   >   （實測 0/16），也沒有「只列出我 JOIN 的」端點（D-23f）。實作改為在 BFF 端對
@@ -553,7 +604,13 @@ wrapper 副標（逐字）：
   >   「`viewerJoined` 這一輪還沒解析出來」的情況，那時裡面的人也可能是你自己。
   >
   > **「結案未完成」屬 M3**，結案流程存在之後才有東西可標。
-- 底部：「載入更多對話…」／「顯示 7 / 24」／「依最新訊息排序」
+- **底部統計列**：`flex:none` 的固定 footer，**在捲動區之外**
+  （`border-top:1px solid var(--border)`／`padding:7px 12px`／`justify-content:space-between`）——
+  左「顯示 7 / 24」（mono）、右「依最新訊息排序」。
+  ⚠️ 放進捲動區會讓它跟著清單捲走，而客服要確認「我看到的是不是全部」的時機，
+  通常正是已經捲到一半的時候。
+  ⛔ 「載入更多對話…」畫布是 spinner 自動載入列，**實作維持可按的按鈕**（偏離 29），
+  且它留在捲動區內（它是清單的延續）。
 
 ### 8.3 中欄 — 標題列與訊息流
 
@@ -582,8 +639,12 @@ icon `chevrons-up`（收合）／`chevrons-down`（展開）13px ·
 > ⚠️ **收合態只放主要動作。** 「離開對話」與接手的兩種模式選項留在展開態 ——
 > 那些是有後果、要連同輔助說明一起讀的動作，不該塞進一條 38px 的窄列。
 
-**標題列** meta 列：`conv_8f21c0 · 建立於 08/25 13:58`
-（⚠️ 2026-09-01 畫布已拿掉尾端的「· 訊息 312 則」—— 我方本來就給不出總數，現在兩邊一致）
+**標題列** meta 列：`conv_8f21c0 · 建立於 08/25 13:58 · 已載入 120 則`
+
+⚠️ 尾端的則數在 2026-09-01 當日先被畫布拿掉、又加了回來，**現行版本是有的**，
+且採用我方的措辭（`msgCountLabel`：未載完顯示「已載入 N 則」、載完才說「訊息 N 則」）——
+平台的訊息 API 只回一頁 ＋ `hasMore`，給不出總數。
+⚠️ **收合態那一列也有同一欄**（mono／`--text-3`），兩處共用同一個計算來源。
 
 | 狀態 | 標題列內容 |
 |---|---|
@@ -650,10 +711,12 @@ icon `chevrons-up`（收合）／`chevrons-down`（展開）13px ·
 
 ### 8.4 Composer 與撞單攔截
 
+- **上方一條 6px 的高度把手**（⚠️ 2026-09-01 新增，取代原本 Composer 區塊的 `border-top`）——
+  規格見 §8.1 的拖曳把手表
 - 一般態：**上下兩列**的輸入區
   （`border:1px solid var(--border-strong)`／`--surface-2` 底／`radius:9px`／`overflow:hidden`）
-  - 上：`textarea`，`min-height:64px`、`resize:none`、無框，
-    placeholder 逐字「輸入回覆內容…（Enter 送出，Shift+Enter 換行）」
+  - 上：`textarea`，`height` 由把手決定（72–320px）、`resize:none`、無框、`padding:10px 12px`、
+    `font-size:1rem`／`line-height:1.6`，placeholder 逐字「輸入回覆內容…（Enter 送出，Shift+Enter 換行）」
   - 下：工具列（`border-top:1px solid var(--border)`／`padding:7px 10px`）——
     **左側「夾帶檔案」按鈕**（`28×28`／`border:1px solid var(--border)`／`--surface` 底／
     `radius:6px`／`--text-2`／`paperclip` icon 14px／**無文字標籤**）→ 彈性空白 →
@@ -666,8 +729,12 @@ icon `chevrons-up`（收合）／`chevrons-down`（展開）13px ·
 > （`IMBRACE_QUESTIONS.md` H-6c：先 `_fileupload` 取 url 再帶入，還是別的流程？），
 > 對應里程碑為 M3。**刻意不放 disabled 佔位鈕**：在拿到答案前那顆按鈕按下去沒有任何可走的路，
 > 而「按了不會有任何變化的按鈕比沒有按鈕更像壞掉」。
-> ⚠️ 補這顆按鈕時**要一起改版面**：畫布是上下兩列，實作目前是 `textarea` 與送出鍵左右並排。
-- 未接手：「尚未接手此對話，無法輸入回覆。請先點右上角『接手對話』。」（唯讀）
+> ✅ 版面本身已於 2026-09-01 改為上下兩列，補按鈕時不必再重排。
+- **未接手**：整個輸入區換成虛線提示框（`1px dashed var(--border-dash)`／`--surface-2` 底／
+  `radius:9px`／`padding:14px`／`lock` 15px ＋「尚未接手此對話，無法輸入回覆。請先點右上角『接手對話』。」）。
+  ⚠️ **不再另外渲染一個 disabled 的 textarea**（偏離 31：另兩種不能送出的情況仍保留輸入框）
+- **送出鍵**：`30px` 高／`padding:0 14px`／`radius:7px`／`0.9688rem`／`500`。
+  撞單時轉為 `--warn` 三色的「已攔截」（`lock` icon），**不是把主按鈕變灰**
 - 結案中：橫幅「結案中 —— 摘要內容為按下結案當下的對話快照，不含此後的新訊息。要送出訊息請先取消結案。」
   ⚠️ **Composer 不鎖**，只是提示
 - 撞單攔截（憲法 3.3① 封閉集合之一）：
@@ -695,7 +762,7 @@ wrapper 副標：「初次載入骨架 · 未選擇對話 · 對話清單為空 
 
 | 狀態 | 逐字文案 |
 |---|---|
-| 訊息流載入中 | 「正在載入 312 則訊息…」／Composer「連線建立後才可輸入」 |
+| 訊息流載入中 | 「正在載入訊息…」（⚠️ 畫布已拿掉則數）／Composer「連線建立後才可輸入」 |
 | 左欄品牌區 | 「台灣客服中心」／「已連線」（⚠️ 比 1c 少了「· 即時同步」） |
 | 對話清單為空 | 「找不到符合的對話」／「客戶僅有代號，請輸入完整代號片段（例：GW4772）或清除篩選。」／按鈕「清除搜尋與篩選」 |
 | 未選擇對話 | 「尚未選擇對話」／「從左側列表選擇一個對話開始處理。標記 ●&nbsp;active 的對話代表客戶正在等待回覆，建議優先處理。」／按鈕「處理最舊的 active 對話」「只看未回覆」 |
@@ -711,7 +778,7 @@ wrapper 副標：「初次載入骨架 · 未選擇對話 · 對話清單為空 
 > 畫布 artboard `3a-light`／`3a-dark`（畫布最下方），**只有色票、沒有版面** ——
 > 它存在的目的就是把建議卡的五種語氣一次定義清楚。
 
-共用形狀：`font-size:10.5px`／`font-weight:500`／`border-radius:4px`／`padding:1px 6px`，
+共用形狀：`font-size:0.8125rem`／`font-weight:500`／`border-radius:4px`／`padding:1px 6px`，
 各帶一個 **10px** 的 lucide icon。
 
 | 語氣 | fg | bg | bd | icon | 淺色對比 | 深色對比 |
@@ -723,7 +790,7 @@ wrapper 副標：「初次載入骨架 · 未選擇對話 · 對話清單為空 
 | 升級 | `--danger` | `--danger-bg` | `--danger-bd` | `circle-arrow-up` | 6.46:1 | 6.84:1 |
 
 > 對比欄是我方實算的（sRGB 相對亮度，文字 vs 該標籤自己的底色）。
-> 標籤文字 10.5px 屬**內文**，門檻是 AA 的 4.5:1 —— 十組全部通過。
+> 標籤文字 `0.8125rem`（13px）屬**內文**，門檻是 AA 的 4.5:1 —— 十組全部通過。
 
 ⚠️ **這五種是封閉集合**，模型每次產生建議卡都會落在其中之一（`shared/types/copilot.ts`
 的 `SuggestionCard.tone`）。少一種配色，那張卡在畫面上就是實作自己編的。
