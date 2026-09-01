@@ -15,23 +15,42 @@
  *    `--border`(#2a303a) → `--border-strong`(#3a4250) 的變化幾乎看不出來，
  *    而 5px 的命中區本來就需要明確的 hover 才找得到。
  *
- * ⚠️ 鍵盤可操作（憲法 8.2）：`role="separator"` ＋ 方向鍵，值由 `usePanelWidth()` 提供。
+ * ⚠️ 鍵盤可操作（憲法 8.2）：`role="separator"` ＋ 方向鍵，值由 `usePaneSize()` 提供。
  *    畫布只畫了滑鼠拖曳，但那條 5px 的線對只用鍵盤的人等於不存在。
+ *
+ * ⚠️ **本元件同時服務欄寬（垂直）與輸入框高度（水平，畫布 1c 的 6px 橫桿）。**
+ *    2026-09-01 新增輸入框把手時，一度另寫了一份 markup —— 結果立刻重演了
+ *    「hover 沒反應」這個 bug（見下方 `hovering` 的說明）。同一種控制項就用同一個元件，
+ *    不要因為軸向不同而複製一份。
+ *
+ * ⚠️ **hover／dragging 的底色用 JS 的 `hovering` ref，不是 Tailwind 的 `hover:` class。**
+ *    這個元件的底色寫在 inline `:style` 上，而 **inline style 的優先權高於任何 class**，
+ *    `hover:bg-[…]` 會被靜默蓋掉 —— 沒有錯誤、沒有警告，只是滑上去沒反應。
+ *    （同一個坑在 OTP 輸入格上也踩過一次，那裡改成專屬 class 解決。）
  */
 
 const props = defineProps<{
   dragging: boolean
+  /**
+   * 軸向。`'vertical'` ＝ 欄與欄之間的直條（預設）、`'horizontal'` ＝ 輸入框上方的橫桿。
+   * ⚠️ 這個值同時決定 `aria-orientation` —— 輔助科技用它來說明「這條可以往哪個方向調」。
+   */
+  orientation?: 'vertical' | 'horizontal'
   /** 目前寬度與範圍，供 `aria-value*`（鍵盤使用者唯一能知道自己調到哪裡的來源） */
   value: number
   min: number
   max: number
   label: string
+  /** 滑鼠提示（各軸向的操作說明不同），預設沿用欄寬那一句 */
+  hint?: string
 }>()
 
 const emit = defineEmits<{
   pointerdown: [PointerEvent]
   keydown: [KeyboardEvent]
 }>()
+
+const horizontal = computed(() => props.orientation === 'horizontal')
 
 const hovering = ref(false)
 
@@ -41,13 +60,14 @@ const background = computed(() =>
 
 <template>
   <div
-    class="ac-resize-handle flex w-[5px] shrink-0 cursor-col-resize items-center justify-center transition-colors"
+    class="ac-resize-handle flex shrink-0 items-center justify-center transition-colors"
+    :class="horizontal ? 'h-1.5 w-full cursor-row-resize' : 'w-[5px] cursor-col-resize'"
     :style="{ background }"
     role="separator"
-    aria-orientation="vertical"
+    :aria-orientation="horizontal ? 'horizontal' : 'vertical'"
     tabindex="0"
     :aria-label="label"
-    :title="$t('layout.resizeHint')"
+    :title="hint ?? $t('layout.resizeHint')"
     :aria-valuenow="value"
     :aria-valuemin="min"
     :aria-valuemax="max"
@@ -58,9 +78,10 @@ const background = computed(() =>
     @pointerdown.prevent="emit('pointerdown', $event)"
     @keydown="emit('keydown', $event)"
   >
-    <!-- 握把短線：畫布 1×26px。拖曳／hover 時整條把手轉 navy，短線改用同族亮色才看得見 -->
+    <!-- 握把短線：畫布 1×26px（橫桿時轉 90 度成 26×1）。拖曳／hover 時整條把手轉 navy，短線改用同族亮色才看得見 -->
     <span
-      class="h-[26px] w-px rounded-sm"
+      class="rounded-sm"
+      :class="horizontal ? 'h-px w-[26px]' : 'h-[26px] w-px'"
       :style="{ background: (dragging || hovering) ? 'var(--navy-fg)' : 'var(--border-strong)' }"
       aria-hidden="true"
     />

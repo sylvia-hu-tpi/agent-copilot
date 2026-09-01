@@ -7,7 +7,7 @@
     "cancel": "取消",
     "refresh": "重新整理",
     "loading": "載入中…",
-    "search": "搜尋對話…",
+    "search": "搜尋客戶代號",
     "loadMore": "載入較早的訊息",
     "justNow": "剛剛",
     "minutesAgo": "{n} 分鐘前",
@@ -71,7 +71,7 @@
     "automation": "全自動（唯讀）",
     "automationHint": "AI 自動回覆，所有人都無法手動送出訊息",
     "none": "尚未加入",
-    "sharedWarning": "⚠️ 模式是這個對話的共用設定，切換會影響所有人，包含在 iMBrace 官方介面工作的同事。",
+    "sharedWarning": "模式是這個對話的共用設定，切換會影響所有人，包含在 iMBrace 官方介面工作的同事。",
     "switching": "切換中…",
     "switchFailed": "切換模式失敗"
   },
@@ -140,13 +140,15 @@
     "readonlyAutomation": "這個對話目前是「全自動（唯讀）」模式，任何人都無法送出訊息。",
     "locked": "{name} 已強制介入此對話。",
     "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。",
-    "initializing": "連線建立後才可輸入"
+    "initializing": "連線建立後才可輸入",
+    "resizeHint": "拖曳，或聚焦後用 ↑／↓、Home／End 調整輸入框高度",
+    "resizeLabel": "調整輸入框高度"
   },
   "copilot": {
     "summary": {
       "title": "對話摘要",
       "tag": "AI 產生 · 接手前必讀",
-      "generatedAt": "產生於 {time}",
+      "generatedAt": "產生於",
       "regenerate": "重新產生",
       "details": "詳細內容",
       "errorTitle": "摘要產生失敗",
@@ -166,7 +168,11 @@
         "compliance": "合規疑慮",
         "vip": "VIP 客戶",
         "repeat_contact": "重複聯絡"
-      }
+      },
+      "detailsHint": "四段 · 掃完摘要後查",
+      "regenerateHint": "同一則訊息不會有不同結果，僅產生失敗時可重試",
+      "noBody": "本次未產生摘要正文，已改為預設展開詳細內容。",
+      "errorRetry": "重試"
     },
     "sentiment": {
       "title": "客戶情緒提示",
@@ -190,7 +196,9 @@
         "angry": "客戶情緒：生氣"
       },
       "scale": "情緒量表",
-      "scaleNow": "情緒量表，目前為「{label}」"
+      "scaleNow": "情緒量表，目前為「{label}」",
+      "axisRound": "第 {n} 輪",
+      "attachmentLegend": "附件"
     },
     "suggestion": {
       "title": "AI 即時回覆建議",
@@ -232,7 +240,8 @@
       "updatedAtUnknown": "更新日期未知",
       "insert": "插入為回覆",
       "expand": "展開全文",
-      "expandDisclaimer": "本次可取得的相關內容，可能未涵蓋完整文件"
+      "expandDisclaimer": "本次可取得的相關內容，可能未涵蓋完整文件",
+      "staleWarning": "已超過 12 個月未更新，引用前請確認"
     },
     "draftOverwrite": {
       "message": "目前輸入框已有內容，套用後會覆蓋。",
@@ -244,14 +253,14 @@
       "expand": "展開「{title}」"
     },
     "retry": "重新分析",
-    "retryOnlyOnError": "只有在這一塊失敗時才需要重新產生",
     "panelTitle": "COPILOT",
     "subtitleLive": "即時輔助",
     "subtitleAnalyzing": "分析中",
     "collapse": "收合 Copilot 面板",
     "expand": "展開 Copilot 面板",
     "retryAll": "全部重試",
-    "retryAllHint": "重新產生所有失敗的區塊"
+    "retryAllHint": "重新產生所有失敗的區塊",
+    "collapsedLabel": "已收合"
   },
   "collision": {
     "title": "撞單攔截：客戶已在你打字期間收到回覆",
@@ -266,12 +275,15 @@
     "secondsAgo": "{n} 秒前"
   },
   "layout": {
-    "resizeHint": "拖曳調整寬度",
+    "resizeHint": "拖曳，或聚焦後用 ←／→、Home／End 調整寬度",
     "resizeSidebar": "調整對話列表寬度",
     "resizeCopilot": "調整 Copilot 面板寬度"
   },
   "auth": {
     "logout": "登出",
     "accountMenu": "帳號選單"
+  },
+  "account": {
+    "signedInAs": "已登入身分"
   }
 }

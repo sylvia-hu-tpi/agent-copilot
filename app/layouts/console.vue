@@ -185,7 +185,7 @@ const identity = computed(() => {
               三處各算一份就會長不一樣，而那不會有型別錯誤。
             -->
             <span
-              class="flex size-[26px] shrink-0 items-center justify-center rounded-full border text-[0.6875rem] font-bold"
+              class="ac-mono flex size-[26px] shrink-0 items-center justify-center rounded-full border text-[0.8125rem] font-bold tracking-[.02em]"
               :style="{
                 background: 'var(--navy-soft)',
                 borderColor: 'var(--navy-soft-bd)',
@@ -195,20 +195,32 @@ const identity = computed(() => {
             >{{ avatarLabel(identity.label) }}</span>
           </button>
 
+          <!--
+            ⚠️ **不沿用 `.ac-card`**（畫布 1c）：卡片的 `--border` ＋ `0 1px 2px` 是「平貼在版面上」
+               的東西，而下拉是**浮在版面之上**的。用同一組陰影會讓它看起來像被壓在底下的一塊卡片，
+               與後面的內容分不開。畫布給的是 `--border-strong` ＋ `0 8px 24px`。
+          -->
           <div
             v-if="accountMenuOpen"
-            class="ac-card absolute right-0 top-10 z-30 w-max min-w-52 max-w-72 p-1"
+            class="absolute right-0 top-10 z-30 w-max min-w-52 max-w-72 rounded-[9px] border p-1.5"
+            :style="{
+              background: 'var(--surface)',
+              borderColor: 'var(--border-strong)',
+              boxShadow: '0 8px 24px rgba(16, 24, 40, .14)',
+            }"
           >
             <!--
               身分列：純資訊，刻意不是 menuitem、不可點（見 script 的說明）。
               ⚠️ email 用等寬字並允許換行 —— 它是要**逐字核對**的東西（是不是我的帳號），
                  截斷成「agent.lin@compa…」正好蓋掉最能區分帳號的網域部分。
             -->
-            <div class="px-2 py-1.5">
+            <div class="flex flex-col gap-[3px] border-b px-2 pb-2 pt-2" :style="{ borderColor: 'var(--border)' }">
+              <span class="ac-status-label">{{ $t('account.signedInAs') }}</span>
               <p v-if="identity.name" class="truncate text-[0.9375rem]" :style="{ color: 'var(--text)' }">
                 {{ identity.name }}
               </p>
-              <p class="ac-mono break-all text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">
+              <!-- ⚠️ 用 `--text` 不是 `--text-3`：這是要逐字核對「是不是我的帳號」的字串 -->
+              <p class="ac-mono break-all text-[0.875rem] leading-[1.55]" :style="{ color: 'var(--text)' }">
                 {{ identity.email }}
               </p>
             </div>
