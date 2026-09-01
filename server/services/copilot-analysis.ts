@@ -55,7 +55,7 @@ const ANALYSIS_STATE_TTL_MS = 2 * 60 * 60 * 1000
  * 單次逾時門檻（該門檻是依「回一句話」的通用 AI 呼叫延遲訂的，中位數 5 秒、最慢 12.2 秒，
  * 見 docs/PLATFORM_CAPABILITY.md，不是為「輸出量隨輸入線性增加」的任務設計）。
  * 對話可長達 398 則（docs/ARCHITECTURE.md §9.3 實測上限），沒有固定逾時秒數能安全涵蓋
- * 所有長度，因此改為**切成固定則數的小批，依序各自呼叫、各自獨立套用 FR-014 的
+ * 所有長度，因此改為**切成固定則數的小批，各自獨立套用 FR-014 的
  * 15 秒逾時／1s→4s 退避／40 秒預算**——不改動 FR-014 本身的任何數字，只是把「一次分析」
  * 的計算單位從「這個區塊要處理的全部訊息」改成「這一小批訊息」，讓每次呼叫的工作量
  * 回到 FR-014 原本設計時假設的量級。
@@ -72,7 +72,35 @@ const ANALYSIS_STATE_TTL_MS = 2 * 60 * 60 * 1000
  * 但長對話需要的批次數越多、總耗時越長；沒有一個數字能保證「絕對不逾時」，這是安全
  * 邊際與總時間的取捨，6 是使用者接受「偶爾需要手動重試」後選定的中間值。
  */
-const SENTIMENT_CHUNK_SIZE = 6
+/**
+ * ⚠️ 對外 export 只為了讓量測腳本（`scripts/spike/21-progressive-citations.ts`）算得出
+ *    「這段對話會切成幾批」——001 SC-005 的判讀完全取決於這個分母，而抄一份常數過去
+ *    正是本專案吃過虧的失敗模式（見 spike 18 檔頭「量測工具比正式路徑寬鬆會漏掉真的缺陷」）。
+ *    **MUST NOT 有任何生產路徑改從外部覆寫它。**
+ */
+export const SENTIMENT_CHUNK_SIZE = 6
+
+/**
+ * 同時最多幾批在飛（2026-09-01 使用者裁定，取代原本的「依序送出」）。
+ *
+ * **為什麼改**：2026-09-01 的端到端實測（`npm run spike:progressive -- --repeat 3`，n=15）
+ * 量到情緒區塊的總延遲 **≈ 批次數 × 5.5～6.4 秒**，每批的中位數幾乎是常數。依序送出時
+ * 1 批的對話 6/6 落在 001 SC-005 的 10 秒內，3 批（17 則客戶發言）0/6、5 批（25 則）0/3。
+ * 也就是說 SC-005 在依序架構下**只在客戶發言 ≤ 6 則時成立** —— 這不是模型抖動，
+ * 是結構性的，任何固定秒數的門檻都只是在賭對話有多長（冷啟動一次可吃到 50 則，§11.8 ①）。
+ *
+ * **為什麼是 3，不是無上限**：原本「刻意不平行送出」的理由是「避免對話很長時一次對同一個
+ * agent 開幾十條並發請求」——那個顧慮**沒有被推翻**，只是把 1 改成 3。398 則的對話
+ * （§9.3 實測上限）依序要 67 批、無上限則是 67 條並發，兩者都不可接受；上限 3 讓
+ * 並發數與對話長度脫鉤。
+ *
+ * ⚠️ **這個改動的風險是靜默的，MUST 以實測把關**：並發可能讓平台側排隊而抬高**單次**
+ *    延遲，一旦單次超過 FR-014 的 15 秒就會觸發重試，重試用盡則整批轉 error。
+ *    也就是「總時間變短」與「失敗率上升」可能同時發生，而畫面上只會看到偶發紅字。
+ *    調高這個數字前 MUST 重跑 `spike:progressive` 並同時看**單次延遲**與**失敗率**，
+ *    不能只看總時間變快就加碼。
+ */
+const SENTIMENT_CONCURRENCY = 3
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = []
@@ -80,7 +108,51 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out
 }
 
-function isTextCustomerMessage(m: Message): boolean {
+/**
+ * 有上限的並行 map —— 回傳值**依輸入順序**排列，與完成順序無關。
+ *
+ * ⚠️ **第一個失敗就停止派工**：已在飛的那幾條會跑完（沒有辦法取消，`withRetry()` 不吃
+ *    AbortSignal），但佇列裡還沒開始的不會再送出。這保住了依序版本「某一批失敗就不再
+ *    浪費後續呼叫」的成本性質 —— 少了這一段，一段 9 批的長對話在第 1 批就失敗時，
+ *    仍會把剩下 8 批全部打出去，那是 003 FR-006 一路在防的呼叫量浪費。
+ *
+ * ⚠️ 結果依 index 落位而非 `push`，因此**輸出順序是決定性的**。情緒的下游
+ *    （`finishSentimentSuccess()`）雖然會自己 `sortByAt()`，但讓這支函式的契約與
+ *    排程時序無關，測試才驗得住。
+ */
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  // ⚠️ 用陣列而不是 `let firstError: … | null`：後者在 worker 閉包裡賦值之後，
+  //    TS 會把函式尾端的 `firstError` 收斂成 `never`（跨閉包的賦值不進入控制流分析）。
+  const errors: unknown[] = []
+  let next = 0
+
+  const worker = async (): Promise<void> => {
+    while (errors.length === 0) {
+      const i = next++
+      if (i >= items.length) return
+      try {
+        results[i] = await fn(items[i]!)
+      }
+      catch (err) {
+        // 只留第一個錯誤：後續 worker 看到它就不再取新工作，行為與依序版本的早退一致
+        if (errors.length === 0) errors.push(err)
+        return
+      }
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  if (errors.length > 0) throw errors[0]
+  return results
+}
+
+/** ⚠️ export 的理由同 `SENTIMENT_CHUNK_SIZE`：量測腳本要用同一個判別式數批次，不另抄一份 */
+export function isTextCustomerMessage(m: Message): boolean {
   return m.sender.type === 'customer' && m.text !== ''
 }
 
@@ -665,16 +737,23 @@ async function analyzeSentimentBatch(conversationId: string, messages: Message[]
     await beginAnalyzing(conversationId, 'sentiment')
 
     try {
-      const allPoints: SentimentPoint[] = []
-      // 依序處理每一小批（見 SENTIMENT_CHUNK_SIZE 的說明）——刻意不平行送出，
-      // 避免對話很長時一次對同一個 agent 開幾十條並發請求。
-      for (const part of chunk(textMessages, SENTIMENT_CHUNK_SIZE)) {
-        const outcome = await withRetry(
+      /**
+       * 每一小批各自呼叫，最多 `SENTIMENT_CONCURRENCY` 批同時在飛
+       * （見兩個常數上方的說明；2026-09-01 由「依序」改為有上限的並行）。
+       *
+       * ⚠️ 並行之後 `onRetry` 可能由不同批次交錯觸發，畫面上的 `retryAttempt`
+       *    因此不再是單調遞增的 —— 它顯示的是「最近一次重試是第幾次嘗試」，
+       *    不是「這個區塊總共重試了幾次」。UI 沒有承諾後者，但不要拿它去做算術。
+       */
+      const perBatch = await mapWithConcurrency(
+        chunk(textMessages, SENTIMENT_CHUNK_SIZE),
+        SENTIMENT_CONCURRENCY,
+        async part => (await withRetry(
           async () => parseSentimentPoints(await useAIProvider().analyzeSentiment({ messages: part })),
           { onRetry: info => publishRetrying(conversationId, 'sentiment', info) },
-        )
-        allPoints.push(...outcome.value)
-      }
+        )).value,
+      )
+      const allPoints: SentimentPoint[] = perBatch.flat()
       await finishSentimentSuccess(conversationId, allPoints, markerMessages)
     }
     catch (err) {

@@ -34,7 +34,7 @@ import { useEventBus, useStateStore } from '../server/state/index.js'
 import { conversationTopic } from '../server/state/types.js'
 import { isSentimentAlerting } from '../shared/types/copilot.js'
 import type { CopilotEvent } from '../shared/types/events.js'
-import type { ConversationSummary, SuggestionCard } from '../shared/types/copilot.js'
+import type { ConversationSummary, SentimentPoint, SuggestionCard } from '../shared/types/copilot.js'
 import type { Message } from '../shared/types/conversation.js'
 import type { KnowledgeHit, KnowledgeProvider } from '../shared/types/knowledge.js'
 
@@ -421,8 +421,11 @@ describe('迴歸：newCustomerMessagesSince() 對已涵蓋的訊息去重（T010
 
 describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-27，真實環境回報）', () => {
   // 真實對話 16 則客戶發言，單次呼叫（不分批）實測延遲 12.7～29.9 秒，
-  // 遠超 FR-014 的 15 秒單次逾時——改成每批固定則數依序呼叫，見 copilot-analysis.ts
+  // 遠超 FR-014 的 15 秒單次逾時——改成每批固定則數各自呼叫，見 copilot-analysis.ts
   // SENTIMENT_CHUNK_SIZE 常數上方的說明。
+  // ⚠️ 2026-09-01 起這些呼叫是**有上限的並行**（SENTIMENT_CONCURRENCY），不再依序。
+  //    因此本節的斷言 MUST NOT 依賴呼叫先後順序——那會變成在測排程時序，
+  //    一改並行度就紅，而它要守的其實是「切幾批、每批多大、失敗怎麼收」。
 
   it('客戶發言超過一批的則數時，AIProvider.analyzeSentiment() 被呼叫多次，每次都不超過批次大小', async () => {
     const callSizes: number[] = []
@@ -438,7 +441,8 @@ describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-2
     const history = Array.from({ length: 9 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 20 - i))
     await runColdStart(id, history, false)
 
-    expect(callSizes).toEqual([6, 3])
+    // 排序後比對：驗的是「切成 6 + 3 兩批」，不是哪一批先送出（見本 describe 開頭的說明）
+    expect([...callSizes].sort((a, b) => b - a)).toEqual([6, 3])
     expect(callSizes.every(n => n <= 6)).toBe(true)
 
     const state = await useStateStore().getAnalysisState(id)
@@ -453,7 +457,9 @@ describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-2
     setAIProvider(new (class extends MockAIProvider {
       override async analyzeSentiment(input: { messages: Message[] }) {
         call++
-        // 第一批（6 則）成功，第二批（第 7～9 則）持續失敗
+        // 最先進來的那一次成功，其餘全部持續失敗。
+        // ⚠️ 刻意不寫成「第一批成功、第二批失敗」——並行之後哪一批先進來不保證，
+        //    但「有一批成功、另一批怎麼重試都失敗」這個情境本身與順序無關。
         if (call > 1) throw new AIProviderHttpError('boom', 500)
         return super.analyzeSentiment(input)
       }
@@ -473,6 +479,75 @@ describe('迴歸：情緒分析依 SENTIMENT_CHUNK_SIZE 分批呼叫（2026-08-2
     // 第一批已成功的 8 個點不落地——寧可整批視為失敗、之後手動重試整批重來，
     // 也不留一份只算了一半的殘缺 timeline（見 copilot-analysis.ts 的設計取捨說明）
     expect(state?.sentimentBlock.timeline).toHaveLength(0)
+  })
+
+  /*
+    ⚠️ 以下兩條守的是 2026-09-01「依序 → 有上限的並行」那次改動的兩個性質。
+       兩者都**不會報錯、型別也全過**：並行度被改回 1 只是變慢，上限被拿掉只是偶爾多幾條
+       並發，失敗後不停止派工只是多花錢 —— 沒有測試就沒有東西守得住。
+  */
+
+  it('批次並行送出，但同時在飛的數量不超過上限', async () => {
+    let inFlight = 0
+    let peak = 0
+    setAIProvider(new (class extends MockAIProvider {
+      constructor() {
+        // 給每次呼叫一段真實延遲，否則批次之間不會有重疊，量不到並行度
+        super({ sentimentDelayMs: 20 })
+      }
+
+      override async analyzeSentiment(input: { messages: Message[] }) {
+        inFlight++
+        peak = Math.max(peak, inFlight)
+        try {
+          return await super.analyzeSentiment(input)
+        }
+        finally {
+          inFlight--
+        }
+      }
+    })())
+
+    const id = convId('chunked-concurrency')
+    // 30 則客戶發言 → 5 批（SENTIMENT_CHUNK_SIZE = 6），足以讓上限真的被踩到
+    const history = Array.from({ length: 30 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 40 - i))
+    await runColdStart(id, history, false)
+
+    // ⚠️ 這裡刻意寫死 3 而不是 import 常數：調整並行度時本行 MUST 跟著紅，
+    //    強迫改動者看到 copilot-analysis.ts 上方那句「MUST 重跑實測看單次延遲與失敗率」。
+    expect(peak).toBe(3)
+    // peak === 3 同時證明了兩件事：真的有並行（不是 1），且沒有一次全開（不是 5）
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.sentimentBlock.status).toBe('ready')
+    expect(state?.sentimentBlock.timeline).toHaveLength(30)
+  })
+
+  it('有一批失敗後，尚未開始的批次 MUST NOT 再送出（失敗時的呼叫量不因並行而膨脹）', async () => {
+    const firstTexts: string[] = []
+    setAIProvider(new (class extends MockAIProvider {
+      // 回傳型別要顯式標注：函式只會 throw，推導出來是 Promise<void> 而對不上介面
+      override async analyzeSentiment(input: { messages: Message[] }): Promise<SentimentPoint[]> {
+        firstTexts.push(input.messages[0]!.text)
+        throw new AIProviderHttpError('boom', 500)
+      }
+    })())
+
+    const id = convId('chunked-fail-fast')
+    const history = Array.from({ length: 30 }, (_, i) => customerText(id, `第 ${i + 1} 句`, 40 - i))
+
+    vi.useFakeTimers()
+    const promise = runColdStart(id, history, false)
+    await vi.runAllTimersAsync()
+    await promise
+    vi.useRealTimers()
+
+    // 5 批的開頭分別是第 1／7／13／19／25 句。上限 3 代表最多只有前三批被派出去，
+    // 第一個失敗落地後就不再取新工作 —— 第 4、5 批因此完全沒有被呼叫過。
+    expect(firstTexts).not.toContain('第 19 句')
+    expect(firstTexts).not.toContain('第 25 句')
+
+    const state = await useStateStore().getAnalysisState(id)
+    expect(state?.sentimentBlock.status).toBe('error')
   })
 })
 
