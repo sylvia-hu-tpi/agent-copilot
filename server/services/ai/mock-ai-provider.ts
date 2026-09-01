@@ -59,6 +59,11 @@ export class MockAIProvider implements AIProvider {
 
     const last = input.history[input.history.length - 1]
     return {
+      // 畫布 2a「對話摘要」的正文與主題標籤（2026-09-01）——
+      // 兩者在 schema 是選填，mock 一律給值，讓本機開發看得到完整版面
+      narrative: input.previousSummary?.narrative
+        ?? '客戶詢問訂單相關問題，已確認訂單狀態，尚待確認客戶的具體訴求細節。',
+      topics: input.previousSummary?.topics ?? ['訂單查詢'],
       intent: input.previousSummary?.intent ?? '客戶詢問訂單相關問題',
       keyFacts: [...(input.previousSummary?.keyFacts ?? []), ...(last ? [`最新訊息：${last.id}`] : [])],
       attempted: input.previousSummary?.attempted ?? [],

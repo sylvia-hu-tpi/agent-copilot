@@ -21,8 +21,36 @@ export type AnalysisBlockStatus =
 
 // ── 摘要卡 ────────────────────────────────────────────────────────────
 
+/**
+ * 主題標籤的長度與數量上限（畫布 2a「對話摘要」的 pill 列）。
+ *
+ * ⚠️ `topics` 是**模型自由生成的字串**，不像 `riskFlags` 有列舉可擋。沒有上限的話
+ *    模型回一句 30 字的話當標籤、或一次回十幾個，pill 列會擠爆整張卡 ——
+ *    而那不會有任何型別錯誤。與 `riskFlags` 丟棄列舉外值同一個精神：
+ *    **在防腐層擋掉，不讓它有機會影響版面**。
+ */
+export const SUMMARY_TOPIC_MAX_COUNT = 4
+export const SUMMARY_TOPIC_MAX_LENGTH = 16
+
 /** 沿用 docs/ARCHITECTURE.md §11.5 已定案的形狀，原樣落地 */
 export interface ConversationSummary {
+  /**
+   * 摘要正文 —— 畫布 2a「對話摘要」的主體，一段可一口氣讀完的敘述。
+   *
+   * ⚠️ **選填，而且必須一直是選填。** 這個欄位由 iMBrace 後台的
+   *    `AgentCopilot_摘要_agent` 產生，而那份 system prompt **不在這個 repo 裡** ——
+   *    後台還沒更新、或日後被改回舊版時，這個欄位就會是 `undefined`。
+   *    標成必填會讓整份摘要驗不過而整塊轉 error，等於一個 repo 外的設定就能把功能打掉。
+   *    UI 在缺值時退回以 `intent` 當正文（見 `SummaryCard.vue`）。
+   */
+  narrative?: string
+  /**
+   * 主題標籤（畫布逐字示例：「發票未收到」「地址確認」）。
+   *
+   * ⚠️ 選填，理由同 `narrative`。⚠️ 與 `riskFlags` **不同維度**：這裡是「在談什麼」，
+   *    那裡是「有什麼風險」，畫布把兩者畫成同一列但用不同色系的 pill。
+   */
+  topics?: string[]
   intent: string
   keyFacts: string[]
   attempted: string[]

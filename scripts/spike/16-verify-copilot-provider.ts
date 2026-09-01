@@ -44,6 +44,17 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
 
   let summaryOk = 0
   let sentimentOk = 0
+  /**
+   * `narrative`／`topics` 有幾次真的回來了（2026-09-01 新增）。
+   *
+   * ⚠️ **這兩個計數不能省，也不能靠 `summaryOk` 代表。** 兩個欄位在 schema 是
+   *    「驗不過就轉 `undefined`，不拋錯」（見 `schemas.ts` 的說明）—— 那是為了不讓
+   *    repo 外的後台設定有本事把摘要區塊整塊打成 error。代價是**後台 prompt 沒生效時，
+   *    `summarize()` 一樣會 3/3 通過**，從既有的證據完全看不出來。
+   *    這正是本專案一再防的失敗模式：安靜地少一段內容，而所有檢查都是綠的。
+   */
+  let narrativeOk = 0
+  let topicsOk = 0
   const results: Array<Record<string, unknown>> = []
 
   for (let run = 1; run <= RUNS; run++) {
@@ -51,8 +62,20 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
       const summary = await provider.summarize({ history: SAMPLE_HISTORY })
       const validated = parseConversationSummary(summary)
       summaryOk++
+      if (validated.narrative) narrativeOk++
+      if (validated.topics?.length) topicsOk++
       console.log(`  第 ${run} 次 summarize() ✅ intent=「${validated.intent}」riskFlags=${JSON.stringify(validated.riskFlags)}`)
-      results.push({ run, task: 'summarize', ok: true, intent: validated.intent, riskFlags: validated.riskFlags })
+      console.log(`         narrative=${validated.narrative ? `「${validated.narrative}」` : '❌ 缺席'}`)
+      console.log(`         topics=${validated.topics?.length ? JSON.stringify(validated.topics) : '❌ 缺席'}`)
+      results.push({
+        run,
+        task: 'summarize',
+        ok: true,
+        intent: validated.intent,
+        riskFlags: validated.riskFlags,
+        narrative: validated.narrative ?? null,
+        topics: validated.topics ?? null,
+      })
     }
     catch (e) {
       console.log(`  第 ${run} 次 summarize() ❌ ${e instanceof Error ? e.message : String(e)}`)
@@ -74,6 +97,24 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
   }
 
   p.fixture('provider-runs', results, true)
+
+  /*
+    ⚠️ 這一條與上面的 e2e 是**兩個獨立的問題**，不可合併成一條 ——
+       「輸出解得開、驗得過」與「後台 prompt 有沒有生效」會各自失敗，
+       合成一條的話後者失敗時會被前者的綠燈蓋掉。
+  */
+  p.record({
+    question: 'copilot-summary-narrative',
+    claim: '後台的 `AgentCopilot_摘要_agent` 有回傳 `narrative` 與 `topics`（畫布 2a「對話摘要」需要）',
+    verdict: narrativeOk === RUNS && topicsOk === RUNS
+      ? 'yes'
+      : (narrativeOk > 0 || topicsOk > 0) ? 'partial' : 'no',
+    evidence: `narrative ${narrativeOk}/${RUNS}、topics ${topicsOk}/${RUNS}`,
+    impact: narrativeOk === RUNS && topicsOk === RUNS
+      ? undefined
+      : '⚠️ 缺席時 UI 會退回以 `intent` 當正文、不顯示主題標籤 —— **畫面不會報錯**，'
+        + '只是安靜地少一段內容。請確認後台 system prompt 是否已更新（見 ARCHITECTURE §11.5）',
+  })
 
   p.record({
     question: 'copilot-provider-e2e',

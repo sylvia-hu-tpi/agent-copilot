@@ -184,6 +184,14 @@ export class ImbraceAgentProvider implements AIProvider {
     const last = input.history[input.history.length - 1]
 
     return {
+      /*
+        ⚠️ `narrative`／`topics` 是 2026-09-01 為對齊畫布「對話摘要」新增的欄位，
+           由後台 `AgentCopilot_摘要_agent` 的 system prompt 產生。
+           後台尚未更新時它們是 `undefined`，schema 標為 `.optional()` 讓這種情況
+           **正常通過**而非整份摘要失敗 —— 一個 repo 外的設定不該有本事把功能打掉。
+      */
+      narrative: parsed.narrative,
+      topics: parsed.topics,
       intent: parsed.intent,
       keyFacts: parsed.keyFacts,
       attempted: parsed.attempted,
