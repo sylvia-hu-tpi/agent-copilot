@@ -106,10 +106,24 @@ describe('FR-019：按鈕的可按條件', () => {
     expect(session.hasError.value).toBe(true)
   })
 
-  it('不可按狀態同時以 disabled 與 aria-disabled 表達（憲法 8.1：不可只靠降低對比度）', () => {
+  /**
+   * 「全部重試」**只在有區塊失敗時才出現**（畫布 2a 的 `sc-if anyError`，
+   * 2026-09-01 使用者裁定改回畫布做法）。
+   *
+   * ⚠️ 先前這裡守的是相反的規則（常駐但 `disabled` ＋ `aria-disabled`，理由是憲法 8.1
+   *    「不可按狀態不得只靠降低對比度表達」）。改判的理由：憲法 8.1 管的是
+   *    **已經在畫面上的控制項**，而這顆按鈕本身就是「現在有東西壞了」的訊號 ——
+   *    常駐會讓那個訊號永遠亮著而失去意義。沒有失敗區塊時它沒有任何語意，
+   *    讓它不存在比讓它灰著更誠實。
+   *
+   * ⚠️ 因此 `disabled` MUST NOT 回來：一旦它常駐，這個訊號就失效了。
+   */
+  it('只在 hasError 時渲染，且沒有常駐的 disabled 版本（2026-09-01 改判）', () => {
     const source = readFileSync(resolve(ROOT, 'app/components/copilot/PanelHeader.vue'), 'utf8')
-    expect(source).toContain(':disabled="!hasError"')
-    expect(source).toContain(':aria-disabled="!hasError"')
+    const template = /<template>([\s\S]*)<\/template>/.exec(source)?.[1] ?? ''
+    expect(template).toContain('v-if="hasError"')
+    expect(template).not.toContain(':disabled="!hasError"')
+    expect(template).not.toContain(':aria-disabled="!hasError"')
   })
 
   it('兩個按鈕都是原生 <button>，因此可鍵盤操作（憲法 8.2）', () => {

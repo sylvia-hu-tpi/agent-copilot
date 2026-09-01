@@ -173,9 +173,13 @@ const title = computed(() =>
   view.detail.value?.name || view.detail.value?.contactId || conversationId.value,
 )
 
-// ── 中欄標題列的 meta（畫布 §8.3：`conv_8f21c0 · 建立於 08/25 13:58 · 訊息 312 則`）──
+// ── 中欄標題列的 meta（畫布 §8.3：`conv_8f21c0 · 建立於 08/25 13:58`）──
 
 /**
+ * ⚠️ **畫布 2026-09-01 已把尾端的「· 訊息 312 則」拿掉，實作刻意保留**（改為誠實的措辭）——
+ *    「已載入 N 則」對「還要不要按載入更早」是有用的資訊，而畫布拿掉它的原因
+ *    多半是我方一直回報「給不出總數」。⚠️ 下一輪核對時不要當成落差而刪掉。
+ *
  * ⚠️ **「訊息 N 則」的 N 是「目前已載入的則數」，不是對話總則數。**
  *    平台的訊息 API 只回一頁 ＋ `hasMore`，沒有總數欄位（`useConversationView`
  *    的 `MessagesResponse`）。把已載入數直接標成「訊息 312 則」是謊報 ——
@@ -454,37 +458,48 @@ const presenceShort = computed(() => {
           >
             {{ $t('conversation.exitHint') }}
           </p>
-
-          <!--
-            收合鈕在**服務模式區塊的右下角**（畫布 2026-08-31 第三版：`position:absolute`
-            ＋ `right:14px; bottom:8px`，即該區塊 padding box 的右下角，與最後一行警語齊底）。
-
-            ⚠️ 不放標題列：那一排是「接手／離開／結案」這種有後果的動作，
-               把一顆純視覺的收合鈕擠進去會讓它看起來像同一類東西。
-            ⚠️ 用 `absolute` 而不是 flex 的第三個項目 —— 它要對齊的是**整個區塊的底部**
-               （警語那一行），不是模式按鈕那一列。畫布上一版就是放在按鈕列裡，這一版特地改掉了。
-            ⚠️ `pr-8` 是給按鈕讓出的空間：警語是可換行的整行文字，沒有這段留白會被按鈕壓住。
-          -->
-          <div class="relative mt-1.5 pr-8">
-            <ConversationModeSelect
-              :mode="view.control.value?.mode ?? null"
-              :disabled="!view.viewerJoined.value || view.busy.value"
-              :busy="view.busy.value"
-              @change="switchMode"
-            />
-            <button
-              type="button"
-              class="absolute bottom-0 right-0 flex size-6 items-center justify-center rounded-md border transition-opacity hover:opacity-70"
-              :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface)', color: 'var(--text-2)' }"
-              :aria-label="$t('conversation.collapseHeader')"
-              :aria-expanded="true"
-              :title="$t('conversation.collapseHeader')"
-              @click="headerCollapsed = true"
-            >
-              <UIcon name="i-lucide-chevrons-up" class="size-3.5" />
-            </button>
-          </div>
         </header>
+
+        <!--
+          服務模式是**獨立的第二層資訊列**，不是標題列的一部分。
+
+          ⚠️ 畫布把它畫成自己的區塊，帶自己的 `border-bottom:1px solid var(--border)`
+             （對話標頭 `padding:9px 14px` 一條、服務模式 `padding:8px 14px` 一條，共兩條）。
+             先前兩段包在同一個 `<header class="border-b">` 裡，中間那條線整條不見 ——
+             結果是「接手／離開／結案」與「切換服務模式」看起來像同一組控制項，
+             而它們的後果差很遠：前者只影響我，後者是整個對話的共用設定（§10.6）。
+
+          收合鈕在**本區塊的右下角**（畫布 2026-08-31 第三版：`position:absolute`
+          ＋ `right:14px; bottom:8px`，即該區塊 padding box 的右下角，與最後一行警語齊底）。
+
+          ⚠️ 不放標題列：那一排是「接手／離開／結案」這種有後果的動作，
+             把一顆純視覺的收合鈕擠進去會讓它看起來像同一類東西。
+          ⚠️ 用 `absolute` 而不是 flex 的第三個項目 —— 它要對齊的是**整個區塊的底部**
+             （警語那一行），不是模式按鈕那一列。畫布上一版就是放在按鈕列裡，這一版特地改掉了。
+          ⚠️ `pr-8` 是給按鈕讓出的空間：警語是可換行的整行文字，沒有這段留白會被按鈕壓住。
+        -->
+        <div
+          class="relative shrink-0 border-b py-2 pl-4 pr-10"
+          :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
+        >
+          <ConversationModeSelect
+            :mode="view.control.value?.mode ?? null"
+            :disabled="!view.viewerJoined.value || view.busy.value"
+            :busy="view.busy.value"
+            @change="switchMode"
+          />
+          <button
+            type="button"
+            class="absolute bottom-2 right-4 flex size-6 items-center justify-center rounded-md border transition-opacity hover:opacity-70"
+            :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface)', color: 'var(--text-2)' }"
+            :aria-label="$t('conversation.collapseHeader')"
+            :aria-expanded="true"
+            :title="$t('conversation.collapseHeader')"
+            @click="headerCollapsed = true"
+          >
+            <UIcon name="i-lucide-chevrons-up" class="size-3.5" />
+          </button>
+        </div>
 
         <ConversationPresenceBar :presence="view.presence.value" />
       </template>
@@ -599,31 +614,44 @@ const presenceShort = computed(() => {
       <!-- 收合態：窄直條（對照 docs/wireframe/03-workspace_toggleCopilot.png） -->
       <div
         v-if="panel.collapsed.value"
-        class="flex w-11 shrink-0 flex-col items-center gap-3 border-l py-3"
-        :style="{ borderColor: 'var(--border)', background: 'var(--bg)' }"
+        class="flex w-11 shrink-0 flex-col items-center gap-3 border-l py-2.5"
+        :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
       >
+        <!-- 展開鈕：畫布是 `30×30`／`--border` 框／`--surface-2` 底的有框按鈕，與展開態的收合鈕同一顆 -->
         <button
           type="button"
-          class="rounded-md p-1 transition-opacity hover:opacity-70"
-          :style="{ color: 'var(--text-3)' }"
+          class="flex size-[30px] shrink-0 items-center justify-center rounded-lg border transition-opacity hover:opacity-70"
+          :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
           :aria-label="$t('copilot.expand')"
           :aria-expanded="false"
           :title="$t('copilot.expand')"
           @click="panel.toggle()"
         >
-          <UIcon name="i-lucide-panel-right-open" class="size-4" />
+          <UIcon name="i-lucide-panel-right-open" class="size-3.5" />
         </button>
+
+        <!-- 分隔線 ＋ sparkles（畫布）：把「按鈕」與「這一欄是什麼」分開，
+             跟左欄收合態是同一組結構（24px 線、`--border`） -->
+        <span class="h-px w-6 shrink-0" :style="{ background: 'var(--border)' }" aria-hidden="true" />
+        <UIcon name="i-lucide-sparkles" class="size-3.5 shrink-0" :style="{ color: 'var(--navy-2)' }" />
+
         <span
           class="ac-status-label [writing-mode:vertical-rl]"
-          :style="{ color: 'var(--text-3)' }"
+          :style="{ color: 'var(--navy-2)' }"
         >
           {{ $t('copilot.panelTitle') }}
         </span>
       </div>
 
+      <!--
+        ⚠️ **header 在捲動容器之外**（畫布 2a）：header 是 `flex:none` 的 42px 固定列，
+           內容區才是 `flex:1; overflow-y:auto`。先前整欄是一個 `overflow-y-auto`，
+           header 會跟著內容捲走 —— 而 header 上的「全部重試」正是某個區塊失敗時才出現的，
+           那時客服很可能已經捲到下面在讀別的區塊，看不到它。
+      -->
       <div
         v-else
-        class="shrink-0 space-y-3 overflow-y-auto border-l p-3"
+        class="flex shrink-0 flex-col border-l"
         :style="{ width: `${copilotPane.width.value}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
       >
         <CopilotPanelHeader
@@ -633,25 +661,28 @@ const presenceShort = computed(() => {
           @toggle="panel.toggle()"
           @retry-all="copilot.retryAll()"
         />
-        <!--
-          ⚠️ **區塊順序照畫布 artboard 2a，不要隨手調動。**
-             畫布的排序有記載的理由（ARCHITECTURE §「右欄自上而下共五個區塊」）——依處理中的
-             使用頻率排：情緒「最常看」→ 建議「最常用」→ 快查「隨時可能用」→ 對話紀錄
-             「偶爾回顧」→ 結案摘要「只在結案時」。
-             摘要卡是畫布沒有的第六個區塊，2026-08-29 由使用者裁定插在情緒與建議之間。
-        -->
-        <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
-        <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
-        <CopilotSuggestionList
-          :block="copilot.suggestions.value"
-          :cited-at="copilot.suggestionCitedAt.value"
-          @retry="copilot.retry('suggestions')"
-          @insert="overwriteConfirm.request($event)"
-        />
-        <CopilotKnowledgeSearch
-          :conversation-id="conversationId"
-          @insert="overwriteConfirm.request($event)"
-        />
+
+        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+          <!--
+            ⚠️ **區塊順序照畫布 artboard 2a，不要隨手調動。**
+               畫布的排序有記載的理由（ARCHITECTURE §「右欄自上而下共六個區塊」）——依處理中的
+               使用頻率排：情緒「最常看」→ 對話摘要「接手前必讀」→ 建議「最常用」→
+               快查「隨時可能用」→ 對話紀錄「偶爾回顧」→ 結案摘要「只在結案時」。
+               對話紀錄與結案摘要屬 M3，這裡只有前四塊。
+          -->
+          <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
+          <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
+          <CopilotSuggestionList
+            :block="copilot.suggestions.value"
+            :cited-at="copilot.suggestionCitedAt.value"
+            @retry="copilot.retry('suggestions')"
+            @insert="overwriteConfirm.request($event)"
+          />
+          <CopilotKnowledgeSearch
+            :conversation-id="conversationId"
+            @insert="overwriteConfirm.request($event)"
+          />
+        </div>
       </div>
     </template>
   </div>

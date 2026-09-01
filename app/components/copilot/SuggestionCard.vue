@@ -72,23 +72,29 @@ const toneStyle = computed(() => {
       {{ t(`copilot.suggestion.supersededBy.${card.supersededBy.kind}`) }}
     </p>
 
-    <!-- 卡片標頭（畫布 2a）：知識庫來源在左、信心 pill 靠右 -->
+    <!--
+      卡片標頭（畫布 2a）：`book-open` ＋ 知識庫來源標題在左，語氣標籤緊接其後，信心 pill 靠右。
+
+      ⚠️ **順序是「來源標題 → 語氣標籤」，不是反過來。** 先前把語氣標籤排到最前面，
+         結果是每張卡最搶眼的都是「致歉／說明／挽留」這三個字，而客服真正要先認出的是
+         「這張卡引的是哪一份 SOP」—— 語氣是它的修飾，不是它的身分。
+    -->
     <div class="flex items-start gap-2">
-      <!--
-        語氣標籤：畫布 artboard 3a 的色票逐字對應（見 `TONE`）。
-        ⚠️ 形狀是 `radius:4px` 的小方角標籤，**不是** pill —— 圓角 pill 在畫布上是信心度那顆。
-      -->
-      <span
-        class="flex shrink-0 items-center gap-1 rounded border px-1.5 py-px text-[0.78125rem] font-medium"
-        :style="toneStyle"
-      >
-        <UIcon :name="tone.icon" class="size-2.5 shrink-0" />
-        {{ t(`copilot.suggestion.tone.${card.tone}`) }}
-      </span>
       <span class="flex min-w-0 items-center gap-1.5">
         <UIcon name="i-lucide-book-open" class="size-3 shrink-0" :style="{ color: 'var(--ai)' }" />
         <span class="truncate text-[0.875rem] font-medium" :style="{ color: 'var(--text)' }">
           {{ card.sopTitle ?? t(citation === 'pending' ? 'copilot.suggestion.noKnowledgeRefPending' : 'copilot.suggestion.noKnowledgeRef') }}
+        </span>
+        <!--
+          語氣標籤：畫布 artboard 3a 的色票逐字對應（見 `TONE`）。
+          ⚠️ 形狀是 `radius:4px` 的小方角標籤，**不是** pill —— 圓角 pill 在畫布上是信心度那顆。
+        -->
+        <span
+          class="flex shrink-0 items-center gap-1 rounded border px-1.5 py-px text-[0.78125rem] font-medium"
+          :style="toneStyle"
+        >
+          <UIcon :name="tone.icon" class="size-2.5 shrink-0" />
+          {{ t(`copilot.suggestion.tone.${card.tone}`) }}
         </span>
       </span>
       <span class="flex-1" />
@@ -127,8 +133,8 @@ const toneStyle = computed(() => {
     -->
     <div
       v-if="card.requiresData.length > 0"
-      class="flex items-start gap-1.5 rounded-md px-2 py-1.5 text-[0.84375rem] leading-relaxed"
-      :style="{ background: 'var(--open-bg)', color: 'var(--open)' }"
+      class="flex items-start gap-[7px] rounded-[7px] border px-2.5 py-[7px] text-[0.84375rem] leading-relaxed"
+      :style="{ background: 'var(--open-bg)', borderColor: 'var(--open-bg)', color: 'var(--open)' }"
     >
       <UIcon name="i-lucide-clipboard-list" class="mt-0.5 size-3 shrink-0" />
       <span>{{ t('copilot.suggestion.requiresData', { fields: card.requiresData.join('、') }) }}</span>

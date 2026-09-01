@@ -188,6 +188,11 @@ onBeforeUnmount(() => {
         {{ t('copilot.suggestion.citedUpdated') }}
       </p>
 
+      <!--
+        ⚠️ `max-h-120`（480px）是畫布 `max-height:392px` 依 C-10 換算後的等效值 ——
+           實作的字級整體加大約 2.5px（約 1.2 倍），照抄 392px 會比畫布少露出約一張卡。
+           這是**幾何跟著字級一起縮放**的少數幾處之一，不是漏抄。
+      -->
       <div ref="scrollBox" class="max-h-120 space-y-2 overflow-y-auto">
         <CopilotSuggestionCard
           v-for="card in block.cards"
@@ -198,7 +203,13 @@ onBeforeUnmount(() => {
         />
       </div>
 
-      <p v-if="scrollable" class="mt-2 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+      <!-- 捲動提示（畫布 2a）：**置中** ＋ `chevrons-down` icon ＋ 文字，不是靠左的一行純文字 -->
+      <p
+        v-if="scrollable"
+        class="mt-2 flex items-center justify-center gap-1.5 text-[0.8125rem]"
+        :style="{ color: 'var(--text-3)' }"
+      >
+        <UIcon name="i-lucide-chevrons-down" class="size-3 shrink-0" />
         {{ t('copilot.suggestion.scrollHint') }}
       </p>
     </div>

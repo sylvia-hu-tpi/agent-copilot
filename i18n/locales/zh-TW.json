@@ -199,7 +199,7 @@
       "updating": "更新中…",
       "retrying": "重試中 ({attempt}/2)",
       "error": "暫時無法產生建議",
-      "count": "{n} 則建議",
+      "count": "本次回傳 {n} 則",
       "readyEmpty": "本次未產生建議",
       "insert": "一鍵帶入",
       "scrollHint": "可捲動查看其餘建議",
@@ -244,13 +244,14 @@
       "expand": "展開「{title}」"
     },
     "retry": "重新分析",
+    "retryOnlyOnError": "只有在這一塊失敗時才需要重新產生",
     "panelTitle": "COPILOT",
     "subtitleLive": "即時輔助",
     "subtitleAnalyzing": "分析中",
     "collapse": "收合 Copilot 面板",
     "expand": "展開 Copilot 面板",
     "retryAll": "全部重試",
-    "retryAllNone": "目前沒有失敗的區塊"
+    "retryAllHint": "重新產生所有失敗的區塊"
   },
   "collision": {
     "title": "撞單攔截：客戶已在你打字期間收到回覆",
