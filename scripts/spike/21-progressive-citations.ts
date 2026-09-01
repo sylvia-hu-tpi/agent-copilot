@@ -1,10 +1,27 @@
 /**
- * 21 — 建議卡兩段式的端到端量測（004 T032：SC-001／SC-002 的驗收證據）
+ * 21 — 冷啟動三區塊的端到端量測（004 T032：SC-001／SC-002 的驗收證據）
  *
  * 量什麼：對真實對話跑**生產路徑**的冷啟動分析，記錄
  *   - 第一段落地（`citation: 'pending'`）的毫秒數 → 004 SC-001（p90 ≤ 20 秒）
  *   - 第二段落定（`'cited'`／`'none'`）的毫秒數 → 契約 §2 的 50 秒上限
  *   - 多段對話中最終取得 `'cited'` 的比例 → 004 SC-002（知識庫有內容時 ≥ 90%）
+ *   - **摘要區塊與情緒區塊各自 `ready` 的毫秒數 → 001 SC-005（p90 ≤ 10 秒）**
+ *
+ * ⚠️ **摘要／情緒那兩筆是 2026-09-01 才補上的，補的是 M2 驗收清單裡唯一沒有實測的一項。**
+ *    先前只量得到單一 agent 的延遲（`spike:agent-latency`），而 SC-005 的判準是
+ *    「**區塊**的實質內容何時呈現」——摘要是 1 次呼叫，情緒卻是每
+ *    `SENTIMENT_CHUNK_SIZE`（6）則客戶發言切一批各自呼叫，兩者的關係不是
+ *    「乘上一個常數」，長對話的情緒區塊會遠慢於單次呼叫的延遲。
+ *    用單一 agent 的數字去推 SC-005 會系統性低估，那正是這一項一直沒被驗掉的原因。
+ *
+ * ⚠️ **2026-09-01 起情緒批次改為有上限的並行**（`SENTIMENT_CONCURRENCY`）。
+ *    因此本腳本同時記錄**每一次呼叫的延遲與成敗**（`sentimentCalls`）與**峰值並發**：
+ *    並行會壓低區塊總時間，但可能因平台側排隊而抬高單次延遲，一旦單次破 FR-014 的
+ *    15 秒就觸發重試。**只看總時間會看到「變快了」而完全看不到失敗率上升**，
+ *    兩者必須一起看 —— 這正是這次改動唯一需要把關的風險。
+ *
+ * ⚠️ 情緒的 `ready` 取的是**分數落地那一刻**，不含之後才補的 `narrative`
+ *    （§8.2b「分數先發、敘述後補」）—— 判準要的是折線何時看得到，散文是附加物。
  *
  * ⚠️ **走生產路徑的 `runColdStart()`，不自行組裝兩段流程**（比照 18／20 號的同一個理由）：
  *    世代、尾巴、白名單、`confidence` 歸零、FR-005 的檢索備忘都與正式路徑同一份程式碼，
@@ -26,6 +43,15 @@
  *   npm run spike:progressive -- --join "標題A" "標題B"
  *       ⚠️ **會對正式環境寫入**：走 T032 要求的真 JOIN 流程 —— 真的 JOIN、量測它觸發的
  *       冷啟動、再 LEAVE。起點就是 JOIN 送出的那一刻，與 SC-001 的定義完全對齊。
+ *
+ *   npm run spike:progressive -- --repeat 5 "標題A" "標題B"
+ *       唯讀模式下把每段對話重跑 N 輪，總樣本數 ＝ 對話數 × N。
+ *       ⚠️ **p90 判準下 n 太小會給出方向隨機的結論**（§8.2b：同一支 probe 在 n=3 時
+ *          先後給過方向相反的兩個答案，n=5 才穩定）。SC-005 與 SC-001 都是 p90，
+ *          **MUST 湊到 n≥15 再下結論**，而可用的對話往往不到 15 段，這個旗標就是補位用的。
+ *       ⚠️ 第 2 輪起改用「同一段歷史、另一個狀態鍵」重跑，等同一次全新的冷啟動：
+ *          沿用同一個鍵會讓 FR-005 的檢索備忘生效而**跳過檢索**（那是刻意的正確行為），
+ *          第二段時序就不再是冷啟動的時序了。`--join` 不支援本旗標（會重複寫入正式環境）。
  *
  * ⚠️⚠️ **`--join` 的不可逆副作用，動手前必須知道**（§10.2）：
  *    `mode` 是**對話層級的共用狀態**，不是本地偏好。JOIN 會 `null → manual`，
@@ -53,7 +79,8 @@ import type { KnowledgeHit, KnowledgeProvider } from '../../shared/types/knowled
 import { normalizeConversationId, toConversation, unwrapPaged } from '../../server/sources/mappers.js'
 import { fetchLatest } from '../../server/sources/message-fetch.js'
 import { getConversationDetail, joinConversation, leaveConversation } from '../../server/services/imbrace.js'
-import { awaitSuggestionTail, runColdStart } from '../../server/services/copilot-analysis.js'
+import { awaitSuggestionTail, isTextCustomerMessage, runColdStart, SENTIMENT_CHUNK_SIZE } from '../../server/services/copilot-analysis.js'
+import { CALL_TIMEOUT_MS as AI_CALL_TIMEOUT_MS } from '../../server/services/ai/retry-policy.js'
 import { useEventBus, useStateStore } from '../../server/state/index.js'
 import { conversationTopic } from '../../server/state/types.js'
 import { controlFromMode } from '../../shared/types/conversation.js'
@@ -66,6 +93,13 @@ const SC001_BUDGET_MS = 20_000
 const STAGE2_BUDGET_MS = 50_000
 /** 004 SC-002：知識庫有內容時 ≥ 90% 最終取得引用 */
 const SC002_CITED_RATIO = 0.9
+/**
+ * 001 SC-005：摘要與情緒的實質內容 p90 ≤ 10 秒（`docs/ARCHITECTURE.md` §18 M2 驗收第 2 項）。
+ *
+ * ⚠️ **MUST NOT 因為量出來過不了就把這個數字改掉。** 002 SC-001 由 10 秒改為 20 秒是
+ *    經過裁決的（§8.2b），本項尚未經過任何裁決；工具擅自放寬等於把判準改成「一定會通過」。
+ */
+const SC005_BUDGET_MS = 10_000
 
 /** JOIN 的模式：與官方介面、與我方 `join.post.ts` 的預設一致（§10.5） */
 const JOIN_MODE = 'manual' as const
@@ -83,6 +117,8 @@ interface Target {
 interface Sample {
   conversationId: string
   title: string
+  /** 第幾輪（`--repeat`）。1 代表單輪，與舊有的量測結果同義 */
+  round: number
   /** 'join' = 真的 JOIN 過；'readonly' = 只讀不寫 */
   method: 'join' | 'readonly'
   modeBefore: ConversationMode | null
@@ -95,6 +131,19 @@ interface Sample {
   pendingMs: number | null
   /** 第二段落定（cited／none）的毫秒數 */
   settledMs: number | null
+  /** 摘要區塊 `ready` 的毫秒數 → 001 SC-005。轉 error 時為 null */
+  summaryReadyMs: number | null
+  /**
+   * 情緒區塊 `ready` 的毫秒數 → 001 SC-005。
+   * ⚠️ 是**分數落地**那一刻，不含之後才補的 `narrative`（§8.2b）
+   */
+  sentimentReadyMs: number | null
+  /** 情緒實際切了幾批（`SENTIMENT_CHUNK_SIZE`）—— 判讀 sentimentReadyMs 時的關鍵分母 */
+  sentimentChunks: number | null
+  /** 情緒的每一次呼叫（含重試的每次嘗試）—— 並行化的風險就藏在這裡，見 instrumentProviders */
+  sentimentCalls?: Array<{ elapsedMs: number, ok: boolean, errorName?: string }>
+  /** 同時在飛的情緒呼叫數峰值。依序版本恆為 1；並行版本應等於 min(批次數, 並行上限) */
+  sentimentPeakInFlight?: number
   finalCitation: 'pending' | 'cited' | 'none' | null
   finalStatus: string | null
   hitCount: number | null
@@ -152,6 +201,17 @@ interface Stage2Trace {
 function instrumentProviders(startedAt: () => number) {
   const retrievals: Array<{ elapsedMs: number, hitCount: number }> = []
   const stage2: Stage2Trace[] = []
+  /**
+   * 情緒的**每一次呼叫**（含 `withRetry()` 的每一次嘗試）。
+   *
+   * ⚠️ 2026-09-01 新增，為的是把關「批次由依序改為並行」那次改動的**風險面**：
+   *    並發可能讓平台側排隊而抬高單次延遲，一旦單次破 FR-014 的 15 秒就觸發重試。
+   *    只看區塊的總時間會看到「變快了」而完全看不到這件事 ——
+   *    **總時間與單次延遲必須一起量，否則量到的是一半的事實。**
+   */
+  const sentimentCalls: Array<{ elapsedMs: number, ok: boolean, errorName?: string }> = []
+  let sentimentInFlight = 0
+  let sentimentPeakInFlight = 0
 
   const realAI = useAIProvider()
   const realKnowledge = useKnowledgeProvider()
@@ -173,7 +233,29 @@ function instrumentProviders(startedAt: () => number) {
 
   const ai: AIProvider = {
     summarize: input => realAI.summarize(input),
-    analyzeSentiment: input => realAI.analyzeSentiment(input),
+    async analyzeSentiment(input) {
+      sentimentInFlight++
+      sentimentPeakInFlight = Math.max(sentimentPeakInFlight, sentimentInFlight)
+      const t0 = Date.now()
+      try {
+        const points = await realAI.analyzeSentiment(input)
+        sentimentCalls.push({ elapsedMs: Date.now() - t0, ok: true })
+        return points
+      }
+      catch (err) {
+        sentimentCalls.push({
+          elapsedMs: Date.now() - t0,
+          ok: false,
+          errorName: err instanceof Error ? err.constructor.name : typeof err,
+        })
+        throw err
+      }
+      finally {
+        sentimentInFlight--
+      }
+    },
+    // ⚠️ 走勢敘述與評分共用同一個 agent，但它是另一個方法、也不在 SC-005 的判準內，
+    //    刻意不計入 `sentimentCalls` —— 混進去會讓「每批延遲」多出一筆性質不同的樣本
     narrateSentiment: input => realAI.narrateSentiment(input),
     async suggest(input) {
       const hits: KnowledgeHit[] = input.knowledgeHits
@@ -220,7 +302,12 @@ function instrumentProviders(startedAt: () => number) {
   setAIProvider(ai)
 
   return {
-    read: () => ({ retrievals: [...retrievals], stage2: [...stage2] }),
+    read: () => ({
+      retrievals: [...retrievals],
+      stage2: [...stage2],
+      sentimentCalls: [...sentimentCalls],
+      sentimentPeakInFlight,
+    }),
     restore: () => { setAIProvider(realAI); setKnowledgeProvider(realKnowledge) },
   }
 }
@@ -228,6 +315,28 @@ function instrumentProviders(startedAt: () => number) {
 function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0
   return sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)]!
+}
+
+/** 逐筆列印時直接標出有沒有超過 SC-005 的 10 秒 —— 只看彙總的 p90 會漏掉「哪一段慢」 */
+function fmtBudget(ms: number | null): string {
+  if (ms === null) return '—（未落地）'
+  return `${ms}ms${ms > SC005_BUDGET_MS ? ' ⚠️超' : ''}`
+}
+
+/** 一組延遲樣本對某個 p90 門檻的判定 —— SC-005 的摘要與情緒兩列共用同一份算法 */
+function budgetStats(values: number[], budgetMs: number, n: number) {
+  const sorted = [...values].sort((a, b) => a - b)
+  return {
+    n: sorted.length,
+    /** 沒落地的樣本數：轉 error 或未完成。⚠️ 它們不進 p90，判讀時 MUST 一起看 */
+    missing: n - sorted.length,
+    medianMs: percentile(sorted, 0.5),
+    p90Ms: percentile(sorted, 0.9),
+    maxMs: sorted[sorted.length - 1] ?? 0,
+    withinBudget: sorted.filter(v => v <= budgetMs).length,
+    budgetMs,
+    pass: sorted.length > 0 && percentile(sorted, 0.9) <= budgetMs,
+  }
 }
 
 function looksLikeConversationId(s: string): boolean {
@@ -292,14 +401,37 @@ async function resolveTargets(client: ImbraceClient, inputs: string[]): Promise<
 
 // ── 量測 ────────────────────────────────────────────────────────
 
-/** 訂閱事件匯流排，把 `suggestion.updated` 的時序記下來 */
-function watchSuggestions(conversationId: string, startedAt: () => number) {
+/**
+ * 訂閱事件匯流排，把三個區塊的時序記下來。
+ *
+ * ⚠️ **時點一律取自事件，MUST NOT 在 `runColdStart()` 回來之後才讀狀態算。**
+ *    `runColdStart()` 是 `Promise.all` 三個區塊，它 resolve 的時間是**最慢那一個**——
+ *    用它當摘要或情緒的完成時間，會把建議卡第二段的等待算到它們頭上，
+ *    量出來的 SC-005 會系統性高估且完全看不出來（三個區塊本來就是各自先行顯示的，
+ *    FR-011）。事件是使用者實際看到內容的那一刻，也是判準說的那一刻。
+ */
+function watchAnalysis(conversationId: string, startedAt: () => number) {
   const sequence: string[] = []
   let pendingMs: number | null = null
   let settledMs: number | null = null
+  let summaryReadyMs: number | null = null
+  let sentimentReadyMs: number | null = null
 
   const off = useEventBus().subscribe(conversationTopic(conversationId), (payload) => {
     const evt = payload as CopilotEvent
+
+    if (evt.type === 'summary.updated') {
+      if (evt.summary.status === 'ready' && summaryReadyMs === null) summaryReadyMs = Date.now() - startedAt()
+      return
+    }
+
+    if (evt.type === 'sentiment.updated') {
+      // ⚠️ `narrative` 補上時會再發一次 `ready`，因此只認**第一次**——判準要的是折線
+      //    何時看得到（§8.2b「分數先發、敘述後補」）。`=== null` 這個守衛就是那條規則。
+      if (evt.sentiment.status === 'ready' && sentimentReadyMs === null) sentimentReadyMs = Date.now() - startedAt()
+      return
+    }
+
     if (evt.type !== 'suggestion.updated') return
     const block = evt.suggestion
     sequence.push(`${block.status}/${block.citation}`)
@@ -308,24 +440,51 @@ function watchSuggestions(conversationId: string, startedAt: () => number) {
     if (block.citation !== 'pending' && settledMs === null) settledMs = Date.now() - startedAt()
   })
 
-  return { off, sequence, read: () => ({ pendingMs, settledMs }) }
+  return { off, sequence, read: () => ({ pendingMs, settledMs, summaryReadyMs, sentimentReadyMs }) }
 }
 
+type SampleBase = Omit<
+  Sample,
+  'pendingMs' | 'settledMs' | 'summaryReadyMs' | 'sentimentReadyMs' | 'sentimentChunks'
+  | 'finalCitation' | 'finalStatus' | 'hitCount' | 'cardCount' | 'provenance' | 'sequence'
+>
+
+/** 三個時序欄位都取不到時的填充值 —— 早退路徑共用，避免每加一個欄位就要改好幾處 */
+const EMPTY_TIMINGS = {
+  pendingMs: null,
+  settledMs: null,
+  summaryReadyMs: null,
+  sentimentReadyMs: null,
+  sentimentChunks: null,
+  finalCitation: null,
+  finalStatus: null,
+  hitCount: null,
+  cardCount: null,
+  provenance: null,
+  sequence: [] as string[],
+} satisfies Omit<Sample, keyof SampleBase | 'retrievals' | 'stage2' | 'error' | 'modeAfter'>
+
 async function finishSample(
-  conversationId: string,
-  base: Omit<Sample, 'pendingMs' | 'settledMs' | 'finalCitation' | 'finalStatus' | 'hitCount' | 'cardCount' | 'provenance' | 'sequence'>,
-  watcher: ReturnType<typeof watchSuggestions>,
+  stateKey: string,
+  base: SampleBase,
+  watcher: ReturnType<typeof watchAnalysis>,
+  sentimentChunks: number | null,
   probes?: ReturnType<typeof instrumentProviders>,
 ): Promise<Sample> {
-  const { pendingMs, settledMs } = watcher.read()
-  const block = (await useStateStore().getAnalysisState(conversationId))?.suggestionBlock ?? null
+  const { pendingMs, settledMs, summaryReadyMs, sentimentReadyMs } = watcher.read()
+  const block = (await useStateStore().getAnalysisState(stateKey))?.suggestionBlock ?? null
   const traces = probes?.read()
   return {
     ...base,
     retrievals: traces?.retrievals,
     stage2: traces?.stage2,
+    sentimentCalls: traces?.sentimentCalls,
+    sentimentPeakInFlight: traces?.sentimentPeakInFlight,
     pendingMs,
     settledMs,
+    summaryReadyMs,
+    sentimentReadyMs,
+    sentimentChunks,
     finalCitation: block?.citation ?? null,
     finalStatus: block?.status ?? null,
     hitCount: block?.knowledgeSearch.hitCount ?? null,
@@ -335,8 +494,16 @@ async function finishSample(
   }
 }
 
-/** 唯讀：只 GET，不 JOIN。起點是「分析啟動」 */
-async function measureReadOnly(client: ImbraceClient, target: Target): Promise<Sample> {
+/**
+ * 唯讀：只 GET，不 JOIN。起點是「分析啟動」。
+ *
+ * ⚠️ `round > 1` 時**改用另一個狀態鍵**（`<id>#r<n>`）跑同一段歷史。理由見檔頭的
+ *    `--repeat` 說明：沿用同一個鍵會讓 FR-005 的檢索備忘生效而跳過檢索，
+ *    量到的就不再是冷啟動。狀態鍵在分析管線裡只當 `StateStore` 的鍵與 EventBus 的 topic
+ *    （檢索送的是訊息文字、不是 id），因此換一個鍵不會讓量測失真。
+ */
+async function measureReadOnly(client: ImbraceClient, target: Target, round = 1): Promise<Sample> {
+  const stateKey = round === 1 ? target.conversationId : `${target.conversationId}#r${round}`
   const fetchStart = Date.now()
   const history = await fetchLatest(client, target.conversationId)
   const fetchMs = Date.now() - fetchStart
@@ -345,6 +512,7 @@ async function measureReadOnly(client: ImbraceClient, target: Target): Promise<S
   const base = {
     conversationId: target.conversationId,
     title: target.title,
+    round,
     method: 'readonly' as const,
     modeBefore: target.mode,
     fetchMs,
@@ -352,22 +520,25 @@ async function measureReadOnly(client: ImbraceClient, target: Target): Promise<S
     customerMessageCount: customerCount,
   }
   if (customerCount === 0) {
-    return { ...base, pendingMs: null, settledMs: null, finalCitation: null, finalStatus: null, hitCount: null, cardCount: null, provenance: null, sequence: [], error: '沒有任何客戶發言，分析會維持 empty（FR-009）' }
+    return { ...base, ...EMPTY_TIMINGS, error: '沒有任何客戶發言，分析會維持 empty（FR-009）' }
   }
 
+  // 情緒實際會切幾批 —— 用正式路徑的判別式與常數算，不自己抄一份（見兩者的 export 註解）
+  const chunks = Math.ceil(history.filter(isTextCustomerMessage).length / SENTIMENT_CHUNK_SIZE)
+
   let startedAt = Date.now()
-  const watcher = watchSuggestions(target.conversationId, () => startedAt)
+  const watcher = watchAnalysis(stateKey, () => startedAt)
   const probes = instrumentProviders(() => startedAt)
   try {
     startedAt = Date.now()
-    await runColdStart(target.conversationId, history, false)
-    await awaitSuggestionTail(target.conversationId)
+    await runColdStart(stateKey, history, false)
+    await awaitSuggestionTail(stateKey)
   }
   finally {
     watcher.off()
     probes.restore()
   }
-  return finishSample(target.conversationId, base, watcher, probes)
+  return finishSample(stateKey, base, watcher, chunks, probes)
 }
 
 /**
@@ -382,13 +553,14 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
   const base = {
     conversationId: target.conversationId,
     title: target.title,
+    round: 1,
     method: 'join' as const,
     modeBefore: target.mode,
     fetchMs: 0,
     messageCount: 0,
     customerMessageCount: 0,
   }
-  const empty = { pendingMs: null, settledMs: null, finalCitation: null, finalStatus: null, hitCount: null, cardCount: null, provenance: null, sequence: [] }
+  const empty = EMPTY_TIMINGS
 
   if (!target.teamConversationId) {
     return { ...base, ...empty, error: '詳情裡沒有 tcu_ id，JOIN／LEAVE 都做不了（§10.6 ①）' }
@@ -400,9 +572,10 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
   }
 
   let startedAt = Date.now()
-  const watcher = watchSuggestions(target.conversationId, () => startedAt)
+  const watcher = watchAnalysis(target.conversationId, () => startedAt)
   const probes = instrumentProviders(() => startedAt)
   let joined = false
+  let chunks: number | null = null
 
   try {
     // ⚠️ 起點就是 JOIN 送出的那一刻 —— SC-001 的「JOIN 後 20 秒」就是從這裡算起
@@ -419,6 +592,7 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
     if (base.customerMessageCount === 0) {
       return { ...base, ...empty, error: '沒有任何客戶發言，分析會維持 empty（FR-009）' }
     }
+    chunks = Math.ceil(history.filter(isTextCustomerMessage).length / SENTIMENT_CHUNK_SIZE)
 
     await runColdStart(target.conversationId, history, controlFromMode(JOIN_MODE).aiReplies)
     await awaitSuggestionTail(target.conversationId)
@@ -438,18 +612,24 @@ async function measureWithJoin(client: ImbraceClient, target: Target): Promise<S
     }
   }
 
-  const sample = await finishSample(target.conversationId, base, watcher, probes)
+  const sample = await finishSample(target.conversationId, base, watcher, chunks, probes)
   const after = await enrich(client, target).catch(() => target)
   return { ...sample, modeAfter: after.mode }
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): { mode: 'inspect' | 'readonly' | 'join', inputs: string[] } {
+function parseArgs(argv: string[]): { mode: 'inspect' | 'readonly' | 'join', inputs: string[], repeat: number } {
   const flags = argv.filter(a => a.startsWith('--'))
-  const inputs = argv.filter(a => !a.startsWith('--'))
   const mode = flags.includes('--join') ? 'join' : flags.includes('--inspect') ? 'inspect' : 'readonly'
-  return { mode, inputs }
+
+  // `--repeat N` 的 N 是下一個位置參數，要從 inputs 裡拿掉，否則會被當成對話標題去查
+  const repeatAt = argv.indexOf('--repeat')
+  const repeat = repeatAt >= 0 ? Math.max(1, Number(argv[repeatAt + 1] ?? 1) || 1) : 1
+  const consumed = repeatAt >= 0 ? new Set([repeatAt + 1]) : new Set<number>()
+  const inputs = argv.filter((a, i) => !a.startsWith('--') && !consumed.has(i))
+
+  return { mode, inputs, repeat }
 }
 
 function fallbackInputs(): string[] {
@@ -465,12 +645,19 @@ function fallbackInputs(): string[] {
 
 async function main(): Promise<void> {
   loadEnv()
-  const { mode, inputs } = parseArgs(process.argv.slice(2))
+  const { mode, inputs, repeat } = parseArgs(process.argv.slice(2))
   const targetInputs = inputs.length > 0 ? inputs : fallbackInputs()
   const client = makeClient()
 
-  console.log(`\n── 21 建議卡兩段式端到端量測（004 T032）${'─'.repeat(20)}`)
-  console.log(`   環境 ${env('IMBRACE_ENV', 'stable')}｜目標 ${targetInputs.length} 段｜模式 ${mode}`)
+  if (repeat > 1 && mode === 'join') {
+    // ⚠️ 每一輪都會 JOIN／LEAVE 一次真實對話並改動 mode，重複做是在正式環境上反覆寫入
+    console.error('  ⛔ --repeat 不支援 --join：每一輪都會對正式環境 JOIN／LEAVE 並改動 mode。請改用唯讀模式。')
+    process.exit(1)
+  }
+
+  console.log(`\n── 21 冷啟動三區塊端到端量測（004 T032 ＋ 001 SC-005）${'─'.repeat(10)}`)
+  console.log(`   環境 ${env('IMBRACE_ENV', 'stable')}｜目標 ${targetInputs.length} 段`
+    + `${repeat > 1 ? ` × ${repeat} 輪＝${targetInputs.length * repeat} 個樣本` : ''}｜模式 ${mode}`)
   console.log(mode === 'join'
     ? '   ⚠️ **會對正式環境寫入**：真的 JOIN → 量測 → LEAVE。LEAVE 後 mode 會停在 automation，不保證回到原值。'
     : '   唯讀：只 GET，不 JOIN、不送訊息、不切換 mode。')
@@ -497,12 +684,13 @@ async function main(): Promise<void> {
   }
 
   const samples: Sample[] = []
-  for (const [i, target] of targets.entries()) {
-    process.stdout.write(`  [${i + 1}/${targets.length}] 「${target.title}」 … `)
+  const plan = Array.from({ length: repeat }, (_, r) => targets.map(t => ({ target: t, round: r + 1 }))).flat()
+  for (const [i, { target, round }] of plan.entries()) {
+    process.stdout.write(`  [${i + 1}/${plan.length}]${repeat > 1 ? ` 第 ${round} 輪` : ''} 「${target.title}」 … `)
     try {
       const sample = mode === 'join'
         ? await measureWithJoin(client, target)
-        : await measureReadOnly(client, target)
+        : await measureReadOnly(client, target, round)
       samples.push(sample)
       if (sample.error) {
         console.log(`⏭  ${sample.error}`)
@@ -513,6 +701,13 @@ async function main(): Promise<void> {
           + `｜第一段 ${sample.pendingMs ?? '—'}ms｜落定 ${sample.settledMs ?? '—'}ms`
           + `｜命中 ${sample.hitCount}｜卡 ${sample.cardCount} 張`
           + (sample.modeAfter !== undefined ? `｜mode ${sample.modeBefore ?? 'null'} → ${sample.modeAfter ?? 'null'}` : '')
+          + `\n        摘要 ${fmtBudget(sample.summaryReadyMs)}｜情緒 ${fmtBudget(sample.sentimentReadyMs)}`
+          + `（${sample.sentimentChunks ?? '—'} 批 / ${sample.customerMessageCount} 則客戶發言）  ← 001 SC-005`
+          + (sample.sentimentCalls?.length
+            ? `\n        情緒單次：${sample.sentimentCalls.map(c =>
+              `${c.elapsedMs}ms${c.ok ? '' : `/${c.errorName}`}${c.elapsedMs > AI_CALL_TIMEOUT_MS ? ' ⚠️破15秒' : ''}`).join('、')}`
+              + `（峰值並發 ${sample.sentimentPeakInFlight ?? '—'}）`
+            : '')
           + `\n        序列：${sample.sequence.join(' → ')}`
           + (sample.retrievals?.length
             ? `\n        檢索：${sample.retrievals.map(r => `${r.elapsedMs}ms/${r.hitCount === -1 ? '失敗' : `${r.hitCount} 筆`}`).join('、')}`
@@ -533,6 +728,7 @@ async function main(): Promise<void> {
       samples.push({
         conversationId: target.conversationId,
         title: target.title,
+        round,
         method: mode === 'join' ? 'join' : 'readonly',
         modeBefore: target.mode,
         fetchMs: 0,
@@ -540,6 +736,9 @@ async function main(): Promise<void> {
         customerMessageCount: 0,
         pendingMs: null,
         settledMs: null,
+        summaryReadyMs: null,
+        sentimentReadyMs: null,
+        sentimentChunks: null,
         finalCitation: null,
         finalStatus: null,
         hitCount: null,
@@ -559,12 +758,34 @@ async function main(): Promise<void> {
   //    把它算進分母等於在量知識庫的涵蓋率，不是在量本規格。
   const withHits = usable.filter(s => (s.hitCount ?? 0) > 0)
   const cited = withHits.filter(s => s.finalCitation === 'cited')
+  const summaryReady = usable.map(s => s.summaryReadyMs).filter((v): v is number => v !== null)
+  const sentimentReady = usable.map(s => s.sentimentReadyMs).filter((v): v is number => v !== null)
+  // 情緒的每一次呼叫（跨全部樣本攤平）—— 並行化風險的判讀依據，見 instrumentProviders
+  const allCalls = usable.flatMap(s => s.sentimentCalls ?? [])
+  const callMs = allCalls.map(c => c.elapsedMs).sort((a, b) => a - b)
+  const sentimentCallStats = {
+    n: allCalls.length,
+    medianMs: percentile(callMs, 0.5),
+    p90Ms: percentile(callMs, 0.9),
+    maxMs: callMs[callMs.length - 1] ?? 0,
+    /** 破 FR-014 的 15 秒 → 這一次呼叫會被判逾時並觸發重試 */
+    overCallTimeout: allCalls.filter(c => c.elapsedMs > AI_CALL_TIMEOUT_MS).length,
+    failed: allCalls.filter(c => !c.ok).length,
+    peakInFlight: Math.max(0, ...usable.map(s => s.sentimentPeakInFlight ?? 0)),
+  }
 
   const summary = {
     at: new Date().toISOString(),
     env: env('IMBRACE_ENV', 'stable'),
     method: mode,
-    conversations: samples.length,
+    repeat,
+    /**
+     * ⚠️ 舊檔（2026-08-29 之前）只有一個 `conversations` 欄位，值是**樣本數**。
+     *    `--repeat` 之後兩者不再相等，因此**改名而不是沿用**——同一個鍵在新舊檔裡
+     *    代表不同的東西，是最難察覺的一種資料錯誤。
+     */
+    targets: targets.length,
+    sampleCount: samples.length,
     usable: usable.length,
     stage1: {
       n: pendings.length,
@@ -582,6 +803,25 @@ async function main(): Promise<void> {
       maxMs: settles[settles.length - 1] ?? 0,
       budgetMs: STAGE2_BUDGET_MS,
       pass: settles.length > 0 && (settles[settles.length - 1] ?? 0) <= STAGE2_BUDGET_MS,
+    },
+    /**
+     * 001 SC-005（＝`ARCHITECTURE.md` §18 M2 驗收第 2 項）：摘要與情緒各自的實質內容 p90 ≤ 10 秒。
+     *
+     * ⚠️ **兩列分開判，MUST NOT 合成一個數字。** 摘要是單次呼叫、情緒是 N 批依序呼叫，
+     *    合起來平均會讓長對話的情緒被短對話的摘要稀釋，而驗收要的是「客服看到的那兩塊」
+     *    各自何時出現。判準對兩者都成立才算通過。
+     */
+    /**
+     * 情緒**單次呼叫**的分佈 —— 與 `sc005.sentiment`（區塊總時間）是兩件事，**兩者都要看**。
+     * 並行化若成功，總時間會下降而這裡應該持平；若這裡跟著上升，就是平台側在排隊，
+     * 代價會以「偶發重試甚至整批 error」的形式出現，而不是在總時間上看得到。
+     */
+    sentimentCalls: sentimentCallStats,
+    sc005: {
+      summary: budgetStats(summaryReady, SC005_BUDGET_MS, usable.length),
+      sentiment: budgetStats(sentimentReady, SC005_BUDGET_MS, usable.length),
+      pass: budgetStats(summaryReady, SC005_BUDGET_MS, usable.length).pass
+        && budgetStats(sentimentReady, SC005_BUDGET_MS, usable.length).pass,
     },
     sc002: {
       withHits: withHits.length,
@@ -609,6 +849,19 @@ async function main(): Promise<void> {
   console.log(`  第二段落定（契約 §2，≤ ${STAGE2_BUDGET_MS / 1000} 秒）：`
     + `n=${summary.stage2.n} 中位 ${summary.stage2.medianMs}ms p90 ${summary.stage2.p90Ms}ms 最慢 ${summary.stage2.maxMs}ms`
     + ` → ${summary.stage2.pass ? '✅ 通過' : '❌ 未達'}`)
+  for (const [label, st] of [['摘要', summary.sc005.summary], ['情緒', summary.sc005.sentiment]] as const) {
+    console.log(`  ${label}區塊（001 SC-005，p90 ≤ ${SC005_BUDGET_MS / 1000} 秒）：`
+      + `n=${st.n}${st.missing > 0 ? `（另有 ${st.missing} 個樣本未落地，未計入）` : ''} `
+      + `中位 ${st.medianMs}ms p90 ${st.p90Ms}ms 最慢 ${st.maxMs}ms `
+      + `${st.withinBudget}/${st.n} 在門檻內`
+      + ` → ${st.pass ? '✅ 通過' : '❌ 未達'}`)
+  }
+  console.log(`  情緒單次呼叫（含重試的每次嘗試，峰值並發 ${summary.sentimentCalls.peakInFlight}）：`
+    + `n=${summary.sentimentCalls.n} 中位 ${summary.sentimentCalls.medianMs}ms `
+    + `p90 ${summary.sentimentCalls.p90Ms}ms 最慢 ${summary.sentimentCalls.maxMs}ms｜`
+    + `破 ${AI_CALL_TIMEOUT_MS / 1000} 秒 ${summary.sentimentCalls.overCallTimeout} 次、`
+    + `失敗 ${summary.sentimentCalls.failed} 次`)
+  console.log(`     ↑ 並行化只有在「總時間下降、這一列持平」時才算成功；這一列跟著上升＝平台在排隊`)
   console.log(`  引用比例（SC-002，≥ ${SC002_CITED_RATIO * 100}%）：`
     + `${summary.sc002.cited}/${summary.sc002.withHits} 段有命中的對話取得 cited`
     + ` → ${summary.sc002.pass ? '✅ 通過' : summary.sc002.withHits === 0 ? '❓ 無有效樣本（沒有任何一段命中知識庫）' : '❌ 未達'}`)

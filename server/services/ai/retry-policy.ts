@@ -14,7 +14,13 @@
  *    **改那個常數 MUST NOT 連帶動下面這三個**，兩者沒有耦合。
  */
 
-const CALL_TIMEOUT_MS = 15_000
+/**
+ * ⚠️ export 只為了讓量測腳本（`scripts/spike/21-progressive-citations.ts`）標出
+ *    「這一次呼叫已經破了會觸發重試的門檻」。腳本自己抄一份數字，就會在這裡改了之後
+ *    安靜地繼續用舊值判讀——那是本專案吃過虧的失敗模式。
+ *    **MUST NOT 有任何生產路徑改從外部覆寫它**（要改單次逾時請用 `opts.callTimeoutMs`）。
+ */
+export const CALL_TIMEOUT_MS = 15_000
 const BUDGET_MS = 40_000
 const BACKOFF_MS = [1_000, 4_000] as const
 const MAX_RETRIES = BACKOFF_MS.length
