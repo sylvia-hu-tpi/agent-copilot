@@ -22,6 +22,7 @@
 | `auth.exchangeAccessToken()` 回傳 `refresh_token` | ✅ 成立 | `ARCHITECTURE.md` §7.1 |
 | `Environment` 型別含 `sandbox` | ✅ 成立 | — |
 | `getViewsCount()` 的 view 是 all／joined／yours（SDK 註解逐字如此） | ❌ **推翻**：實測回的是 **status** 分組 `{active, open}`；`list({type})` 四種型別全回 0 筆 —— **沒有「只列出我 JOIN 的」這條路** | `ARCHITECTURE.md` §10.2.1、`out/23-views.json` |
+| 對話清單的分頁參數是 `skip`（SDK 宣告） | ❌ **推翻**：平台吃的是 `offset`。傳 `skip` **不報錯、回 200，但原封送回第一頁**；`from`／`page`／`start`／`skip_count` 亦同。2026-09-01 複驗 n=18：`offset=9&limit=9` 與全量第 10–18 筆逐筆相符，語意為筆數位移。繞道已關在防腐層 `server/services/imbrace.ts` | `ARCHITECTURE.md` §18 M2 未歸屬項目、`out/22-list-paging-params.json` |
 
 > 📌 **唯一該記住的方法論教訓**：型別宣告只說「有這個欄位」，不說「這個欄位是什麼意思」。
 > `users[]` 是最典型的例子——欄位存在、有值、型別完全對，但語意跟預期完全不同。

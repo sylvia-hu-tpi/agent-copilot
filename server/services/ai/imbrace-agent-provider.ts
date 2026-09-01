@@ -89,6 +89,15 @@ function buildSentimentNarrativePrompt(
     + LANGUAGE_RULE
 }
 
+/**
+ * ⚠️ **2026-09-01：這裡曾經有一個「【前情】」區塊**（把前一批尾端的評分帶進來，
+ *    讓模型校準刻度），**已移除**。它是在後台 system prompt 只改了一半的中間狀態下加的：
+ *    當時 prompt 剛要求「判斷要看同批前後文」卻還沒給絕對分數帶，模型於是拿同批其他訊息
+ *    當相對基準，同一則訊息換個批次差到 25 分。補上分數帶與界線規則之後那個相對性消失，
+ *    前情就量不到效益了（n=5：不帶 3.6 分、帶 3.9 分，差距在雜訊內）。
+ *    詳見 `ARCHITECTURE.md` §8.2b。**不要因為「批次之間沒有上下文」這個直覺把它加回來** ——
+ *    那個洞是由 prompt 的絕對標準補的，不是由這裡補的。
+ */
 function buildSentimentPrompt(messages: Message[]): string {
   const lines = messages.map((m, i) => `${i + 1}. ${m.text}`).join('\n')
   return `請針對以下客戶發言，依序給出情緒判斷（陣列長度需與發言則數一致，共 ${messages.length} 則）：\n\n${lines}\n\n`
