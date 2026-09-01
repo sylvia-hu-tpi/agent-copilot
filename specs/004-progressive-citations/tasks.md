@@ -187,6 +187,10 @@ EventStream 上依序看到 `ready/pending` → `ready/cited`，且 `pending` �
 - [x] T030 執行 `grep -rn "SUGGESTION_RETRIEVAL_TIMEOUT_MS\|拿不到引用\|拿不到知識庫引用\|8 秒短逾時\|8_000\|25 秒" docs/ specs/ server/ shared/ test/ app/`，逐處確認只剩歷史註記（帶「已於 004…」字樣）或本規格自己的敘述；另 grep `"每一次建議卡生成"` 確認憲法 v3.0.2 的舊量詞未殘留、`grep -rn "45 秒" specs/004-progressive-citations/` 確認第二段逾時改 20 秒後無漏改、**`grep -rn "10 秒" docs/ specs/002-suggestion-knowledge-search/`** 逐處確認凡涉及「首批建議卡門檻」者都已改為 20 秒或已加註「量測時為 10 秒」（2026-08-29 補：`docs/ARCHITECTURE.md` 的附錄語意段就是靠這條才掃得到，見 T027）、**`grep -rn "mode === 'progressive'\|mode: 'progressive'" specs/ server/`** 確認 `strategy` 改名無殘留；`docs/IMBRACE_QUESTIONS.md` 0-3h（檢索延遲可否調校）仍成立，不動
 - [x] T031 更新 `specs/004-progressive-citations/checklists/requirements.md` 的 Notes（記錄 T011 的裁決結果、`/speckit-analyze` 第一輪 14 項與第二輪 13 項的修正，含新增的 FR-003a），並跑完 quickstart.md 的自動化對照表：`npm run typecheck && npm test && npm run build && npm run smoke`
 - [x] T032 在測試環境對真實 agent 跑 quickstart.md US1 場景 1～4 一次（⚠️ `IMBRACE_ENV=stable` 是正式環境，JOIN 前確認對象並讓使用者知情），記錄 `pending` 出現時間、`cited` 出現時間與 10 段對話的 `cited` 比例到 `scripts/spike/out/`，作為 SC-001／SC-002 的驗收證據；若 `cited` 比例 < 90% 且失敗原因是第二段 20 秒逾時，回到 T011 重議
+  - ⚠️ **2026-09-01 重測後 SC-001 不再通過**（三輪 p90 28.7／28.8／29.3 秒，見 `spec.md` SC-001）。
+    T032 這個**任務**仍算完成——它要求的是「跑一次並留下證據」，而證據已留下且比原先更完整；
+    未通過的是**判準**，不是任務。⚠️ **MUST NOT 因此把 T032 的勾取消** —— 那會讓「工作沒做」
+    與「做了但結論是不通過」兩件事在清單上長得一模一樣，而後者才是這次的實際狀況
 
 ---
 
