@@ -34,6 +34,7 @@ import { clientForApiKey } from '../../server/services/imbrace.js'
 import { ImbraceAgentProvider } from '../../server/services/ai/imbrace-agent-provider.js'
 import { parseSentimentNarrative, parseSentimentPoints } from '../../server/services/ai/schemas.js'
 import type { Message } from '../../shared/types/conversation.js'
+import { sentimentBandOf } from '../../shared/types/copilot.js'
 import type { SentimentPoint } from '../../shared/types/copilot.js'
 
 /** 合成樣本：先升溫、被安撫、再度失望的六輪 —— 刻意包含中性與界線模糊的兩則 */
@@ -63,18 +64,15 @@ const RUNS = 3
  */
 const B_RUNS = 5
 
-/** 提案的分數帶（尚未定案）—— 用來量「score 與 label 目前有多不一致」 */
-const BANDS: Record<SentimentPoint['label'], [number, number]> = {
-  angry: [0, 19],
-  frustrated: [20, 39],
-  concerned: [40, 59],
-  neutral: [60, 79],
-  calm: [80, 100],
-}
-
+/*
+  分數帶已於 2026-09-01 定案，並同時寫進情緒 agent 的 system prompt 與
+  `shared/types/copilot.ts` 的 `SENTIMENT_BANDS`（折線的分帶上色也吃它）。
+  ⚠️ 本檔**不再自帶一份區間表** —— 本 probe 量的正是「模型有沒有照那份標準」，
+     若這裡抄一份，日後改了標準卻忘了改這裡，probe 會拿舊標準去驗新模型並回報「不一致」，
+     而真正不一致的是兩份文件。
+*/
 function inBand(p: Pick<SentimentPoint, 'score' | 'label'>): boolean {
-  const [lo, hi] = BANDS[p.label]
-  return p.score >= lo && p.score <= hi
+  return sentimentBandOf(p.score) === p.label
 }
 
 export const probe24 = () => runProbe('24', '情緒 agent 刻度穩定度與 prompt 衝突', async (p) => {
@@ -135,13 +133,13 @@ export const probe24 = () => runProbe('24', '情緒 agent 刻度穩定度與 pro
   const allPoints = runsA.flat()
   const offBand = allPoints.filter(x => !inBand(x))
   if (allPoints.length > 0) {
-    console.log(`\n  D score／label 一致性（依提案分帶）：${allPoints.length - offBand.length}/${allPoints.length} 落在對應區間`)
-    for (const x of offBand) console.log(`    ⚠️ score ${x.score} 卻標成 ${x.label}（該級提案區間 ${BANDS[x.label].join('–')}）`)
+    console.log(`\n  D score／label 一致性（依 SENTIMENT_BANDS）：${allPoints.length - offBand.length}/${allPoints.length} 落在對應區間`)
+    for (const x of offBand) console.log(`    ⚠️ score ${x.score} 卻標成 ${x.label}（該分數應為 ${sentimentBandOf(x.score)}）`)
     p.record({
       question: '24-D',
       claim: 'score 與 label 是否互相一致（agent 目前未被要求兩者對齊）',
       verdict: offBand.length === 0 ? 'yes' : offBand.length < allPoints.length / 3 ? 'partial' : 'no',
-      evidence: `${allPoints.length} 個評分點中 ${offBand.length} 個的 score 落在其 label 的提案區間之外`,
+      evidence: `${allPoints.length} 個評分點中 ${offBand.length} 個的 score 落在其 label 的分數帶之外`,
       impact: '圖上的高度只看 score、顏色只看 label。兩者不一致時會出現「線在高處卻整條變橘」這種矛盾畫面',
     })
   }

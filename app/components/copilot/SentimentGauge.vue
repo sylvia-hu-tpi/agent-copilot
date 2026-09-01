@@ -13,12 +13,14 @@
  *    `dc-import` 動態渲染、擷取不到內部逐字內容」的限制**已經解除**：畫布匯出的 HTML
  *    把該元件存成獨立的 `CopilotPanel.dc.html` 資產（gzip＋base64），解出來就是完整原始碼。
  *    本檔的幾何、色票與字級自此以那份為準。
- *    ⚠️ 仍刻意不同的兩處（已登記於 `docs/DESIGN_FEEDBACK.md`）：示警 pill 的文案用五級分類
- *    而非畫布逐字的「焦慮偏高」；走勢摘要的 `advice` 半段加粗。
+ *    ⚠️ 仍刻意不同之處全部登記於 `docs/DESIGN_FEEDBACK.md`（C-19～C-25；漸層寫法列在 A-1），
+ *    例如示警 pill 的文案用五級分類而非畫布逐字的「焦慮偏高」、走勢摘要的 `advice` 半段加粗、
+ *    以及漸層 `stop-color` 的寫法（畫布是 attribute，瀏覽器裡無效）。**不要在這裡重數一次數量** ——
+ *    那個數字每加一條偏離就過期一次，而不會有任何東西提醒你。
  */
 
 import type { SentimentBlock, SentimentPoint, SentimentTimelineEntry } from '#shared/types/copilot'
-import { isSentimentAlerting } from '#shared/types/copilot'
+import { SENTIMENT_BANDS, isSentimentAlerting } from '#shared/types/copilot'
 
 const props = defineProps<{ block: SentimentBlock }>()
 const emit = defineEmits<{ retry: [] }>()
@@ -42,8 +44,15 @@ const { t } = useI18n()
  *       而那一段缺席不會有任何提示。
  *
  *    要涵蓋更長的歷史就得提高 `DEFAULT_MESSAGE_LIMIT`，代價是情緒分析的批次數
- *    （`SENTIMENT_CHUNK_SIZE = 6`，依序送出）接近加倍，冷啟動時間跟著加倍。
- *    ⚠️ 因此**改這個常數沒有用**，要改的是那一邊。
+ *    （`SENTIMENT_CHUNK_SIZE = 6`）跟著加倍。
+ *    ⚠️ **但冷啟動時間不會跟著加倍** —— 批次自 2026-09-01 起以**有上限的並行**送出
+ *    （`SENTIMENT_CONCURRENCY = 3`，`server/services/copilot-analysis.ts`），
+ *    總時間隨 **⌈批次數 ÷ 3⌉ 個波次**成長而非隨批次數線性成長，批次數加倍多半只多一個波次。
+ *    ⚠️ 這不代表提高上限是免費的：並發可能讓平台側排隊而抬高**單次**延遲，
+ *    單次一超過 FR-014 的 15 秒就會觸發重試、用盡則整批轉 error ——
+ *    「總時間變短」與「失敗率上升」可能同時發生。動它之前先跑 `spike:progressive`
+ *    並同時看單次延遲與失敗率（理由寫在 `SENTIMENT_CONCURRENCY` 的宣告處，不在這裡重述）。
+ *    ⚠️ 無論如何**改本檔這個常數沒有用**，要改的是那一邊。
  */
 const MAX_POINTS = 50
 
@@ -135,10 +144,17 @@ const alertLabel = computed<'frustrated' | 'angry' | null>(() => {
   return null
 })
 
+/*
+  ⚠️ 這三個**只餵示警 pill，不再碰折線**（2026-09-01，畫布同步更新）。
+     先前 `strokeColor` 會在示警時把**整條**折線染成 `--warn`／`--danger`。
+     那與分帶上色是兩套會打架的規則：示警有遲滯（最新一點已回到「擔憂」時仍持續示警），
+     此時整條紅線與線本身的高度互相矛盾 —— 圖上明明在中段，顏色卻說是最壞的一級。
+     示警改由 pill 單獨承擔，顏色＋圖示＋文字三者仍並呈（FR-003、憲法 8.1）。
+     ⚠️ `strokeColor` MUST NOT 回來。
+*/
 const alertColor = computed(() => (alertLabel.value === 'angry' ? 'var(--danger)' : 'var(--warn)'))
 const alertBg = computed(() => (alertLabel.value === 'angry' ? 'var(--danger-bg)' : 'var(--warn-bg)'))
 const alertBd = computed(() => (alertLabel.value === 'angry' ? 'var(--danger-bd)' : 'var(--warn-bd)'))
-const strokeColor = computed(() => (alertLabel.value ? alertColor.value : 'var(--navy-2)'))
 
 /**
  * 情緒量表圖例（畫布 2a：五段橫條，目前所在區間以
@@ -152,7 +168,16 @@ const strokeColor = computed(() => (alertLabel.value ? alertColor.value : 'var(-
  */
 const SCALE = [
   { key: 'calm', fg: 'var(--active)', bg: 'var(--active-bg)', bd: 'var(--border)', strong: false },
-  { key: 'neutral', fg: 'var(--text-2)', bg: 'var(--surface-2)', bd: 'var(--border)', strong: false },
+  /*
+    ⚠️ 「普通」用 `--info`＋`--navy-soft`，**不是**畫布舊版的 `--text-2`＋無底色（＝`--surface-2`）。
+       兩個理由，畫布已於 2026-09-01 一併改掉：
+       ① 無底色那格與走勢圖框的底色同一個值，在這條 bar 上看起來像破了一個洞；
+       ② 這五個色同時是折線的分帶色（見 `GRADIENT_STOPS`），而在四個有彩度的顏色中間放一個
+          無彩度的灰，會被讀成「停用／沒有資料」而不是「普通」。
+       ⚠️ **不要改用 `--navy-2`**：它在深色主題對 `--surface-2` 只有 3.02:1，
+          作為這條 bar 上的**文字**達不到 WCAG AA 4.5:1。`--info` 是 9.82:1／8.54:1。
+  */
+  { key: 'neutral', fg: 'var(--info)', bg: 'var(--navy-soft)', bd: 'var(--border)', strong: false },
   { key: 'concerned', fg: 'var(--open)', bg: 'var(--open-bg)', bd: 'var(--border)', strong: false },
   { key: 'frustrated', fg: 'var(--warn)', bg: 'var(--warn-bg)', bd: 'var(--border)', strong: false },
   /*
@@ -162,6 +187,40 @@ const SCALE = [
   */
   { key: 'angry', fg: 'var(--danger)', bg: 'var(--danger-bg)', bd: 'var(--danger-bd)', strong: true },
 ] as const
+
+/**
+ * 折線的分帶漸層（畫布 2a，2026-09-01）—— 線的顏色隨它所在的分數帶改變。
+ *
+ * ⚠️ **色票直接取自 `SCALE`，不另外抄一份。** 「下面那條量表 bar 就是這張圖的圖例」
+ *    是分帶上色唯一的正當性；兩邊各寫一組色，總有一天會有人只改其中一邊，
+ *    而那一天不會有型別錯誤、也不會有測試失敗，只會有一條顏色在說謊的線。
+ *
+ * ⚠️ **`offset` 由分數換算而來，不是平均五等份。** 目前 `SENTIMENT_BANDS` 的五級恰好
+ *    每 20 分一段（換算後正好 0.2 的倍數），但那是巧合不是保證 —— prompt 那一側若把界線
+ *    調成不等寬（例如把「生氣」放寬到 0–24），寫死的 0.2 會安靜地與 `label` 錯開。
+ *
+ * ⚠️ 每一段用**兩個相同 offset 的 stop** 做硬停點；少一個就會變成連續漸層，
+ *    「這一段落在哪一級」就再也讀不出來。
+ */
+const GRADIENT_STOPS = (() => {
+  let from = 0
+  return SCALE.map((seg) => {
+    const band = SENTIMENT_BANDS.find(b => b.label === seg.key)!
+    const to = (100 - band.min) / 100 // offset 0 ＝ score 100（圖頂）、1 ＝ score 0（基準線）
+    const stop = { key: seg.key, from, to, color: seg.fg }
+    from = to
+    return stop
+  })
+})()
+
+/**
+ * 漸層的 `id`。
+ *
+ * ⚠️ **不可寫死成字串常數。** `url(#...)` 在整份文件裡解析，同一頁若出現第二個
+ *    `SentimentGauge`（目前不會，但面板是可組裝的區塊清單），兩個 `<defs>` 會同 id，
+ *    後者靜默失效、折線變黑。
+ */
+const gradId = useId()
 
 /** 目前落在量表的哪一段 —— 取最新的一個評分點，沒有點就不強調任何一段 */
 const currentLabel = computed(() => {
@@ -298,6 +357,31 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
       >
         <svg viewBox="0 0 320 52" fill="none" class="block h-auto w-full">
           <!--
+            分帶漸層（畫布 2a）。折線、端點圓點都吃它，顏色因此完全由 y 座標（＝`score`）決定，
+            與線的高度出自同一個數字，不可能互相矛盾。
+
+            ⚠️ **`gradientUnits` MUST 是 `userSpaceOnUse`。** 預設的 `objectBoundingBox`
+               會依折線自己的外框算 —— 變成「最高的那點永遠是綠、最低的永遠是紅」，
+               整條線在 50 分附近平走時會被畫成滿滿的五色，語意完全相反。
+               而且水平線的外框高度是 0，那條線會直接消失。
+
+            ⚠️ **`stop-color` MUST 寫在 `style` 裡，不能當成屬性。** presentation attribute
+               不做 `var()` 代換（`stop-color="var(--active)"` 在瀏覽器裡是無效值），
+               而無效的 `stop-color` 會靜默退回黑色 —— 不會報錯，只會得到一條黑線。
+               ⚠️ 畫布逐字是屬性寫法，這一處**刻意不照抄**：畫布在自己的渲染器裡有效，
+               在瀏覽器裡沒有。已回報給 Design（`DESIGN_FEEDBACK.md` A-1）——
+               不是視覺偏離，但畫布若匯出成瀏覽器可開的 HTML，那五個 stop 會整組失效。
+          -->
+          <defs>
+            <linearGradient :id="gradId" gradientUnits="userSpaceOnUse" x1="0" :y1="VB.yTop" x2="0" :y2="VB.yBase">
+              <template v-for="g in GRADIENT_STOPS" :key="g.key">
+                <stop :offset="g.from" :style="{ stopColor: g.color }" />
+                <stop :offset="g.to" :style="{ stopColor: g.color }" />
+              </template>
+            </linearGradient>
+          </defs>
+
+          <!--
             基準線（畫布 y=42）。⚠️ 少了它，折線就只是一條浮空的線 ——
             「相對於什麼在上升」沒有參照物。
 
@@ -334,7 +418,7 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
             v-if="pointsOnly.length > 1"
             :points="polylinePoints"
             fill="none"
-            :stroke="strokeColor"
+            :stroke="`url(#${gradId})`"
             stroke-width="2"
             stroke-linecap="round"
             stroke-linejoin="round"
@@ -349,14 +433,14 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
           <circle
             v-if="lastPoint && pointsOnly.length > 1"
             :cx="lastPoint.x.toFixed(1)" :cy="yOf(lastPoint.entry.score).toFixed(1)" r="2.8"
-            :fill="strokeColor"
+            :fill="`url(#${gradId})`"
           />
 
           <!-- 恰好一個評分點：畫不出折線，但那個分數本身仍是資訊，以圓點呈現而非留白 -->
           <circle
             v-if="singlePoint"
             :cx="singlePoint.x.toFixed(1)" :cy="yOf(singlePoint.entry.score).toFixed(1)" r="3.2"
-            :fill="strokeColor"
+            :fill="`url(#${gradId})`"
           >
             <title>{{ t(`copilot.sentiment.label.${singlePoint.entry.label}`) }}</title>
           </circle>

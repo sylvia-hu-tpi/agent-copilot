@@ -142,6 +142,43 @@ export interface SentimentBlock {
   updatedAt: string
 }
 
+// ── 分數帶（`score` ↔ `label` 的對應區間）──────────────────────────────
+
+/**
+ * 情緒分數帶 —— **由高分到低分排列**，`min` 是該級的下界（含），上界是下一級的 `min`（不含）。
+ *
+ * ⚠️ **這不是前端自己訂的顯示規則，是情緒 agent 的 system prompt 裡就有的絕對標準。**
+ *    那份 prompt 不在這個 repo 裡（`ARCHITECTURE.md` §11「agent 的 system prompt 也不在
+ *    版本控制裡」），所以這裡是它在程式碼這一側的**唯一副本** —— 兩邊若要改必須一起改，
+ *    否則折線的顏色會與 `label`（進而與量表上的強調、示警判定）安靜地錯開。
+ *    實測一致性：`scripts/spike/out/24-findings.json` 的 24-D，18/18 個評分點的 `score`
+ *    都落在其 `label` 的區間內。
+ *
+ * ⚠️ **排列順序有意義**：`SentimentGauge.vue` 依這個順序產生折線漸層的硬停點，
+ *    倒過來排會讓整張圖的顏色上下顛倒，而且不會有任何型別錯誤。
+ */
+export const SENTIMENT_BANDS = [
+  { label: 'calm', min: 80 },
+  { label: 'neutral', min: 60 },
+  { label: 'concerned', min: 40 },
+  { label: 'frustrated', min: 20 },
+  { label: 'angry', min: 0 },
+] as const satisfies ReadonlyArray<{ label: SentimentPoint['label'], min: number }>
+
+/**
+ * 分數落在哪一個分數帶 —— 供「模型給的 `label` 與 `score` 是否自洽」這類檢查用。
+ *
+ * ⚠️ **UI 不該拿它去覆蓋模型給的 `label`。** 示警（`isSentimentAlerting()`）與量表上的
+ *    強調都吃 `label`，折線的顏色吃 `score`；兩者由 prompt 的絕對標準保證一致，
+ *    在這裡再算一次「正確的 label」只會多一個會與模型打架的來源。
+ */
+export function sentimentBandOf(score: number): SentimentPoint['label'] {
+  for (const band of SENTIMENT_BANDS) {
+    if (score >= band.min) return band.label
+  }
+  return 'angry' // score < 0（Zod 已擋掉，僅為窮盡回傳）
+}
+
 // ── 示警判定（衍生邏輯，非獨立實體）────────────────────────────────────
 
 /** 單點是否落入示警等級 —— 僅供「這一點本身」的判斷，不是面板目前的示警狀態 */
