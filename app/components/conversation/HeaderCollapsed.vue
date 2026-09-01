@@ -18,6 +18,25 @@
  *
  * ⚠️ 接手在這裡固定是 `manual`（畫布的 `takeoverStop`＝「接手並停用 AI 自動回覆」）。
  *    要「接手但保留 AI 自動回覆」得展開 —— 因為那個選擇必須連同後果文案一起讀。
+ *
+ * ⚠️ **這一列必須能變窄，因為中欄的寬度不是它自己決定的。**（2026-09-01 實機驗收發現的 bug）
+ *    中欄是 `flex-1`，左欄可拉到 400px、右欄可拉到 720px —— 兩邊都拉滿時中欄只剩幾百 px。
+ *    先前這裡除了標題以外全是 `shrink-0`，寬度不夠時整列**溢出到右欄上面**：
+ *    收合／展開鈕會被畫在 Copilot 面板的頂上。
+ *    ⚠️ 那不是 z-index 設錯，是 CSS 的繪製順序（CSS 2.1 附錄 E）：面板的**背景**屬於
+ *    「非定位區塊」那一輪，而溢出的按鈕是 **inline-level 內容**，在更後面一輪才畫，
+ *    因此天生就蓋在後面兄弟的背景之上。加 `z-index` 不會修好它，**不要往那個方向調**。
+ *
+ *    修法是兩層，缺一不可：
+ *    ① **依優先序讓資訊項消失**（container query，見檔尾 `<style>`）——
+ *       訊息則數 → presence → 頻道 → status，由最軟的先讓位。
+ *    ② **資訊區自己 `overflow-hidden`**，兩顆按鈕在資訊區外且 `shrink-0` ——
+ *       這樣即使 ① 的門檻估錯，被裁掉的也只會是資訊，**永遠不會是按鈕**。
+ *       ⚠️ MUST NOT 只在最外層加 `overflow-hidden`：裁切從右緣開始，
+ *       第一個被裁掉的就是展開鈕，客服會再也展不開這一列。
+ *
+ * ⚠️ 依 §10.6 與檔頭第三條，**模式、主要動作、展開鈕在任何寬度下都不得消失**，
+ *    因此它們不在 ① 的清單裡。
  */
 
 import type { ConversationMode } from '#shared/types/conversation'
@@ -45,64 +64,73 @@ const { t } = useI18n()
 
 <template>
   <div
-    class="flex h-[38px] shrink-0 items-center gap-2.5 border-b py-0 pl-4 pr-2.5"
+    class="ac-hdr-row flex h-[38px] shrink-0 items-center gap-2.5 border-b py-0 pl-4 pr-2.5"
     :style="{ background: 'var(--surface)', borderColor: 'var(--border)' }"
   >
-    <h1 class="ac-mono min-w-0 shrink truncate text-[0.9375rem] font-medium">{{ title }}</h1>
-
-    <span
-      v-if="status && STATUS_COLOR[status]"
-      class="flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.8125rem]"
-      :style="{ background: STATUS_COLOR[status]!.bg, color: STATUS_COLOR[status]!.fg }"
-    >
-      <span class="size-1 rounded-full" :style="{ background: STATUS_COLOR[status]!.fg }" aria-hidden="true" />
-      {{ status }}
-    </span>
-
-    <span
-      v-if="channel"
-      class="flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.8125rem]"
-      :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
-    >
-      <img
-        v-if="CHANNEL_ICON[channel]"
-        :src="CHANNEL_ICON[channel]"
-        :alt="channel"
-        class="size-3 shrink-0 rounded-[3px] object-contain"
-      >
-      {{ channel }}
-    </span>
-
-    <!-- ⚠️ 模式在收合態是必要資訊，不是裝飾 —— 理由見檔頭 -->
-    <span
-      class="flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.8125rem]"
-      :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
-      :title="mode ? t(`mode.${mode}Hint`) : undefined"
-    >
-      <UIcon name="i-lucide-sliders-horizontal" class="size-3 shrink-0" />
-      {{ mode ? t(`mode.${mode}`) : t('mode.none') }}
-    </span>
-
-    <span
-      class="flex shrink-0 items-center gap-1 text-[0.8125rem]"
-      :style="{ color: 'var(--text-3)' }"
-    >
-      <UIcon name="i-lucide-eye" class="size-3 shrink-0" aria-hidden="true" />
-      {{ presenceShort }}
-    </span>
-
     <!--
-      訊息則數（畫布 1c 收合列也有這一欄）。
-      ⚠️ 措辭與展開態共用同一個 `msgCountLabel` —— 各算一份的話遲早會分岔成
-         「已載入 N 則」與「訊息 N 則」不同步，而那就是在謊報總數。
+      資訊區 —— ⚠️ `min-w-0 flex-1 overflow-hidden` 三者缺一不可：
+      `flex-1` 取代原本的 `ml-auto` 把按鈕推到右邊，`min-w-0` 讓它真的能縮
+      （flex 子項的預設 `min-width:auto` 會讓它縮不下去），`overflow-hidden` 讓
+      裁切發生在**這裡**而不是整列的右緣。理由見檔頭。
     -->
-    <span
-      v-if="msgCountLabel"
-      class="ac-mono shrink-0 text-[0.8125rem]"
-      :style="{ color: 'var(--text-3)' }"
-    >{{ msgCountLabel }}</span>
+    <div class="flex min-w-0 flex-1 items-center gap-2.5 overflow-hidden">
+      <h1 class="ac-mono min-w-0 shrink truncate text-[0.9375rem] font-medium">{{ title }}</h1>
 
-    <span class="ml-auto" />
+      <span
+        v-if="status && STATUS_COLOR[status]"
+        class="ac-hdr-status flex shrink-0 items-center gap-1 rounded-full px-1.5 py-0.5 text-[0.8125rem]"
+        :style="{ background: STATUS_COLOR[status]!.bg, color: STATUS_COLOR[status]!.fg }"
+      >
+        <span class="size-1 rounded-full" :style="{ background: STATUS_COLOR[status]!.fg }" aria-hidden="true" />
+        {{ status }}
+      </span>
+
+      <span
+        v-if="channel"
+        class="ac-hdr-channel flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.8125rem]"
+        :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
+      >
+        <img
+          v-if="CHANNEL_ICON[channel]"
+          :src="CHANNEL_ICON[channel]"
+          :alt="channel"
+          class="size-3 shrink-0 rounded-[3px] object-contain"
+        >
+        {{ channel }}
+      </span>
+
+      <!--
+        ⚠️ 模式在收合態是必要資訊，不是裝飾 —— 理由見檔頭。
+           因此它**沒有** `ac-hdr-*` 這種會被 container query 藏掉的 class。
+      -->
+      <span
+        class="flex shrink-0 items-center gap-1 rounded-full border px-1.5 py-0.5 text-[0.8125rem]"
+        :style="{ borderColor: 'var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
+        :title="mode ? t(`mode.${mode}Hint`) : undefined"
+      >
+        <UIcon name="i-lucide-sliders-horizontal" class="size-3 shrink-0" />
+        {{ mode ? t(`mode.${mode}`) : t('mode.none') }}
+      </span>
+
+      <span
+        class="ac-hdr-presence flex shrink-0 items-center gap-1 text-[0.8125rem]"
+        :style="{ color: 'var(--text-3)' }"
+      >
+        <UIcon name="i-lucide-eye" class="size-3 shrink-0" aria-hidden="true" />
+        {{ presenceShort }}
+      </span>
+
+      <!--
+        訊息則數（畫布 1c 收合列也有這一欄）。
+        ⚠️ 措辭與展開態共用同一個 `msgCountLabel` —— 各算一份的話遲早會分岔成
+           「已載入 N 則」與「訊息 N 則」不同步，而那就是在謊報總數。
+      -->
+      <span
+        v-if="msgCountLabel"
+        class="ac-hdr-msgcount ac-mono shrink-0 text-[0.8125rem]"
+        :style="{ color: 'var(--text-3)' }"
+      >{{ msgCountLabel }}</span>
+    </div>
 
     <button
       v-if="!joined"
@@ -143,3 +171,39 @@ const { t } = useI18n()
     </button>
   </div>
 </template>
+
+<style scoped>
+/*
+ * 收合列的**優先序讓位**（2026-09-01）—— 中欄寬度不夠時，由最軟的資訊先消失。
+ *
+ * ⚠️ 用 container query 而不是 `@media`：這一列的寬度**不是視窗寬度**，
+ *    是視窗扣掉左欄（220–400px，可收合）與右欄（320–720px，可收合）之後剩下的。
+ *    同一個視窗寬度下，兩欄拉滿與兩欄都收起，這一列會差到 800px 以上 ——
+ *    用視窗寬度當條件等於在猜，猜錯的方向就是本次修掉的那個 bug（溢出到右欄上面）。
+ *
+ * ⚠️ 門檻是**估算**的（依各項的實際文字寬度往上取整），不是量出來的定值。
+ *    估錯的後果被限制成「資訊區裡最右邊那項被裁掉一半」，不會再溢出到別欄 ——
+ *    那層保護在 template 的 `overflow-hidden` 上，不在這裡。
+ *
+ * ⚠️ 模式（`mode`）、主要動作、展開鈕**不在這份清單裡**，任何寬度下都不得消失（見檔頭）。
+ */
+.ac-hdr-row {
+  container-type: inline-size;
+}
+
+@container (max-width: 749px) {
+  .ac-hdr-msgcount { display: none; }
+}
+
+@container (max-width: 639px) {
+  .ac-hdr-presence { display: none; }
+}
+
+@container (max-width: 499px) {
+  .ac-hdr-channel { display: none; }
+}
+
+@container (max-width: 419px) {
+  .ac-hdr-status { display: none; }
+}
+</style>
