@@ -245,7 +245,7 @@ button:disabled {
     color: var(--navy-fg);
     background: var(--navy);
     padding: 3px 8px;
-    border-radius: 6px;
+    border-radius: 5px; /* 畫布 1a/1b/1c/2a 一律 5px */
   }
 
   .ac-mono {
@@ -270,11 +270,62 @@ button:disabled {
     color: var(--text-2);
   }
 
+  /*
+    對話摘要「詳細內容」四段的段標與內文（畫布 2a，2026-09-01）。
+
+    ⚠️ **不要沿用 `.ac-label`。** 那是通用的欄位標題（14.5px／500／`--text-2`），
+       而這裡畫布給的是一組刻意更小更淡、帶 letter-spacing 的段標（13px／700／`--text-3`）——
+       它要退到內文後面，讓四段的**內容**成為視覺主體。兩者混用會讓段標跟內文一樣搶眼。
+  */
+  .ac-detail-label {
+    font-size: 0.8125rem; /* 13px */
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+  }
+
+  .ac-detail-body {
+    font-size: 0.90625rem; /* 14.5px */
+    line-height: 1.7;
+    color: var(--text);
+  }
+
   .ac-status-label {
     font-size: 0.8125rem; /* 13px */
     font-weight: 700;
     letter-spacing: .08em;
     color: var(--text-3);
+  }
+
+  /*
+    OTP 單格（畫布 1a）。
+
+    ⚠️ **必須是 class 而不是 inline `:style`。** 畫布給了 focus 態
+       （`border-color:var(--navy-2)`＋`background:var(--surface)`），而 inline style
+       的優先權高於任何 class，`focus:` utility 會被靜默蓋掉 —— 症狀是六格之中
+       完全看不出焦點在哪一格，只用鍵盤的人等於在盲打（憲法 8.2）。
+  */
+  .ac-otp-cell {
+    background: var(--surface-2);
+    border-color: var(--border);
+    color: var(--text);
+  }
+
+  .ac-otp-cell:focus {
+    border-color: var(--navy-2);
+    background: var(--surface);
+  }
+
+  .ac-otp-cell--error {
+    background: var(--warn-bg);
+    border-color: var(--warn-bd);
+    color: var(--warn);
+  }
+
+  /* 錯誤態下焦點改用更深的 --warn，維持「這一格是錯的」的語意不被藍框蓋掉 */
+  .ac-otp-cell--error:focus {
+    border-color: var(--warn);
+    background: var(--warn-bg);
   }
 
   .ac-input {

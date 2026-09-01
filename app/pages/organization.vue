@@ -118,8 +118,8 @@ async function logout() {
       </p>
       <button
         type="button"
-        class="mt-4 rounded-lg border px-3 py-1.5 text-[0.90625rem] transition-colors"
-        :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
+        class="mt-4 h-8 rounded-lg border px-3 text-[0.90625rem] transition-colors"
+        :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface-2)', color: 'var(--text)' }"
         @click="auth.refresh()"
       >
         重新整理
@@ -131,7 +131,7 @@ async function logout() {
   <div v-else-if="showList" class="ac-card w-[560px] max-w-full overflow-hidden">
     <header class="border-b px-[22px] pb-4 pt-5" :style="{ borderColor: 'var(--border)' }">
       <div class="flex items-center justify-between">
-        <span class="ac-eyebrow">選擇組織</span>
+        <span class="ac-eyebrow py-1">選擇組織</span>
         <span class="ac-mono text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
           {{ auth.me?.email }}
         </span>
@@ -160,13 +160,13 @@ async function logout() {
           @click="choose(org.id)"
         >
           <span
-            class="flex size-[38px] shrink-0 items-center justify-center rounded-[9px] text-[0.96875rem] font-medium"
+            class="ac-mono flex size-[38px] shrink-0 items-center justify-center rounded-[9px] text-[0.96875rem] font-bold"
             :style="{ background: 'var(--surface-3)', color: 'var(--text-2)' }"
           >{{ initialsOf(org) }}</span>
 
           <span class="min-w-0 flex-1">
             <span class="block truncate text-[1.03125rem] font-medium">{{ org.name }}</span>
-            <span class="ac-mono block truncate text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
+            <span class="ac-mono block truncate text-[0.875rem]" :style="{ color: 'var(--text-2)' }">
               {{ org.id }}<template v-if="org.role"> · {{ org.role }}</template>
             </span>
           </span>

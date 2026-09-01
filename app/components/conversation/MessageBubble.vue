@@ -47,6 +47,15 @@ const props = defineProps<{
   customerLabel?: string
   /** 這一則是不是撞單攔截的來源（畫布 §8.3 的橘色「N 秒前送出」＋外框） */
   collisionSource?: boolean
+  /**
+   * 與上一則是**同一位發送者的連續訊息**（畫布 1c）。
+   *
+   * ⚠️ 為 true 時：不重畫發送者列、上下間距由 5px 縮為 2px、時間改放泡泡**下方**。
+   *    連續三則 AI 訊息各自重畫一次「AI · 14:28:05」會讓訊息流看起來像三段獨立對話，
+   *    而它們其實是同一次回覆被拆成三則。
+   * ⚠️ 判定在 `MessageList` 做（它才看得到前一則），這裡只負責呈現。
+   */
+  grouped?: boolean
 }>()
 
 /**
@@ -63,6 +72,13 @@ const { t } = useI18n()
 const alignRight = computed(() => props.message.sender.type !== 'customer')
 
 const senderType = computed(() => props.message.sender.type)
+
+/**
+ * 純附件訊息（有附件、沒有文字）—— 此時**不畫泡泡外框**，附件卡本身就是那一列（畫布 1c）。
+ * ⚠️ 條件是「沒有文字」而不是「有附件」：圖文並存的訊息仍要泡泡把文字包起來。
+ */
+const attachmentOnly = computed(() =>
+  !props.message.text && (props.message.attachments?.length ?? 0) > 0)
 
 /** 客戶：優先用對話詳情帶來的代號；沒有才退回訊息自帶的名字／id */
 const customerName = computed(() =>
@@ -155,17 +171,23 @@ const ATTACHMENT_ICON: Record<string, string> = {
     畫布 §8.3 的一列訊息＝`flex` 橫列（`gap:8px`／`padding:5px 16px`）：
     客戶那一側先放 26px 頭像再放內容欄，AI／真人客服那一側整列靠右且沒有頭像。
   -->
-  <div class="flex gap-2 px-4 py-[5px]" :class="{ 'justify-end': alignRight }">
+  <!-- ⚠️ 分組時上下間距由 5px 縮為 2px（畫布 1c）—— 讓連續的幾則在視覺上收成一塊 -->
+  <div class="flex gap-2 px-4" :class="[{ 'justify-end': alignRight }, grouped ? 'py-[2px]' : 'py-[5px]']">
     <!--
       客戶頭像 —— `mt` 讓它對齊泡泡的第一行（畫布是 `margin-top:14px`，
       我方發送者列字級較大，對應值隨之放大）。
     -->
     <span
-      v-if="!alignRight"
+      v-if="!alignRight && !grouped"
       class="ac-mono mt-[17px] flex size-[26px] shrink-0 items-center justify-center rounded-full border text-[0.6875rem] font-bold"
       :style="{ background: 'var(--surface-3)', borderColor: 'var(--border)', color: 'var(--text-2)' }"
       aria-hidden="true"
     >{{ avatarLabel(customerName) }}</span>
+    <!--
+      ⚠️ 分組時頭像不重畫，但**縮排要留著**（畫布：連續列的左側是一個 26px 的空欄），
+         否則第二則會往左跳一格，看起來像換了一個人在說話。
+    -->
+    <span v-else-if="!alignRight" class="size-[26px] shrink-0" aria-hidden="true" />
 
     <div
       class="flex min-w-0 max-w-[min(62%,44rem)] flex-col gap-[3px]"
@@ -178,7 +200,7 @@ const ATTACHMENT_ICON: Record<string, string> = {
            客戶／真人客服那兩種是純文字，實際高度仍等於這裡的 18px，
            所以頭像的 `mt-[17px]` 對齊不受影響。
       -->
-      <div class="flex min-h-[18px] items-center gap-[7px] px-1">
+      <div v-if="!grouped" class="flex min-h-[18px] items-center gap-[7px] px-1">
         <template v-if="senderType === 'customer'">
           <span class="ac-mono text-[0.8125rem]" :style="{ color: 'var(--text-2)' }">{{ customerName }}</span>
           <span class="text-[0.78125rem]" :style="{ color: 'var(--text-3)' }">{{ t('sender.customer') }}</span>
@@ -195,7 +217,8 @@ const ATTACHMENT_ICON: Record<string, string> = {
         </template>
 
         <template v-else-if="senderType === 'agent'">
-          <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-2)' }">{{ agentName }}</span>
+          <!-- ⚠️ 等寬且不加粗（畫布）—— 這裡顯示的是 email，是要逐字核對「是哪位同事」的東西 -->
+          <span class="ac-mono text-[0.8125rem]" :style="{ color: 'var(--text-2)' }">{{ agentName }}</span>
           <span class="text-[0.78125rem]" :style="{ color: 'var(--text-3)' }">
             {{ mine ? t('sender.agentRoleMine') : t('sender.agentRole') }}
           </span>
@@ -214,12 +237,25 @@ const ATTACHMENT_ICON: Record<string, string> = {
         <time v-else class="ac-mono text-[0.78125rem]" :style="{ color: 'var(--text-3)' }">{{ time }}</time>
       </div>
 
+      <!--
+        ⚠️ **純附件訊息不畫泡泡外框**（畫布 1c：附件卡本身就是那一列，不在泡泡裡）。
+           附件卡自己已經有 `--surface` 底 ＋ `--border` 框 ＋ 9px 圓角；
+           外面再包一層同色系的泡泡框就是「卡中卡」—— 兩層幾乎同色的框疊在一起，
+           看起來像沒對齊的破版，而不是刻意的層次。
+        ⚠️ 判定用 `!message.text`（沒有文字才拿掉外框），不是「有附件就拿掉」——
+           圖文並存的訊息仍然需要泡泡把文字包起來。
+      -->
       <div
-        class="border px-3 py-2 leading-relaxed"
-        :class="isInternal ? 'text-[0.875rem] border-dashed opacity-70' : 'text-[0.96875rem]'"
-        :style="isInternal
-          ? { background: 'var(--surface-2)', borderColor: 'var(--border-dash)', color: 'var(--text-3)', borderRadius: '9px' }
-          : {
+        class="leading-relaxed"
+        :class="[
+          isInternal ? 'text-[0.875rem] border-dashed opacity-70' : 'text-[0.96875rem]',
+          attachmentOnly ? '' : 'border px-3 py-2',
+        ]"
+        :style="attachmentOnly
+          ? {}
+          : isInternal
+            ? { background: 'var(--surface-2)', borderColor: 'var(--border-dash)', color: 'var(--text-3)', borderRadius: '9px' }
+            : {
             background: tone.bg,
             borderColor: tone.bd,
             color: tone.fg,
@@ -243,9 +279,9 @@ const ATTACHMENT_ICON: Record<string, string> = {
                     **簡寫屬性**上都會重演（`border`、`background`、`font`、`margin`…）。
                     值可能是「不設定」時，key 就不要出現。
             */
-            ...(senderType === 'ai' ? { borderLeft: '3px solid var(--ai)' } : {}),
-            ...(collisionSource ? { boxShadow: '0 0 0 3px var(--warn-bg)' } : {}),
-          }"
+              ...(senderType === 'ai' ? { borderLeft: '3px solid var(--ai)' } : {}),
+              ...(collisionSource ? { boxShadow: '0 0 0 3px var(--warn-bg)' } : {}),
+            }"
       >
         <p
           v-if="isInternal"
@@ -261,7 +297,7 @@ const ATTACHMENT_ICON: Record<string, string> = {
              圖片可預覽縮圖／PDF 有 url 可下載但畫面上不預覽／舊型 file 連 url 都沒有。
              併成同一句會讓客服以為 PDF 也拿不到。
         -->
-        <ul v-if="message.attachments?.length" class="mt-1.5 space-y-1.5">
+        <ul v-if="message.attachments?.length" class="space-y-1.5" :class="{ 'mt-1.5': !attachmentOnly }">
           <li v-for="a in message.attachments" :key="a.id">
             <a
               v-if="a.kind === 'image' && a.url"
@@ -307,6 +343,22 @@ const ATTACHMENT_ICON: Record<string, string> = {
             </div>
           </li>
         </ul>
+      </div>
+
+      <!--
+        分組時的時間列（畫布 1c）：發送者列被省略了，時間改掛在泡泡**下方**。
+        ⚠️ 時間不能一起省 —— 撞單判斷靠的正是秒級先後（§10.4），
+           連續訊息裡「第二則是幾點送的」與第一則同樣重要。
+        ⚠️ 撞單來源那一則即使被分組，仍要顯示橘色的「N 秒前送出」而不是普通時間，
+           否則「就是這一則害你被攔下」的標記會在分組時消失。
+      -->
+      <div v-if="grouped" class="flex items-center gap-1.5 px-1">
+        <span
+          v-if="collisionSource && sentAgo"
+          class="ac-mono text-[0.78125rem]"
+          :style="{ color: 'var(--warn)' }"
+        >{{ sentAgo }}</span>
+        <time v-else class="ac-mono text-[0.78125rem]" :style="{ color: 'var(--text-3)' }">{{ time }}</time>
       </div>
     </div>
   </div>

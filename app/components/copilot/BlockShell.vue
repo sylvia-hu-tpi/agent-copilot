@@ -51,10 +51,10 @@ const toggleLabel = computed(() =>
 
 <template>
   <section class="ac-card overflow-hidden">
-    <div class="flex items-center gap-2 px-3 py-2.5">
+    <div class="flex items-center gap-2 px-3 py-[11px]">
       <button
         type="button"
-        class="flex min-w-0 flex-1 items-center gap-2 text-left"
+        class="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left outline-offset-[-2px] focus-visible:bg-[var(--surface-2)]"
         :aria-expanded="open"
         :aria-label="toggleLabel"
         :title="toggleLabel"
@@ -65,7 +65,7 @@ const toggleLabel = computed(() =>
           class="size-3.5 shrink-0"
           :style="{ color: 'var(--text-3)' }"
         />
-        <h2 class="ac-eyebrow shrink-0">{{ title }}</h2>
+        <h2 class="ac-eyebrow shrink-0 px-[9px]">{{ title }}</h2>
         <span class="flex-1" />
         <!-- tag 預設是小灰等寬字；需要圖示或動態內容的區塊改用 slot 覆寫 -->
         <slot name="tag">

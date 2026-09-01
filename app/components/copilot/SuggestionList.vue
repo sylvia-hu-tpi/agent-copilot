@@ -129,12 +129,16 @@ onBeforeUnmount(() => {
       <span v-if="statusText" class="shrink-0 text-[0.8125rem]" :style="{ color: block.status === 'error' ? 'var(--warn)' : 'var(--text-3)' }">
         {{ statusText }}
       </span>
-      <!-- FR-024：重試按鈕只在 error 狀態可用，非一般性的「重新產生」 -->
+      <!--
+        FR-024：重試按鈕只在 error 狀態可用，非一般性的「重新產生」。
+        ⚠️ 2026-09-01 起改為**失敗時才出現**（畫布 2a 的標題列右側只有 tag），
+           不再是常駐 disabled —— 同 header「全部重試」的裁示。`disabled` 版本 MUST NOT 回來。
+      -->
       <button
+        v-if="block.status === 'error'"
         type="button"
-        class="shrink-0 rounded-md p-1 transition-opacity hover:opacity-70 disabled:cursor-not-allowed disabled:opacity-40"
+        class="shrink-0 rounded-md p-1 transition-opacity hover:opacity-70"
         :style="{ color: 'var(--text-3)' }"
-        :disabled="block.status !== 'error'"
         :aria-label="t('copilot.retry')"
         :title="t('copilot.retry')"
         @click="emit('retry')"
@@ -189,11 +193,11 @@ onBeforeUnmount(() => {
       </p>
 
       <!--
-        ⚠️ `max-h-120`（480px）是畫布 `max-height:392px` 依 C-10 換算後的等效值 ——
-           實作的字級整體加大約 2.5px（約 1.2 倍），照抄 392px 會比畫布少露出約一張卡。
-           這是**幾何跟著字級一起縮放**的少數幾處之一，不是漏抄。
+        ✅ `max-h-120`（480px）**畫布 2026-09-01 版已採納同一個值**（舊 C-17 已結清）——
+           先前畫布是 392px，我方以「字級整體加大約 1.2 倍、照抄會少露出約一張卡」為由改成 480px，
+           本輪畫布逐字就是 `max-height:480px`。兩邊現在一致，不是偏離。
       -->
-      <div ref="scrollBox" class="max-h-120 space-y-2 overflow-y-auto">
+      <div ref="scrollBox" class="max-h-120 space-y-[9px] overflow-y-auto pr-0.5">
         <CopilotSuggestionCard
           v-for="card in block.cards"
           :key="card.id"

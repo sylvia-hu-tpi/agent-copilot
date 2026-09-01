@@ -189,7 +189,8 @@ function backToEmail() {
     <!-- ── ① Email 步驟 ────────────────────────────────────────────── -->
     <form v-if="step === 'email'" class="px-7 pb-6 pt-7" @submit.prevent="sendOtp">
       <div class="mb-5 flex items-center justify-between">
-        <span class="ac-eyebrow">AGENTCOPILOT</span>
+        <!-- ⚠️ 畫布 1a／1b 的 eyebrow 縱向 padding 是 4px（面板內的 2a 才是 3px），故此處覆寫 -->
+        <span class="ac-eyebrow py-1">AGENTCOPILOT</span>
         <span class="ac-mono text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">v1.0 · internal</span>
       </div>
 
@@ -200,7 +201,8 @@ function backToEmail() {
 
       <div class="mt-6">
         <label for="ac-email" class="ac-label">公司 Email</label>
-        <div class="ac-input mt-1.5 flex items-center gap-2 px-3" :class="{ 'ring-0': true }">
+        <!-- ⚠️ 框線覆寫成 `--border-strong`（畫布 1a）；`.ac-input` 本體維持 `--border`，那是左欄搜尋框的規格 -->
+        <div class="ac-input mt-1.5 flex items-center gap-2 border-[var(--border-strong)] px-3">
           <UIcon name="i-lucide-mail" class="size-[15px] shrink-0" :style="{ color: 'var(--text-3)' }" />
           <input
             id="ac-email"
@@ -248,7 +250,8 @@ function backToEmail() {
         >
           <UIcon name="i-lucide-arrow-left" class="size-3.5" />
         </button>
-        <span class="ac-eyebrow">步驟 2 / 2</span>
+        <!-- ⚠️ 畫布是 mono 純文字，不是實心徽章 —— 徽章留給 AGENTCOPILOT 與「選擇組織」 -->
+        <span class="ac-mono text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">步驟 2 / 2</span>
       </div>
 
       <h1 class="ac-title">輸入驗證碼</h1>
@@ -269,10 +272,8 @@ function backToEmail() {
           spellcheck="false"
           maxlength="1"
           :aria-label="`驗證碼第 ${i + 1} 碼`"
-          class="size-14 rounded-[9px] border text-center font-[var(--font-mono)] text-[1.53125rem] outline-none transition-colors"
-          :style="error
-            ? { background: 'var(--warn-bg)', borderColor: 'var(--warn-bd)', color: 'var(--warn)' }
-            : { background: 'var(--surface-2)', borderColor: 'var(--border)', color: 'var(--text)' }"
+          class="ac-otp-cell size-14 rounded-[9px] border text-center font-[var(--font-mono)] text-[1.53125rem] outline-none transition-colors"
+          :class="{ 'ac-otp-cell--error': error }"
           @input="onDigitInput(i, $event)"
           @keydown="onKeydown(i, $event)"
           @paste="onPaste(i, $event)"

@@ -116,6 +116,32 @@ const separatorAt = computed(() => {
   return out
 })
 
+/**
+ * index → 這一則是否與**上一則**屬同一位發送者的連續訊息（畫布 1c 的分組）。
+ *
+ * 為 true 時 `MessageBubble` 不重畫發送者列、時間改放泡泡下方、上下間距縮小。
+ *
+ * ⚠️ **判定要同時看 `type` 與 `id`。** 只看 `type === 'agent'` 會把兩位不同同事的
+ *    連續發言併成一組，第二位的 email 就此消失 —— 而「是誰說的」正是撞單防護與
+ *    presence 最不能出錯的地方（§10.2）。`ai`／`customer` 沒有 `id` 之分，只比 type。
+ * ⚠️ **跨日分隔線之後一律不分組。** 那條線之下是新的一天，接著又不畫發送者列的話，
+ *    看起來像分隔線把同一組硬切成兩半。
+ * ⚠️ 刻意**不加時間間隔條件**（例如「五分鐘內才算同一組」）：我方的訊息時間來自平台，
+ *    而 §9.3 已知同一批訊息的時間戳可能相同或極接近，用時間當條件會產生不穩定的分組。
+ */
+const groupedAt = computed(() => {
+  const out = new Set<number>()
+  props.messages.forEach((m, i) => {
+    if (i === 0 || separatorAt.value.has(i)) return
+    const prev = props.messages[i - 1]
+    if (!prev) return
+    if (prev.sender.type !== m.sender.type) return
+    if (m.sender.type === 'agent' && prev.sender.id !== m.sender.id) return
+    out.add(i)
+  })
+  return out
+})
+
 function estimateHeight(m: Message, index: number): number {
   const lines = Math.max(1, Math.ceil((m.text?.length ?? 0) / CHARS_PER_LINE))
   const explicitBreaks = (m.text?.match(/\n/g)?.length ?? 0)
@@ -315,7 +341,11 @@ watch(() => props.messages[0]?.conversationId, () => {
           :key="item.data.id"
           :ref="el => setRow(item.data.id, el)"
         >
-          <div v-if="separatorAt.get(item.index)" class="flex justify-center py-1">
+          <!--
+            ⚠️ `sticky`（畫布 1c）—— 往回捲讀舊訊息時，日期會停在頂端，
+               不必往上找才知道自己讀到哪一天。z-1 讓它蓋在泡泡之上而不是被蓋住。
+          -->
+          <div v-if="separatorAt.get(item.index)" class="sticky top-0 z-[1] flex justify-center py-1">
             <span
               class="ac-mono rounded-full border px-2.5 py-0.5 text-[0.8125rem]"
               :style="{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--text-2)' }"
@@ -327,6 +357,7 @@ watch(() => props.messages[0]?.conversationId, () => {
             :mine="!!myOperatorId && item.data.sender.id === myOperatorId"
             :customer-label="customerLabel"
             :collision-source="!!collisionMessageIds?.has(item.data.id)"
+            :grouped="groupedAt.has(item.index)"
           />
         </div>
       </div>

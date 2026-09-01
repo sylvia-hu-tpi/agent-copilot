@@ -32,6 +32,8 @@ defineProps<{
   mode: ConversationMode | null
   /** presence 的一句話摘要，由頁面沿用 PresenceBar 的同一套保守措辭算出 */
   presenceShort: string
+  /** 「已載入 N 則」／「訊息 N 則」；`null` ＝ 尚未載入任何訊息，此時整欄不顯示 */
+  msgCountLabel?: string | null
   joined: boolean
   busy: boolean
 }>()
@@ -88,6 +90,17 @@ const { t } = useI18n()
       <UIcon name="i-lucide-eye" class="size-3 shrink-0" aria-hidden="true" />
       {{ presenceShort }}
     </span>
+
+    <!--
+      訊息則數（畫布 1c 收合列也有這一欄）。
+      ⚠️ 措辭與展開態共用同一個 `msgCountLabel` —— 各算一份的話遲早會分岔成
+         「已載入 N 則」與「訊息 N 則」不同步，而那就是在謊報總數。
+    -->
+    <span
+      v-if="msgCountLabel"
+      class="ac-mono shrink-0 text-[0.8125rem]"
+      :style="{ color: 'var(--text-3)' }"
+    >{{ msgCountLabel }}</span>
 
     <span class="ml-auto" />
 

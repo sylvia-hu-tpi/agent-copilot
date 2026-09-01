@@ -170,12 +170,26 @@ describe('契約 1.2：不新增端點、不讓 block 接受陣列', () => {
  * ⚠️ 這一項也順帶守住「**刻意不做樂觀 disable**」（research.md 決策 7）：
  *    往返期間按鈕仍可按是預期行為，重複按下由 FR-009 的同區塊併發去重吸收。
  */
+/**
+ * FR-019：各區塊的重試入口只看自己的 `block.status`。
+ *
+ * ⚠️ **2026-09-01 改判了「怎麼表達不可用」，但「不互鎖」這個命題沒變。**
+ *    先前的規則是「常駐但 `disabled`」（CHK033），現在畫布 2a 的三個區塊在
+ *    非 error 時**根本沒有這顆按鈕** —— 與同日對 header「全部重試」的裁示同一個理由：
+ *    按鈕本身就是「這一塊壞了」的訊號，常駐會讓訊號永遠亮著而失去意義。
+ *    ⚠️ `:disabled="block.status !== 'error'"` MUST NOT 回來。
+ *
+ * ⚠️ 這裡守的**真正命題**是「條件只引用自己的 `block.status`」——
+ *    一旦哪天有人把「全部重試進行中」之類的共用旗標混進條件，一塊失敗就會連坐其他塊，
+ *    而那不會有型別錯誤，畫面上也只是按鈕少出現一顆，幾乎不可能在 review 時被看見。
+ */
 describe('FR-019：各區塊的重試按鈕沒有互鎖', () => {
   const BLOCK_COMPONENTS = ['SummaryCard.vue', 'SentimentGauge.vue', 'SuggestionList.vue']
 
-  it.each(BLOCK_COMPONENTS)('%s 的重試按鈕 disabled 只看 block.status', (file) => {
+  it.each(BLOCK_COMPONENTS)('%s 的重試入口只在自己 error 時出現，且不吃共用旗標', (file) => {
     const source = readFileSync(resolve(ROOT, 'app/components/copilot', file), 'utf8')
-    expect(source).toContain(`:disabled="block.status !== 'error'"`)
+    expect(source).toContain(`v-if="block.status === 'error'"`)
+    expect(source).not.toContain(`:disabled="block.status !== 'error'"`)
     // 沒有任何「全部重試進行中」之類的旗標混進來
     expect(source).not.toMatch(/retryAll|retryingAll|allRetrying/)
   })

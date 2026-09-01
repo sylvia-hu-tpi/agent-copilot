@@ -58,7 +58,7 @@ const subtitle = computed(() => (props.analyzing ? t('copilot.subtitleAnalyzing'
          畫布的面板徽章是 10.5px、登入頁 eyebrow 是 11px，差 0.5px —— 刻意不為此另做變體，
          因為實作的字級本來就整體加大過（見 DESIGN_TOKENS §2 的 ⚠️）。
     -->
-    <h2 class="ac-eyebrow shrink-0">{{ t('copilot.panelTitle') }}</h2>
+    <h2 class="ac-eyebrow shrink-0 text-[0.8125rem]">{{ t('copilot.panelTitle') }}</h2>
     <span class="min-w-0 truncate text-[0.84375rem]" :style="{ color: 'var(--text-2)' }">{{ subtitle }}</span>
 
     <span class="flex-1" />
@@ -76,12 +76,12 @@ const subtitle = computed(() => (props.analyzing ? t('copilot.subtitleAnalyzing'
     <button
       v-if="hasError"
       type="button"
-      class="flex h-6 shrink-0 items-center gap-[5px] rounded-md border px-2.5 text-[0.84375rem] font-medium transition-opacity hover:opacity-70"
+      class="flex h-6 shrink-0 items-center gap-[5px] rounded-md border px-[9px] text-[0.84375rem] font-medium transition-opacity hover:opacity-70"
       :style="{ borderColor: 'var(--warn-bd)', background: 'var(--warn-bg)', color: 'var(--warn)' }"
       :title="t('copilot.retryAllHint')"
       @click="emit('retry-all')"
     >
-      <UIcon name="i-lucide-refresh-cw" class="size-3 shrink-0" />
+      <UIcon name="i-lucide-refresh-cw" class="size-[11px] shrink-0" />
       {{ t('copilot.retryAll') }}
     </button>
 

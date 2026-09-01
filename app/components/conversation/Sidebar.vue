@@ -242,7 +242,7 @@ function clockTime(iso?: string): string {
           : { border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
         @click="filter = { kind: 'all' }"
       >
-        {{ $t('sidebar.filterAll') }} {{ counts.all }}
+        {{ $t('sidebar.filterAll') }}<span class="ac-mono">{{ counts.all }}</span>
       </button>
 
       <button
@@ -251,14 +251,14 @@ function clockTime(iso?: string): string {
         type="button"
         role="tab"
         :aria-selected="isActive({ kind: 'status', value: st })"
-        class="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[0.8125rem] transition-colors"
+        class="flex items-center gap-[5px] rounded-full px-[9px] py-1 text-[0.84375rem] leading-[1.35] transition-colors"
         :style="isActive({ kind: 'status', value: st })
           ? { background: 'var(--navy)', color: 'var(--navy-fg)' }
           : { border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
         @click="filter = { kind: 'status', value: st }"
       >
         <span class="size-1.5 shrink-0 rounded-full" :style="{ background: STATUS_COLOR[st]?.fg }" aria-hidden="true" />
-        {{ st }} {{ counts[st] }}
+        {{ st }}<span class="ac-mono" :style="isActive({ kind: 'status', value: st }) ? undefined : { color: 'var(--text)' }">{{ counts[st] }}</span>
       </button>
 
       <!-- 頻道 chip：由已載入資料推導，不寫死 web／line -->
@@ -268,7 +268,7 @@ function clockTime(iso?: string): string {
         type="button"
         role="tab"
         :aria-selected="isActive({ kind: 'channel', value: ch })"
-        class="flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[0.8125rem] transition-colors"
+        class="flex items-center gap-[5px] rounded-full px-[9px] py-1 text-[0.84375rem] leading-[1.35] transition-colors"
         :style="isActive({ kind: 'channel', value: ch })
           ? { background: 'var(--navy)', color: 'var(--navy-fg)' }
           : { border: '1px solid var(--border)', background: 'var(--surface-2)', color: 'var(--text-2)' }"
@@ -278,9 +278,9 @@ function clockTime(iso?: string): string {
           v-if="CHANNEL_ICON[ch]"
           :src="CHANNEL_ICON[ch]"
           :alt="ch"
-          class="size-3 shrink-0 rounded-[3px] object-contain"
+          class="block size-3 shrink-0 self-center rounded-[3px] object-contain"
         >
-        {{ ch }} {{ channelCounts[ch] }}
+        {{ ch }}<span class="ac-mono" :style="isActive({ kind: 'channel', value: ch }) ? undefined : { color: 'var(--text)' }">{{ channelCounts[ch] }}</span>
       </button>
     </div>
 
@@ -327,7 +327,7 @@ function clockTime(iso?: string): string {
     </div>
 
     <div v-else class="min-h-0 flex-1 overflow-y-auto">
-      <template v-for="section in sections" :key="section.key">
+      <template v-for="(section, si) in sections" :key="section.key">
         <!--
           日期分組（畫布 §8.2）：sticky，捲動時仍看得到目前在哪一天。
           右端是收合鈕（畫布 2026-08-31 新增）—— 20×20、無邊框、透明底，
@@ -335,6 +335,7 @@ function clockTime(iso?: string): string {
         -->
         <div
           class="sticky top-0 z-[1] flex items-center gap-2 border-b py-[3px] pl-3 pr-1.5"
+          :class="{ 'border-t': si > 0 }"
           :style="{ background: 'var(--surface-2)', borderColor: 'var(--border)' }"
         >
           <span
@@ -380,7 +381,12 @@ function clockTime(iso?: string): string {
           type="button"
           class="w-full border-b border-l-[3px] px-3 py-2.5 text-left transition-colors"
           :style="{
-            borderBottomColor: 'var(--border)',
+            /*
+              ⚠️ **選中列不畫下框線**（畫布 1c）：選中態是一整塊 `--navy-soft` 底，
+                 一條 `--border` 橫切過去會把那一塊切成上下兩半，看起來像兩列各選了一半。
+                 用 transparent 而非拿掉 border 寬度 —— 否則選中時整列會位移 1px。
+            */
+            borderBottomColor: c.id === activeId ? 'transparent' : 'var(--border)',
             // 畫布 §8.2：選中態是 navy-soft 底 ＋ 左側 3px navy 色條。
             // ⚠️ 未選中時左邊框是透明而非 0 寬——否則選中時整列會位移 3px。
             borderLeftColor: c.id === activeId ? 'var(--navy)' : 'transparent',
@@ -435,7 +441,7 @@ function clockTime(iso?: string): string {
               :src="CHANNEL_ICON[c.channel]"
               :alt="c.channel"
               :title="c.channel"
-              class="size-3.5 shrink-0 object-contain"
+              class="block size-[13px] shrink-0 self-center object-contain"
             >
             <span
               v-else
@@ -465,20 +471,20 @@ function clockTime(iso?: string): string {
             -->
             <span
               v-if="c.viewerJoined === true"
-              class="flex min-w-0 items-center gap-1"
+              class="flex min-w-0 items-center gap-1 leading-none"
               :style="{ color: 'var(--navy-2)' }"
               :title="$t('presence.youHere')"
             >
-              <UIcon name="i-lucide-user-check" class="size-3 shrink-0" />
+              <UIcon name="i-lucide-user-check" class="block size-3 shrink-0" />
               <span class="truncate">{{ $t('presence.youHere') }}</span>
             </span>
             <span
               v-else-if="someoneElseCanSend(c.mode)"
-              class="flex min-w-0 items-center gap-1"
+              class="flex min-w-0 items-center gap-1 leading-none"
               :style="{ color: 'var(--text-2)' }"
               :title="$t('presence.someoneHereHint')"
             >
-              <UIcon name="i-lucide-user-check" class="size-3 shrink-0" />
+              <UIcon name="i-lucide-eye" class="block size-3 shrink-0" />
               <span class="truncate">{{ $t('presence.someoneHere') }}</span>
             </span>
 
@@ -498,7 +504,7 @@ function clockTime(iso?: string): string {
               :style="{ color: 'var(--navy-2)' }"
               :aria-label="$t('sidebar.unread')"
             >
-              <span class="size-1.5 shrink-0 rounded-full" :style="{ background: 'var(--navy-2)' }" aria-hidden="true" />
+              <span class="size-[7px] shrink-0 rounded-full" :style="{ background: 'var(--navy)' }" aria-hidden="true" />
               {{ $t('sidebar.unreadLabel') }}
             </span>
           </div>
@@ -507,8 +513,12 @@ function clockTime(iso?: string): string {
         </ul>
       </template>
 
-      <!-- 底部三項（畫布 §8.2） -->
-      <div class="space-y-1 px-3 py-3 text-center text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+      <!--
+        「載入更多」留在捲動區內 —— 它是清單的延續，位置就該在最後一列之後。
+        ⚠️ 刻意維持**可按的按鈕**而不是畫布的 spinner 自動載入（2026-09-01 使用者裁定）：
+           自動載入會在客服往下捲時持續打 API 且無法中止，載入時機交給人決定。
+      -->
+      <div v-if="hasMore || atCoverageLimit" class="space-y-1 px-3 pb-3 pt-1 text-center text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
         <button
           v-if="hasMore"
           type="button"
@@ -519,15 +529,27 @@ function clockTime(iso?: string): string {
         >
           {{ loading ? $t('common.loading') : $t('sidebar.loadMore') }}
         </button>
-        <p>
-          {{ total === null
-            ? $t('sidebar.shownOnly', { n: visible.length })
-            : $t('sidebar.shown', { n: visible.length, total }) }}
-        </p>
         <!-- ⚠️ 按鈕消失時 MUST 說明原因，否則看起來像壞掉（憲法 3.2：降級要看得見） -->
         <p v-if="atCoverageLimit">{{ $t('sidebar.coverageLimit', { n: items.length }) }}</p>
-        <p>{{ $t('sidebar.sortedBy') }}</p>
       </div>
+    </div>
+
+    <!--
+      統計列（畫布 1c）：**捲動區之外**的固定 footer，左右分置。
+      ⚠️ 先前它在 `overflow-y-auto` 容器**裡面**，會跟著清單一起捲走 ——
+         而「顯示 N / M」正是客服想確認「我看到的是不是全部」時要找的東西，
+         那個時機通常是已經捲到一半、正在找某一則對話的時候。
+    -->
+    <div
+      class="flex shrink-0 items-center justify-between gap-2 border-t px-3 py-[7px] text-[0.8125rem]"
+      :style="{ borderColor: 'var(--border)', color: 'var(--text-3)' }"
+    >
+      <span class="ac-mono">
+        {{ total === null
+          ? $t('sidebar.shownOnly', { n: visible.length })
+          : $t('sidebar.shown', { n: visible.length, total }) }}
+      </span>
+      <span>{{ $t('sidebar.sortedBy') }}</span>
     </div>
   </aside>
 </template>

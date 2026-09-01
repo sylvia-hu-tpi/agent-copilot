@@ -123,7 +123,20 @@ const lastUpdatedText = computed(() => (
          畫布把「沒有人」與「偵測不到」並列，而 §10.2 明訂我方無法區分這兩者，
          寫成並列等於宣稱我們分得出來。實作只講偵測結果。
     -->
-    <span v-if="isEmpty" class="italic opacity-70">{{ t('presence.none') }}</span>
+    <!--
+      ⚠️ 畫布 1c 的空狀態是「20px 虛線圓框 ＋ `user` icon ＋ 一般字」，不是斜體淡字。
+         斜體＋降透明度會讓它讀起來像「這裡壞了」，而空狀態是常態不是錯誤。
+    -->
+    <span v-if="isEmpty" class="flex items-center gap-1.5">
+      <span
+        class="flex size-5 shrink-0 items-center justify-center rounded-full border border-dashed"
+        :style="{ borderColor: 'var(--border-dash)' }"
+        aria-hidden="true"
+      >
+        <UIcon name="i-lucide-user" class="size-2.5" :style="{ color: 'var(--text-3)' }" />
+      </span>
+      {{ t('presence.none') }}
+    </span>
 
     <span class="ml-auto" />
 

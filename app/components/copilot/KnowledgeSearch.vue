@@ -112,19 +112,45 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
     </div>
 
     <!-- 結果列表 -->
-    <ul v-else class="space-y-3">
-      <li v-for="hit in search.hits.value" :key="hit.id" class="space-y-1.5 border-t pt-2 first:border-t-0 first:pt-0" :style="{ borderColor: 'var(--border)' }">
-        <div class="flex items-center justify-between gap-2">
-          <span class="text-[0.9375rem] font-medium">{{ hit.title }}</span>
-          <span
-            class="ac-mono flex shrink-0 items-center gap-1 text-[0.8125rem]"
-            :style="{ color: isStale(hit.updatedAt) ? 'var(--warn)' : 'var(--text-3)' }"
-          >
-            <UIcon v-if="isStale(hit.updatedAt)" name="i-lucide-alert-triangle" class="size-3" />
+    <!-- ⚠️ 列與列之間**不留間距**（畫布是純 flex column）—— 分隔靠每一列自己的上框線與 padding -->
+    <ul v-else class="flex flex-col">
+      <!--
+        ⚠️ **每一筆都有上分隔線，包含第一筆**（畫布 2a）—— 上方緊接著的是搜尋框，
+           那條線分開的是「輸入」與「結果」，不是結果與結果。先前的 `first:border-t-0`
+           讓第一筆與搜尋框黏在一起。
+      -->
+      <li v-for="hit in search.hits.value" :key="hit.id" class="flex flex-col gap-[5px] border-t px-0.5 py-[9px]" :style="{ borderColor: 'var(--border)' }">
+        <div class="flex items-center gap-2">
+          <!--
+            ⚠️ 標題**單行截斷**（畫布）：長標題換行會把右側的更新日期推開，
+               而那個日期正是判斷「這筆能不能引用」的依據。
+          -->
+          <span class="min-w-0 truncate text-[0.9375rem] font-medium">{{ hit.title }}</span>
+          <div class="flex-1" />
+          <span class="ac-mono shrink-0 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
             {{ formatDate(hit.updatedAt) }}
           </span>
         </div>
-        <p class="text-[0.875rem]" :style="{ color: 'var(--text-2)' }">{{ hit.snippet }}</p>
+        <!--
+          ⚠️ 摘錄**兩行截斷**（畫布 `-webkit-line-clamp:2`）—— 這是「三筆結果能不能
+             一屏內掃完」的關鍵；一筆長摘錄整段展開就會把後面兩筆推到視窗外。
+        -->
+        <p class="line-clamp-2 text-[0.875rem] leading-[1.65]" :style="{ color: 'var(--text-2)' }">{{ hit.snippet }}</p>
+
+        <!--
+          過期警示（畫布 2a）：**獨立一列、`--open` 系、帶文字**。
+          ⚠️ 先前只把右上角的日期染成 `--warn` 並加一個驚嘆號圖示 —— 那違反憲法 8.1
+             （顏色與圖示不是唯一資訊來源），而且沒有任何地方說明「過期」是指多久。
+          ⚠️ 色系是 `--open` 不是 `--warn`：這不是錯誤，是「引用前請確認」的提醒。
+        -->
+        <div
+          v-if="isStale(hit.updatedAt)"
+          class="flex items-center gap-1.5 rounded-md px-2 py-1 text-[0.84375rem]"
+          :style="{ color: 'var(--open)', background: 'var(--open-bg)' }"
+        >
+          <UIcon name="i-lucide-clock-alert" class="size-3 shrink-0" />
+          {{ t('copilot.knowledgeSearch.staleWarning') }}
+        </div>
 
         <div v-if="expanded[hit.sourceRef.ref]" class="space-y-1 rounded-lg p-2" :style="{ background: 'var(--surface-3)' }">
           <p v-for="(snippet, i) in expanded[hit.sourceRef.ref]" :key="i" class="text-[0.8125rem]" :style="{ color: 'var(--text-2)' }">
@@ -141,7 +167,7 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
         <div class="flex items-center gap-2">
           <button
             type="button"
-            class="h-6 rounded-md border px-2 text-[0.84375rem] transition-opacity hover:opacity-70"
+            class="h-[25px] rounded-md border px-[9px] text-[0.875rem] transition-opacity hover:opacity-70"
             :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface-2)', color: 'var(--text)' }"
             @click="emit('insert', hit.snippet)"
           >
@@ -149,7 +175,7 @@ async function onExpand(hit: KnowledgeHit): Promise<void> {
           </button>
           <button
             type="button"
-            class="flex h-6 items-center gap-1 px-1 text-[0.84375rem] transition-opacity hover:opacity-70 disabled:opacity-50"
+            class="flex h-[25px] items-center gap-[5px] px-2 text-[0.875rem] transition-opacity hover:opacity-70 disabled:opacity-50"
             :style="{ color: 'var(--text-2)' }"
             :disabled="expanding[hit.sourceRef.ref]"
             @click="onExpand(hit)"

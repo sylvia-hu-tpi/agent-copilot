@@ -59,7 +59,7 @@ const toneStyle = computed(() => {
     它與周圍的區塊外殼刻意不同色，因為「這是 AI 生成、需要你判斷」是這張卡最重要的屬性。
   -->
   <article
-    class="space-y-[7px] rounded-[10px] border p-2.5 transition-opacity"
+    class="space-y-[7px] rounded-[10px] border px-[11px] py-2.5 transition-opacity"
     :style="{
       background: 'var(--ai-bg)',
       borderColor: 'var(--ai-bd)',
@@ -82,7 +82,7 @@ const toneStyle = computed(() => {
     <div class="flex items-start gap-2">
       <span class="flex min-w-0 items-center gap-1.5">
         <UIcon name="i-lucide-book-open" class="size-3 shrink-0" :style="{ color: 'var(--ai)' }" />
-        <span class="truncate text-[0.875rem] font-medium" :style="{ color: 'var(--text)' }">
+        <span class="truncate text-[0.90625rem] font-medium" :style="{ color: 'var(--text)' }">
           {{ card.sopTitle ?? t(citation === 'pending' ? 'copilot.suggestion.noKnowledgeRefPending' : 'copilot.suggestion.noKnowledgeRef') }}
         </span>
         <!--
@@ -90,7 +90,7 @@ const toneStyle = computed(() => {
           ⚠️ 形狀是 `radius:4px` 的小方角標籤，**不是** pill —— 圓角 pill 在畫布上是信心度那顆。
         -->
         <span
-          class="flex shrink-0 items-center gap-1 rounded border px-1.5 py-px text-[0.78125rem] font-medium"
+          class="flex shrink-0 items-center gap-1 rounded border px-1.5 py-px text-[0.8125rem] font-medium"
           :style="toneStyle"
         >
           <UIcon :name="tone.icon" class="size-2.5 shrink-0" />
@@ -101,7 +101,7 @@ const toneStyle = computed(() => {
       <!-- confidence 為 null 時留空不顯示（FR-002、憲法 4.4）——不得改用估算或替代數字 -->
       <span
         v-if="card.confidence !== null"
-        class="ac-mono shrink-0 rounded-full border px-2 py-px text-[0.78125rem] font-bold"
+        class="ac-mono shrink-0 rounded-full border px-2 py-0.5 text-[0.8125rem] font-bold"
         :style="{ color: 'var(--ai)', background: 'var(--surface)', borderColor: 'var(--ai-bd)' }"
       >
         {{ t('copilot.suggestion.confidence', { value: card.confidence }) }}
@@ -110,7 +110,7 @@ const toneStyle = computed(() => {
 
     <!-- 建議全文：畫布把它放在白底框裡，與卡片底色分開 —— 這一段是「可以直接送出的字」 -->
     <p
-      class="rounded-lg border px-2.5 py-2 text-[0.90625rem] leading-relaxed"
+      class="rounded-lg border px-2.5 py-2 text-[0.9375rem] leading-[1.75]"
       :style="{ background: 'var(--surface)', borderColor: 'var(--border)', color: 'var(--text)' }"
     >{{ card.text }}</p>
 
@@ -122,7 +122,7 @@ const toneStyle = computed(() => {
       ⚠️ 這一行先前完全沒有實作 —— 但它正是客服判斷「這張卡能不能直接送」的依據，
          少了它，信心度就變成唯一線索，而信心度說不出「為什麼」。
     -->
-    <p v-if="card.rationale" class="text-[0.84375rem] leading-relaxed" :style="{ color: 'var(--text-3)' }">
+    <p v-if="card.rationale" class="text-[0.84375rem] leading-[1.6]" :style="{ color: 'var(--text-3)' }">
       {{ t('copilot.suggestion.rationale', { text: card.rationale }) }}
     </p>
 
@@ -133,7 +133,7 @@ const toneStyle = computed(() => {
     -->
     <div
       v-if="card.requiresData.length > 0"
-      class="flex items-start gap-[7px] rounded-[7px] border px-2.5 py-[7px] text-[0.84375rem] leading-relaxed"
+      class="flex items-start gap-[7px] rounded-[7px] border px-[9px] py-[7px] text-[0.875rem] leading-relaxed"
       :style="{ background: 'var(--open-bg)', borderColor: 'var(--open-bg)', color: 'var(--open)' }"
     >
       <UIcon name="i-lucide-clipboard-list" class="mt-0.5 size-3 shrink-0" />
@@ -143,11 +143,11 @@ const toneStyle = computed(() => {
     <div class="flex justify-end">
       <button
         type="button"
-        class="ac-btn-primary flex h-7 items-center gap-1.5 px-3 text-[0.875rem]"
+        class="ac-btn-primary flex h-7 items-center gap-1.5 rounded-[7px] px-3 text-[0.90625rem]"
         :aria-label="t('copilot.suggestion.insert')"
         @click="emit('insert', card.text)"
       >
-        <UIcon name="i-lucide-corner-down-left" class="size-3" />
+        <UIcon name="i-lucide-corner-down-left" class="size-[13px]" />
         {{ t('copilot.suggestion.insert') }}
       </button>
     </div>

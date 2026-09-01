@@ -164,7 +164,13 @@ describe('FR-002／FR-007：元件確實用到了對應的文案與可及性屬�
     expect(list).toContain('i-lucide-book-check')
   })
 
+  /**
+   * ⚠️ 命題不變、機制改了（2026-09-01）：先前靠常駐按鈕的 `disabled` 表達「現在不能重試」，
+   *    現在畫布 2a 讓它在非 error 時**不存在**。對本測試要守的事情來說後者更強 ——
+   *    第二段引用還在 pending 時 `status` 是 `ready`，按鈕根本不會被渲染出來。
+   */
   it('重試按鈕的可按條件不變 —— pending 期間 MUST NOT 出現可按的重試（FR-024）', () => {
-    expect(list).toContain(`:disabled="block.status !== 'error'"`)
+    expect(list).toContain(`v-if="block.status === 'error'"`)
+    expect(list).not.toContain(`:disabled="block.status !== 'error'"`)
   })
 })

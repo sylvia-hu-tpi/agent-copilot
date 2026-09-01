@@ -14,7 +14,7 @@ const conversations = useConversationsStore()
 const stream = useStreamStore()
 
 /** ⚠️ 範圍與 clamp 規則 MUST 與工作區頁一致，否則兩頁的側欄會不同寬 */
-const sidebar = usePanelWidth({ key: 'ac.sidebarWidth', def: 280, min: 220, max: 400 })
+const sidebar = usePaneSize({ key: 'ac.sidebarWidth', def: 280, min: 220, max: 400 })
 
 let offStream: (() => void) | undefined
 
@@ -52,7 +52,7 @@ const oldestActiveId = computed(() => {
 
 <template>
   <div class="flex h-full min-h-0">
-    <div class="shrink-0" :style="{ width: `${sidebar.width.value}px` }">
+    <div class="shrink-0" :style="{ width: `${sidebar.size.value}px` }">
       <ConversationSidebar
         v-model:query="conversations.query"
         :items="conversations.sorted"

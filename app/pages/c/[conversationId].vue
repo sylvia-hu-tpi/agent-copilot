@@ -41,9 +41,9 @@ const overwriteConfirm = useOverwriteConfirm(draft.text, (text) => { draft.text.
  *    客服主要在看的畫面（逐條讀建議卡、展開知識庫全文），不是永遠的輔助欄。
  *    拉到 720 時中欄會被壓縮，但中欄是 `flex-1 min-w-0`、標題已 truncate，不會破版。
  */
-const sidebar = usePanelWidth({ key: 'ac.sidebarWidth', def: 280, min: 220, max: 400 })
+const sidebar = usePaneSize({ key: 'ac.sidebarWidth', def: 280, min: 220, max: 400 })
 /** 右欄的把手在面板**左**緣，往左拖（滑鼠 X 變小）要讓面板變寬 —— 方向與左欄相反 */
-const copilotPane = usePanelWidth({ key: 'ac.copilotWidth', def: 420, min: 320, max: 720, invert: true })
+const copilotPane = usePaneSize({ key: 'ac.copilotWidth', def: 420, min: 320, max: 720, invert: true })
 
 const sidebarCollapsed = ref(false)
 const COLLAPSED_KEY = 'ac.sidebarCollapsed'
@@ -190,13 +190,21 @@ const metaParts = computed<string[]>(() => {
   const parts: string[] = [shortConversationId(conversationId.value)]
   const created = createdAtLabel(view.detail.value?.createdAt)
   if (created) parts.push(t('conversation.createdAt', { time: created }))
-  const n = view.messages.value.length
-  if (n > 0) {
-    parts.push(view.hasMore.value
-      ? t('conversation.messagesLoaded', { n })
-      : t('conversation.messagesTotal', { n }))
-  }
+  if (msgCountLabel.value) parts.push(msgCountLabel.value)
   return parts
+})
+
+/**
+ * 「已載入 N 則」／「訊息 N 則」—— 展開態的 meta 與**收合態那一列**共用同一個來源。
+ * ⚠️ 兩處各算一份的話，措辭遲早會分岔（其中一處被改成寫死的「訊息 N 則」而漏掉
+ *    `hasMore` 的判斷），而那是在謊報總數。
+ */
+const msgCountLabel = computed<string | null>(() => {
+  const n = view.messages.value.length
+  if (n === 0) return null
+  return view.hasMore.value
+    ? t('conversation.messagesLoaded', { n })
+    : t('conversation.messagesTotal', { n })
 })
 
 /**
@@ -223,7 +231,10 @@ const presenceShort = computed(() => {
   const p = view.presence.value
   const others = p.operators.length + (p.unidentifiedActor ? 1 : 0)
   return others === 0
-    ? t('presence.youViewing')
+    // ⚠️ 與展開態的 PresenceBar 同一句（畫布 1c）。先前這裡是「你正在檢視」——
+    //    那句話在 PresenceBar 上是**靠右恆常顯示的「自己」**，不是空狀態，
+    //    拿來當空狀態等於把兩件事混成一句，而且沒有回答「有沒有別人」。
+    ? t('presence.none')
     : t('presence.shortOthers', { n: others })
 })
 </script>
@@ -234,7 +245,7 @@ const presenceShort = computed(() => {
     <div
       v-if="!sidebarCollapsed"
       class="shrink-0"
-      :style="{ width: `${sidebar.width.value}px` }"
+      :style="{ width: `${sidebar.size.value}px` }"
     >
       <ConversationSidebar
         v-model:query="conversations.query"
@@ -268,7 +279,7 @@ const presenceShort = computed(() => {
     <ConversationResizeHandle
       v-if="!sidebarCollapsed"
       :dragging="sidebar.dragging.value"
-      :value="sidebar.width.value"
+      :value="sidebar.size.value"
       :min="sidebar.min"
       :max="sidebar.max"
       :label="$t('layout.resizeSidebar')"
@@ -303,6 +314,7 @@ const presenceShort = computed(() => {
         :channel="view.detail.value?.channel"
         :mode="view.control.value?.mode ?? null"
         :presence-short="presenceShort"
+        :msg-count-label="msgCountLabel"
         :joined="view.viewerJoined.value"
         :busy="view.busy.value"
         @expand="headerCollapsed = false"
@@ -603,7 +615,7 @@ const presenceShort = computed(() => {
       <ConversationResizeHandle
         v-if="!panel.collapsed.value"
         :dragging="copilotPane.dragging.value"
-        :value="copilotPane.width.value"
+        :value="copilotPane.size.value"
         :min="copilotPane.min"
         :max="copilotPane.max"
         :label="$t('layout.resizeCopilot')"
@@ -641,6 +653,10 @@ const presenceShort = computed(() => {
         >
           {{ $t('copilot.panelTitle') }}
         </span>
+        <!-- ⚠️ 畫布多這一行 —— 少了它，直排的 COPILOT 讀起來像標題而不是「這一欄現在收起來了」 -->
+        <span class="text-[0.75rem] [writing-mode:vertical-rl]" :style="{ color: 'var(--text-3)' }">
+          {{ $t('copilot.collapsedLabel') }}
+        </span>
       </div>
 
       <!--
@@ -652,7 +668,7 @@ const presenceShort = computed(() => {
       <div
         v-else
         class="flex shrink-0 flex-col border-l"
-        :style="{ width: `${copilotPane.width.value}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
+        :style="{ width: `${copilotPane.size.value}px`, borderColor: 'var(--border)', background: 'var(--bg)' }"
       >
         <CopilotPanelHeader
           :collapsed="panel.collapsed.value"
@@ -662,7 +678,7 @@ const presenceShort = computed(() => {
           @retry-all="copilot.retryAll()"
         />
 
-        <div class="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+        <div class="min-h-0 flex-1 space-y-2.5 overflow-y-auto p-3">
           <!--
             ⚠️ **區塊順序照畫布 artboard 2a，不要隨手調動。**
                畫布的排序有記載的理由（ARCHITECTURE §「右欄自上而下共六個區塊」）——依處理中的
