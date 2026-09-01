@@ -658,7 +658,7 @@ sparkline 換一個形狀。2026-09-01 的實例，證據見 `scripts/spike/24-s
 逐則孤立判斷之下，「好，那我再等等」被判成 **85／calm**（三次全部 85）——
 孤立來看它確實平和，但它出現在兩則抱怨之後，那是勉強接受。於是折線成為
 `55 → 70 → 55 → 85 → 30 → 10`，一個 55 分落差的假尖峰，而且 `calm` 跨到 `frustrated`
-會同時觸發示警並讓**整條折線**換色（`SentimentGauge` 的 `strokeColor` 吃 `label`）。
+會同時觸發示警（當時折線也會**整條**跟著換色 —— 該行為已於 2026-09-01 隨分帶上色一併退場，見 §14.5）。
 
 **改法**：把該條換成「必須參考同批的前後文，特別留意語氣客套但問題未解決的句子」。
 該則修正為 45／concerned，最大相鄰落差由 55 分降到 35 分。
@@ -1959,6 +1959,27 @@ boards.linkItems()                                      # 關聯至 Contact
 
 側欄列出所有已 JOIN 的對話，每個都有獨立 `CopilotSession` 在背景運作；未聚焦的對話若有新訊息或情緒惡化，顯示徽記提醒；背景對話重算情緒與建議卡但不重算摘要，且受並行上限與較長 debounce 節流（見 §11.2、憲法 6.2）。
 
+#### ⚠️ 切換對話會讓整個對話頁 remount —— 任何「跨對話應該不變」的 UI 狀態不能放元件內
+
+`<NuxtPage>` 預設的 key 是**把路由參數代入後的路徑**（Nuxt 的 `generateRouteKey` →
+`interpolatePath`，見 `node_modules/nuxt/dist/pages/runtime/utils.js`）。因此 `/c/A` 換到
+`/c/B` 就是換了一個 key：`pages/c/[conversationId].vue` 連同它底下的左欄、中欄、右欄
+**整棵 unmount／remount**，元件內的 `ref` 一律回到初始值。
+
+2026-09-01 實機驗收因此發現一個症狀完全不像路由問題的 bug：**左欄收起某一天的日期區間後，
+點另一則對話，收起來的區間全部彈開**。收合邏輯本身沒有錯，是整個左欄被重建了。
+
+判斷準則：**這個狀態是「這一次使用」的，還是「這一個對話」的？**
+
+| 狀態 | 該放哪 | 已有的例子 |
+|---|---|---|
+| 跨對話應保持（這一次使用） | 模組層 `ref`（重新整理歸零）或 `localStorage`（跨 session） | 日期區間收合（模組層，`Sidebar.vue` 檔首）；左右欄寬與收合（`localStorage`） |
+| 每個對話各自一份 | 元件內 `ref` —— remount 正是它要的行為 | 草稿、Copilot 面板狀態、SSE 訂閱 |
+
+⚠️ **不要用 `definePageMeta({ key })` 去阻止 remount。** 那會讓上表第二列的狀態全部跨對話
+殘留（切到別的對話還看得到上一則的草稿），代價遠大於它解決的問題。
+`test/sidebar-group-collapse-persist.test.ts` 同時守著這兩件事。
+
 ### 14.3 設計基調
 
 參考 `docs/demo_agentCopilot01.png`：clean SaaS 風——藍色主色、白底卡片、大圓角、清楚的區塊標題。情緒色階：綠 → 黃 → 橙 → 紅。卡片：白底 + 細邊框 + 輕微 elevation。
@@ -1975,18 +1996,56 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ```vue
 <!-- SentimentGauge.vue 概念 -->
-<svg :viewBox="`0 0 ${w} ${h}`" preserveAspectRatio="none">
+<svg viewBox="0 0 320 52" fill="none">   <!-- 等比縮放，MUST NOT 用 preserveAspectRatio="none" -->
+  <defs>
+    <!-- 分帶漸層：由 y=6（score 100）到 y=42（score 0），每一級兩個同 offset 的 stop -->
+    <linearGradient :id="gradId" gradientUnits="userSpaceOnUse" x1="0" y1="6" x2="0" y2="42">
+      <template v-for="g in GRADIENT_STOPS" :key="g.key">
+        <stop :offset="g.from" :style="{ stopColor: g.color }" />
+        <stop :offset="g.to" :style="{ stopColor: g.color }" />
+      </template>
+    </linearGradient>
+  </defs>
   <polyline
     :points="points"
     fill="none"
-    :stroke="strokeByLatestScore"
+    :stroke="`url(#${gradId})`"
     stroke-width="2"
     stroke-linecap="round"
+    vector-effect="non-scaling-stroke"
   />
 </svg>
 ```
 
 資料量小（每輪一點），效能無虞；深色模式只需換 CSS 變數；新點加入時做平滑過渡動畫；搭配文字說明。
+
+#### 折線的顏色吃 `score`，不吃 `label`（2026-09-01 改版）
+
+折線**依分數帶上色**：線落在哪一級就是哪一級的顏色，換色點落在線真正跨過界線的位置
+（不是落在資料點上）。分數帶是 `SENTIMENT_BANDS`（`shared/types/copilot.ts`）：
+`calm` 80–100 ／ `neutral` 60–79 ／ `concerned` 40–59 ／ `frustrated` 20–39 ／ `angry` 0–19，
+與情緒 agent 的 system prompt 裡那份絕對標準同一組（見 §11 「agent 的 system prompt 也不在版本控制裡」）。
+
+三件事必須一起記，否則各自都會**靜默**做錯：
+
+1. **`gradientUnits` MUST 是 `userSpaceOnUse`。** 預設的 `objectBoundingBox` 依折線自己的外框
+   分佈顏色，變成「最高的那點永遠綠、最低的永遠紅」——語意相反；水平線的外框高度是 0，
+   整條線會直接消失。
+2. **`stop-color` MUST 寫在 `style` 裡。** presentation attribute 不做 `var()` 代換，
+   `stop-color="var(--active)"` 是無效值，靜默退回黑色。⚠️ 畫布逐字就是屬性寫法，
+   這一處**刻意不照抄**（畫布在自己的渲染器裡有效，瀏覽器裡沒有）。
+3. **色票取自量表 bar 的 `SCALE`，不另抄一份。**「下面那條 bar 就是這張圖的圖例」是分帶
+   上色唯一的正當性；兩邊各寫一組，總有一天只有一邊被改，而那天不會有型別錯誤或測試失敗。
+
+⚠️ **示警不再染折線。** 先前 `strokeColor` 會在示警時把整條線染成 `--warn`／`--danger`，
+與分帶上色是兩套會打架的規則：示警有遲滯（最新一點已回到「擔憂」時仍持續示警），
+此時整條紅線與線本身的高度互相矛盾。示警改由 pill 單獨承擔，顏色＋圖示＋文字三者仍並呈
+（FR-003、憲法 8.1）。⚠️ `strokeColor` MUST NOT 回來（`test/sentiment-band-stroke.test.ts` 守著）。
+
+⚠️ 量表 bar 的「普通」用 `--info`＋`--navy-soft`，**不是** `--text-2`＋無底色：後者的底色與
+走勢圖框同值（在 bar 上像破了個洞），且無彩度的灰夾在四個有彩度的顏色中間會被讀成
+「停用／沒有資料」。⚠️ 不要改用 `--navy-2` —— 它在深色主題對 `--surface-2` 只有 3.02:1，
+當文字達不到 WCAG AA 4.5:1（`--info` 是 9.82:1／8.54:1）。
 
 ### 14.6 效能
 

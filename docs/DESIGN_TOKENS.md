@@ -56,6 +56,8 @@
 | 30 | **左欄搜尋列**（§8.2） | 只有搜尋框 ＋ 收合鈕 | 多一顆重新整理鈕 | 輪詢有間隔，客服偶爾需要立刻確認清單是最新的 |
 | 31 | **未接手時的輸入區**（§8.4） | 虛線提示框取代整個輸入區 | **只有「尚未接手」照畫布** | 另兩種不能送出的情況（Automation Only 唯讀、同事鎖）維持「說明框 ＋ 停用的輸入框」：那兩者是**暫時**狀態，客服可能想先打草稿，而畫布沒有涵蓋它們 |
 | 32 | **連續訊息的分組條件**（§8.3） | （只示範連續兩則 AI） | 只看**發送者**，不看時間間隔 | 平台訊息時間戳在同一批可能相同或極接近，加上「N 分鐘內」會產生不穩定的分組。⚠️ 真人客服另比 `sender.id` —— 只看 `type` 會把兩位同事的連續發言併成一組，第二位的 email 就此消失 |
+| 33 | **走勢圖漸層的 `stop-color` 寫法**（§7.2 區塊①） | `<stop stop-color="var(--active)">`（presentation attribute） | `<stop style="stop-color: var(--active)">` | ⚠️ **機制問題，不是視覺偏離。** presentation attribute 不做 `var()` 代換，無效的 `stop-color` 會**靜默退回黑色**（不報錯，只是一條黑線）。畫布在自己的渲染器裡正常，但若匯出成瀏覽器可開的 HTML 就會整組失效 |
+| 34 | **輸入框高度的下限**（§8.4） | 兩行 `72px`（「兩行 72px – 320px」） | 一行 **`46px`**（預設仍 `72`） | 小螢幕筆電上 72px 的下限會把訊息流壓到看不到幾則。「再低會讓 Shift+Enter 換行看起來像壞掉」改由 `rows="1"` 承擔。⚠️ 只動下限、不動預設 |
 
 > ✅ **編號 1–18 已全部消失，不要再當成落差** —— 2026-09-01 的三輪改版裡畫布逐一採納了：
 > 字級全面改 `rem` 並加大約 2.5px（**因此絕對數值現在要逐項比對，見 §2**）、情緒走勢圖整欄寬、
@@ -378,15 +380,25 @@ box-shadow: var(--shadow)
      `padding:8px 9px 6px`／`gap:5px` 的框內。
      - `<svg viewBox="0 0 320 52">`＋`width:100%; height:auto`（**等比**），繪圖區 x ∈ [6, 314]、y ∈ [6, 42]
      - 基準線：`y=42`、`x` 由 6 到 314、`stroke-width:1`／`--border-strong`
-     - 折線：`stroke-width:2`／`linecap:round`／`linejoin:round`／`fill:none`，最多 50 點
-     - 端點：`<circle r="2.8">`，同折線色
+     - 折線：`stroke-width:2`／`linecap:round`／`linejoin:round`／`fill:none`，最多 50 點。
+       ⚠️ **依分數帶上色**（2026-09-01）：`<linearGradient gradientUnits="userSpaceOnUse">`
+       由 `y=6`（score 100）到 `y=42`（score 0），五級各兩個同 `offset` 的硬停點
+       （`0/0.2` `--active`、`0.2/0.4` `--info`、`0.4/0.6` `--open`、`0.6/0.8` `--warn`、
+       `0.8/1.0` `--danger`），色票與下方量表 bar 同一組。
+       ⚠️ 示警**不**染折線（先前會整條轉 `--warn`／`--danger`，已退場）。
+       ⚠️ `stop-color` 要寫在 `style` 裡；畫布逐字的 attribute 寫法在瀏覽器裡是無效值（靜默變黑線）
+     - 端點：`<circle r="2.8">`，同折線色（`fill="url(#…)"`，由 y 座標自動取到該點的分帶色）
      - 附件標記：`x` 位置的**虛線**（`y` 6→42、`--border-strong`、`stroke-dasharray="2 3"`）
        ＋ 基準線下方的實心小三角（`path d="M<x> 44.5 l3 4.5 h-6 z"`／`--text-3`）
      - 圖下方一列（`0.7813rem`／`--text-3`）：`第 1 輪`（mono）→ 彈性 → `▲附件`（7×7 三角）→ 彈性 → `第 N 輪`（mono）
    - **走勢文字摘要**（`0.9063rem`／`--text-2`／`line-height:1.7`）
      ✅ 包在 `sc-if trendNote` 裡 —— 畫布明訂它**可能不存在**，此時整段不顯示。
      我方的 `SentimentNarrative { trend, advice }` 在產生失敗或評分點少於 2 個時為 `null`，正是這個狀態。
-   - **情緒量表圖例**：五段等寬（`0.8438rem`），逐字為中文：「平靜」→`--active`／「普通」→`--text-2`／
+   - **情緒量表圖例**：五段等寬（`0.8438rem`），逐字為中文：「平靜」→`--active`／
+     **「普通」→`--info` 字＋`--navy-soft` 底**（⚠️ 2026-09-01 由 `--text-2`＋無底色改來：
+     無底色那格與走勢圖框同色、在 bar 上像破了個洞，且無彩度的灰夾在四個有彩度的顏色中間
+     會被讀成「停用」。⚠️ 不要改用 `--navy-2`，深色主題對 `--surface-2` 只有 3.02:1，
+     當文字達不到 AA）／
      「擔憂」→`--open`／「挫折」→`--warn`／**「生氣」→`--danger` 系**；
      目前所在區間 `font-weight:700` ＋ `box-shadow:inset 0 -3px 0 <該段色>`；
      ⚠️ 「生氣」段的左分隔線用 `--danger-bd`（其餘四段 `--border`），且字重固定 500。
@@ -512,7 +524,8 @@ box-shadow: var(--shadow)
 `aria-valuenow/min/max`、hover 與 focus 轉 `--navy-2`（focus 另加 `box-shadow:0 0 0 2px var(--navy-soft)`）。
 
 - 欄寬 `title="拖曳，或聚焦後用 ←／→、Home／End 調整寬度"`
-- 輸入框高度 `title="拖曳，或聚焦後用 ↑／↓、Home／End 調整輸入框高度"`，範圍 **72–320px（預設 72）**，
+- 輸入框高度 `title="拖曳，或聚焦後用 ↑／↓、Home／End 調整輸入框高度"`，畫布範圍 **72–320px（預設 72）**；
+  ⚠️ 我方下限改為 **46px（一行）**，預設仍 72 —— 小螢幕筆電上兩行的下限會把訊息流壓得看不到幾則（見 `DESIGN_FEEDBACK.md`）。
   未接手時退回一條 1px 的 `--border` 線（沒有輸入框可調，留一個調不動的把手只會讓人以為壞了）
 
 ⚠️ 三條共用同一個 `ConversationResizeHandle` 元件與 `usePaneSize()`。
