@@ -119,7 +119,7 @@ export const useConversationsStore = defineStore('conversations', () => {
    *
    * ⚠️ 用 `skip` 而非游標：`/api/conversations` 就是這樣開的（`limit`／`skip`）。
    *    ⚠️ 這一支與 §9.3.1 第一層**背景輪詢**的分頁是兩回事——那一層目前刻意不分頁
-   *    （`copilot-runtime.ts` 的 TODO(M2)），所以超過首頁的對話不會被背景偵測到，
+   *    （`copilot-runtime.ts` 的 TODO(M4)），所以超過首頁的對話不會被背景偵測到，
    *    在側欄上會安靜地不更新時間戳。這是已知限制，不是本函式的 bug。
    */
   async function loadMore(): Promise<void> {
