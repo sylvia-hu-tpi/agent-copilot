@@ -128,7 +128,15 @@ function makeSuggestionCheck(allowedSopIds: string[]) {
 const AGENTS = {
   sentiment: {
     name: 'AgentCopilot_情緒評分_agent',
-    /** 與 15 號同一組輸入，數字才可跨腳本比較 */
+    /**
+     * 與 15 號同一組輸入，數字才可跨腳本比較。
+     *
+     * ⚠️ **刻意不跟進正式路徑 2026-09-01 新增的「【前情】」區塊**（`buildSentimentPrompt()`）。
+     *    這裡量的是延遲，而 ARCHITECTURE §8.2b 已經記錄了一組據此比較模型的數字；
+     *    改動 prompt 會讓新舊數字不再可比，而那正是這支腳本唯一的用途。
+     *    代價是本腳本的 prompt 比正式路徑短兩行 —— 對延遲的影響遠小於平台自身
+     *    約 36% 的漂移，但要知道兩者不再逐字相同。
+     */
     prompt: '請針對以下客戶發言，依序給出情緒判斷（陣列長度需與發言則數一致，共 5 則）：\n\n'
       + '1. 你好，我想問一下網路的問題\n'
       + '2. 網路好像有點不穩定\n'
