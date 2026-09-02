@@ -124,9 +124,37 @@ export function buildSuggestionPrompt(input: {
     ? input.knowledgeHits.map(h => `- id: ${h.id}\n  標題：${h.title}\n  內容：${h.snippet}`).join('\n')
     : '（本次知識庫檢索無相關結果）'
 
+  /*
+    顯式封閉清單（specs/005-m2-residual-defects FR-013、research.md #13）。
+
+    ⚠️ 為什麼要多這一段：上方的 `hitsText` 只在每一筆命中的第一行寫 `- id: xxx`，
+       可選集合得由模型自己從一份長文本裡彙整出來。而實測到的杜撰形狀是
+       **憑空造一個長得像 id 的字串**（如 `TC-ACC-002`），不是填錯欄位、不是截斷 ——
+       與「沒有看到一份清單」這個假設一致。這是本 repo 內唯一能動的槓桿；
+       最強的槓桿（建議卡 agent 的 system prompt 與選型）在 iMBrace 後台。
+
+    ⚠️ 集合來源 MUST 與 `whitelistFilter()`（`server/services/blocks/suggestion.ts`）
+       用的那一組**逐字相同**（都是 `knowledgeHits` 的 `id`）。兩者一旦分岔，
+       模型會依清單填一個「白名單擋掉」的 id，杜撰率反而被我們自己製造出來。
+
+    ⚠️ 空集合時 MUST 明講「全部填 null」：既有規則 ② 的「若無合適引用請填 null」
+       是條件句，模型在沒有任何 id 可選時仍會自己造一個來填 —— 那正是 `no-hits`
+       卻仍有 `invalidSopIds` 的來源。
+
+    ⚠️ **這一段會同時改變 `spike:agent-latency`（18 號）與 `spike:citation-quality`
+       （27 號）量到的 prompt**，因為它們刻意共用本函式。所以 FR-017 的**基線
+       MUST 在這段程式碼落地之前取**（tasks.md T041 → T042 是硬相依）——
+       改完再取就沒有「改動前」可比，SC-006 的判準當場失效。
+       基線已於 2026-09-02 18:08–18:30 (UTC) 取得，見 `scripts/spike/out/27-*-baseline-*.json`。
+  */
+  const sopIdRule = input.knowledgeHits.length > 0
+    ? `可用的 sopId（封閉清單，只能從中選，不得自創）：${input.knowledgeHits.map(h => h.id).join('、')}\n\n`
+    : '本次沒有可用的 sopId，所有卡片的 sopId 一律填 null。\n\n'
+
   return `你是客服助理，請針對以下對話產生建議回覆卡（輸出 JSON 陣列）。\n\n`
     + `對話內容：\n${transcript}\n\n`
     + `知識庫檢索結果：\n${hitsText}\n\n`
+    + sopIdRule
     + (input.aiReplies
       ? '⚠️ 此對話目前為 Hybrid 模式，AI 也會自動回覆客戶，你的建議應以補位、避免與 AI 重複為優先。\n\n'
       : '')
