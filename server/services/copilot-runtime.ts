@@ -28,7 +28,7 @@ import { searchConversations } from './imbrace.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic, organizationTopic } from '../state/types.js'
 import { resolveBusinessUnitId } from './business-unit.js'
-import { setJoinedResolver } from './copilot-analysis.js'
+import { setHistoryResolver, setJoinedResolver } from './copilot-analysis.js'
 import {
   borrowCredential,
   hasForegroundOperator,
@@ -92,6 +92,22 @@ export function isConversationJoined(conversationId: string): boolean {
  *    因此直接掃描本檔是否仍有這行呼叫。
  */
 setJoinedResolver(isConversationJoined)
+
+/**
+ * ⚠️ **裝配點，MUST NOT 刪除**（specs/005-m2-residual-defects research.md #10）。恢復補算要撈缺口，
+ *    歷史只有 `messageSource.fetchSince()` 拿得到，而管線不能反向 import 本檔（理由同上）。
+ *    這一行被刪掉時解析器退回「回空陣列＝視為無缺口」：缺口永遠補不到、旗標卻被清掉，
+ *    US2 整個靜默失效而單元測試全綠。`test/contract-guards.test.ts` 因此掃描本檔是否仍有這行。
+ *
+ * 一個對話只屬於一個組織：補算只在仍有人 JOIN 時發生（`resolveJoined` 先擋），
+ * 因此以 `messageSource.isJoined()` 找出正確的 runtime；找不到時（例如只有一個組織在跑）
+ * 退回唯一的那個，仍找不到才回空陣列。
+ */
+setHistoryResolver(async (conversationId, sinceMessageId) => {
+  const all = [...runtimes().values()]
+  const owner = all.find(r => r.messageSource.isJoined(conversationId)) ?? (all.length === 1 ? all[0] : undefined)
+  return owner ? owner.messageSource.fetchSince(conversationId, sinceMessageId) : []
+})
 
 /** 測試與程序關閉用 */
 export async function disposeAllRuntimes(): Promise<void> {

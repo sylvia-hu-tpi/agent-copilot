@@ -240,6 +240,37 @@ export function setJoinedResolver(resolver: JoinedResolver | null): void {
   resolveJoined = resolver ?? (() => true)
 }
 
+// ── 歷史來源（specs/005-m2-residual-defects US2，research.md #10）─────────────────
+
+/**
+ * 「從這個錨點之後的歷史」的解析器 —— 恢復補算要撈缺口用。形狀完全比照 `setJoinedResolver()`：
+ * 管線 MUST NOT import `copilot-runtime.ts`（理由見上），由它在載入時把 `messageSource.fetchSince`
+ * 注入進來。錨點語意沿用 `fetchSince()` 的約定：找不到（已被擠出最近 50 則視窗）或為 `null` 時
+ * **回傳整批**，由呼叫端自行去重（`newCustomerMessagesSince()` 對整條 timeline 做差集）。
+ *
+ * ⚠️ 預設回空陣列＝「視為無缺口」（安全的無作用值，純單元測試不載入 runtime）。
+ *    這也代表裝配那一行漏掉時 US2 會**靜默失效**（缺口永遠補不到、旗標卻被清掉），
+ *    因此 `test/contract-guards.test.ts` 直接掃描 `copilot-runtime.ts` 是否仍呼叫 `setHistoryResolver(`。
+ */
+type HistoryResolver = (conversationId: string, sinceMessageId: string | null) => Promise<Message[]>
+let resolveHistory: HistoryResolver = async () => []
+
+export function setHistoryResolver(resolver: HistoryResolver | null): void {
+  resolveHistory = resolver ?? (async () => [])
+}
+
+/**
+ * 單輪補算的上限：**18 則缺口訊息**（＝ 3 批 × `SENTIMENT_CHUNK_SIZE`，FR-009）。
+ *
+ * ⚠️ 操作定義是「缺口訊息數」不是「批次數」：缺口與本輪新發言**合併後**才切批，切出來的批次數
+ *    不可觀測；新發言本身的批次不計入。單輪 AI 呼叫次數的上界是 ⌈新發言數 ÷ 6⌉ ＋ 3。
+ * ⚠️ 數字的理由是「對齊 `SENTIMENT_CONCURRENCY` 的一波並行」，讓補算那幾輪的延遲與現況同量級。
+ *    並行度一改，這個理由就不再自動成立 —— T050 要求採用新檔位時 MUST 一併複查它。
+ * ⚠️ 超過上限的部分留給後續輪次，由下一次**自然觸發**（新的客戶發言）帶動；
+ *    MUST NOT 自行 `scheduleIncremental()` 續排（「補完為止」的迴圈是這裡唯一會踩爆 003 SC-001 的寫法）。
+ */
+export const SENTIMENT_BACKFILL_MAX_MESSAGES = SENTIMENT_CHUNK_SIZE * 3
+
 // ── 摘要卡 ────────────────────────────────────────────────────────────
 
 async function analyzeSummary(
@@ -327,10 +358,16 @@ async function mergeMarkersOnly(conversationId: string, markers: Message[]): Pro
   await publishBlock(conversationId, 'sentiment', next)
 }
 
+/**
+ * @param gapRemaining 這一輪補算之後**還有沒有**未涵蓋的客戶發言（超過每輪 18 則上限的部分）。
+ *   冷啟動與手動重試不傳（＝`false`）：兩者的輸入都是 `fetchLatest()` 的完整視窗，成功即必然涵蓋，
+ *   不需另判「是否涵蓋到最新」（data-model.md §3 生命週期表）。
+ */
 async function finishSentimentSuccess(
   conversationId: string,
   newPoints: SentimentPoint[],
   markers: Message[],
+  gapRemaining = false,
 ): Promise<void> {
   const next = await updateAnalysisState(conversationId, (state) => {
     const byId = new Map(state.sentimentBlock.timeline.map(e => [e.messageId, e]))
@@ -343,6 +380,8 @@ async function finishSentimentSuccess(
     return {
       // 成功即清除該區塊的失敗批次記憶
       ...clearFailedBatch(state, 'sentiment'),
+      // 005 FR-007／FR-009：補完就清；還有剩就留給下一次自然觸發（不自行續排）
+      sentimentGap: gapRemaining,
       sentimentBlock: {
         status: 'ready' as const,
         timeline,
@@ -409,19 +448,97 @@ async function narrateSentimentTrend(conversationId: string): Promise<void> {
   }
 }
 
-async function analyzeSentimentBatch(conversationId: string, messages: Message[]): Promise<void> {
-  const textMessages = messages.filter(isTextCustomerMessage)
-  const markerMessages = messages.filter(isAttachmentOnlyCustomerMessage)
+/**
+ * 恢復時的補算（specs/005-m2-residual-defects US2，FR-007／FR-008／FR-009）：
+ * 把「情緒時間軸已涵蓋到哪裡」與實際客戶發言的差集併進這一輪的輸入。
+ *
+ * 缺口 ＝ { m ∈ 歷史 : m 是客戶發言 ∧ m 在 `timeline[0]` 之後 ∧ m.id ∉ timeline }（data-model.md §3）。
+ *
+ * ⚠️ **抓取錨點是 `timeline[0].messageId`，MUST NOT 用 `lastCoveredMessageId()`**（research.md #7／#8）。
+ *    後者是高水位：中段批次失敗後，後續成功的批次會把高水位推到缺口**之後**，以它為錨點就永遠
+ *    撈不到中段缺口 —— 每一項任務都做完，卻一則也沒補到，而且把缺口造在尾端的測試會通過。
+ * ⚠️ **左界是 `timeline[0]`，不是對話的第一則訊息**：冷啟動一次只吃最近 `DEFAULT_MESSAGE_LIMIT`（50）則，
+ *    更早的訊息是刻意不看、不是缺口。`fetchSince(timeline[0])` 回的是它之後的訊息；錨點若已被擠出
+ *    視窗，`fetchSince()` 依既有約定回整批 —— 整批都比被擠出去的錨點新，左界仍然成立。
+ * ⚠️ **timeline 為空時**（冷啟動情緒整批失敗）錨點為 `null`，整個視窗的客戶發言都是缺口 ——
+ *    與 `stream.get.ts` 重連快照對 `lastCoveredMessageId() === null` 的處理相同（spec FR-008）。
+ *
+ * ⚠️ **MUST 在 `runBlockDeduped()` 的回呼內呼叫**：併發觸發會合併成 rerun，rerun 重新執行的是
+ *    **第一次**的閉包（同一組 `messages`）。缺口在回呼內從**當下**的時間軸重算，
+ *    rerun 才看得到前一輪剛落地的點 —— 同一則客戶發言只送進 AI 一次（spec Edge Case「補算與新發言同時發生」）。
+ */
+async function resolveSentimentInput(
+  conversationId: string,
+  messages: Message[],
+): Promise<{ input: Message[], gapChecked: boolean, gapRemaining: boolean }> {
+  const state = await useStateStore().getAnalysisState(conversationId)
+  const covered = new Set(state?.sentimentBlock.timeline.map(e => e.messageId) ?? [])
+  /**
+   * 已在時間軸上的訊息不再送：併發時 rerun 重跑的是最新那次觸發的閉包，而它的那批訊息很可能
+   * 已經被前一輪的補算當作缺口撈進來評完了（它們在平台上早就存在）。不濾的話同一則進 AI 兩次。
+   * ⚠️ 這一步不撈歷史、只看手上的 state —— S-1（FR-012）的零成本仍然成立。
+   */
+  const fresh = messages.filter(m => !covered.has(m.id))
+  // S-1（FR-012）：沒有缺口旗標時**不取歷史**，輸入與現況逐字相同（扣掉已評過的）
+  if (state?.sentimentGap !== true) return { input: fresh, gapChecked: false, gapRemaining: false }
 
-  if (textMessages.length === 0) {
+  const freshIds = new Set(fresh.map(m => m.id))
+
+  const anchor = state.sentimentBlock.timeline[0]?.messageId ?? null
+  const history = await resolveHistory(conversationId, anchor)
+  // 歷史依 fetchSince() 的約定由舊到新，取前 18 則就是時間最早的 18 則
+  const gap = newCustomerMessagesSince(state, history).filter(m => !freshIds.has(m.id))
+  const take = gap.slice(0, SENTIMENT_BACKFILL_MAX_MESSAGES)
+
+  // ⚠️ 缺口在前、新發言在後，**不重新排序**：`batchAnchor()` 取最後一則客戶發言當失敗批次記憶的鍵，
+  //    新發言墊在後面，鍵就仍是「這一批新發言的最後一則」—— 與沒有補算時完全相同（FR-006 的門檻語意不變）。
+  return {
+    input: [...take, ...fresh],
+    gapChecked: true,
+    gapRemaining: gap.length > take.length,
+  }
+}
+
+/**
+ * @param opts.backfill 只有增量觸發（`runIncremental()`）帶 `true`：有缺口旗標時把缺口併進輸入。
+ *   冷啟動與手動重試不帶 —— 它們的輸入本來就是完整視窗。
+ */
+async function analyzeSentimentBatch(
+  conversationId: string,
+  messages: Message[],
+  opts: { backfill?: boolean } = {},
+): Promise<void> {
+  if (!opts.backfill && !messages.some(isTextCustomerMessage)) {
     // 純附件輪不呼叫模型，因此不受失敗批次記憶約束 —— 它不會失敗，也不該被擋
+    const markerMessages = messages.filter(isAttachmentOnlyCustomerMessage)
     if (markerMessages.length > 0) await mergeMarkersOnly(conversationId, markerMessages)
     return
   }
 
   await runBlockDeduped(conversationId, 'sentiment', async () => {
-    const anchor = batchAnchor(messages)
-    if (await isBatchAlreadyFailed(conversationId, 'sentiment', anchor)) return
+    // FR-006 的門檻先看「這一批新發言」：同一批剛失敗過就連歷史都不必撈（SC-004 守的是呼叫量，
+    // 但補算在錯誤狀態上每輪多撈一趟歷史同樣沒有意義）
+    const preAnchor = batchAnchor(messages)
+    if (preAnchor !== null && await isBatchAlreadyFailed(conversationId, 'sentiment', preAnchor)) return
+
+    const { input, gapChecked, gapRemaining } = opts.backfill
+      ? await resolveSentimentInput(conversationId, messages)
+      : { input: messages, gapChecked: false, gapRemaining: false }
+
+    const textMessages = input.filter(isTextCustomerMessage)
+    const markerMessages = input.filter(isAttachmentOnlyCustomerMessage)
+
+    if (textMessages.length === 0) {
+      if (markerMessages.length > 0) await mergeMarkersOnly(conversationId, markerMessages)
+      // 撈過歷史而缺口已經不存在（例如 rerun 時前一輪已補完）→ 旗標清掉，下一輪不再撈
+      if (gapChecked && !gapRemaining) {
+        await updateAnalysisState(conversationId, s => (s.sentimentGap === true ? { ...s, sentimentGap: false } : s))
+      }
+      return
+    }
+
+    const anchor = batchAnchor(input)
+    if (anchor !== preAnchor && await isBatchAlreadyFailed(conversationId, 'sentiment', anchor)) return
 
     await beginAnalyzing(conversationId, 'sentiment')
 
@@ -443,9 +560,11 @@ async function analyzeSentimentBatch(conversationId: string, messages: Message[]
         )).value,
       )
       const allPoints: SentimentPoint[] = perBatch.flat()
-      await finishSentimentSuccess(conversationId, allPoints, markerMessages)
+      await finishSentimentSuccess(conversationId, allPoints, markerMessages, gapRemaining)
     }
     catch (err) {
+      // 補算失敗一樣停在 error 等手動重試（FR-010）：finishBlockError() 會把 sentimentGap 設回 true，
+      // 由下一次自然觸發再帶動一次 —— MUST NOT 在這裡自行續排（003 SC-001）
       await finishBlockError(conversationId, 'sentiment', err, anchor)
     }
   })
@@ -581,7 +700,8 @@ export async function runIncremental(
     backgroundInFlight.add(conversationId)
     try {
       await Promise.all([
-        analyzeSentimentBatch(conversationId, newCustomerMessages),
+        // 005 US2：只有情緒帶 backfill —— 補算只擴充情緒的輸入（research.md #11），建議卡照舊只吃這一批
+        analyzeSentimentBatch(conversationId, newCustomerMessages, { backfill: true }),
         // ⚠️ **背景刻意不走兩段式**（004 FR-013）：沒有人在等，第一段的產出沒有人會看到，
         //    而背景並行上限 10 個對話正是這裡省下的量。前景與背景的**不一致是刻意的**，
         //    MUST NOT 為了一致性把它改回 'progressive'（見 `blocks/suggestion.ts` 的 `SuggestionStrategy` 註解）。
@@ -599,7 +719,13 @@ export async function runIncremental(
       history: newCustomerMessages,
       previousSummary: state.summaryBlock.summary ?? undefined,
     }),
-    analyzeSentimentBatch(conversationId, newCustomerMessages),
+    /**
+     * 005 US2：**只有情緒**帶 `backfill`（research.md #11）。三個區塊的錨點語意不同：
+     * 摘要用 `summaryBlock.summary.basedOnMessageId`（`catchUpSummaryIfStale()` 已警告過誤用的後果），
+     * 建議卡是針對「這一批」生成的 —— 把舊發言塞進去會產生一批答非所問的卡。
+     * 情緒是唯一「每則發言各自一個點、缺一點就是缺一點」的區塊，也只有它有缺口問題。
+     */
+    analyzeSentimentBatch(conversationId, newCustomerMessages, { backfill: true }),
     analyzeSuggestions(conversationId, { history: newCustomerMessages, aiReplies }, 'progressive'),
   ])
 }

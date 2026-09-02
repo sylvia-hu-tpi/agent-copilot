@@ -339,6 +339,13 @@ export async function finishBlockError(
     if (block === 'sentiment') {
       return {
         ...state,
+        /**
+         * specs/005-m2-residual-defects US2（FR-007）：這一批的評分點沒有落地，時間軸從此有缺口。
+         * 記成旗標，讓下一次自然觸發（新的客戶發言）帶動補算；沒有缺口的正常路徑零額外往返。
+         * ⚠️ 只有這裡會把它設成 true；清回 false 的三條路（補算補完、冷啟動成功、手動重試成功）
+         *    都在 `copilot-analysis.ts` 的 `finishSentimentSuccess()`。
+         */
+        sentimentGap: true,
         sentimentBlock: {
           ...state.sentimentBlock,
           status: 'error' as const,
