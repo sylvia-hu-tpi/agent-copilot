@@ -71,7 +71,9 @@ server 端心跳會**恆真**地一直把登記續命下去 —— 兜底變成�
 **決定**：`POST /api/connection/beat` 命中 0 筆登記時，以
 `requireActiveBffSession(event)` 取得的 `operatorId`／`orgId`／`accessToken`
 **重新登記一筆**（`connectionId` 由 server 現場另產，維持「不離開 server」）。端點仍不接受、也不回傳任何 token（憲法 1.1），
-身分來源與 `stream.get.ts:85` 的 `registerCredential()` 完全相同。
+身分來源與 `stream.get.ts:48` 的 `requireActiveBffSession(event)` 完全相同（`registerCredential()` 在同檔第 85 行用的就是它）。
+⚠️ 定址時**不先套 TTL 濾網**：逾期但尚未被讀取剔除的舊筆直接刷新、`connectionId` 保留；
+只有讀取點跑過、登記真的消失後才走上面的重新登記（2026-09-02 裁定，contracts §4）。
 
 **理由**：⚠️ **只抄 presence 的數字、不抄它的語意，兜底會自己變成本規格要修的缺陷。**
 `CREDENTIAL_TTL_MS = 45_000` ／ `CREDENTIAL_HEARTBEAT_MS = 20_000` 抄自 presence，
@@ -161,10 +163,13 @@ FR-004 的「同一件事只有一個真相」以**可執行的斷言**呈現，
 **抓取錨點因此是 `timeline[0].messageId`**（不是 `lastCoveredMessageId()`，見 #7）：
 
 ```
-resolveHistory(conversationId, timeline[0].messageId)   // fetchSince 的錨點
-  → newCustomerMessagesSince(state, 那批)               // 對整條 timeline 做差集
-  → 取前 3 批
+resolveHistory(conversationId, timeline[0]?.messageId ?? null)   // fetchSince 的錨點；timeline 為空時 null → 整批
+  → newCustomerMessagesSince(state, 那批)                        // 對整條 timeline 做差集
+  → 取前 18 則（＝3 批；與本輪新發言合併後才切批，新發言的批次不計入上限）
 ```
+
+⚠️ **timeline 為空**（冷啟動情緒整批失敗）時錨點為 `null`，整個視窗都是缺口 ——
+與 `stream.get.ts` 重連快照對 `lastCoveredMessageId() === null` 的處理相同（2026-09-02 裁定，spec FR-008）。
 
 `timeline[0]` 本身已被涵蓋，`fetchSince()` 回傳的是它**之後**的訊息，左界天然成立。
 ⚠️ `fetchSince()` 的既有約定是「錨點找不到（已被擠出最近 50 則視窗）時**回傳整批**，
@@ -221,7 +226,7 @@ AI 呼叫確實不會增加，但**若每輪都撈歷史，就多了一趟 HTTP 
 
 ### #12 補算的上限與 003 SC-001 的關係
 
-**決定**：每輪最多 3 批（FR-009），由**既有的**新發言觸發帶動，
+**決定**：每輪最多 18 則缺口訊息（＝3 批，FR-009；操作定義是訊息數，見 spec），由**既有的**新發言觸發帶動，
 **MUST NOT** 自行 `scheduleIncremental()` 續排下一輪。
 補算失敗時走既有的 `finishBlockError()` → `error` ＋ 失敗批次記憶（FR-010 自動成立）。
 `resolveJoined()` 的門檻在 `runIncremental()` 開頭就擋住已 LEAVE 的對話（FR-011 自動成立）。

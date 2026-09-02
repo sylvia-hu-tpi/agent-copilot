@@ -36,6 +36,8 @@ PollingCredential {
   登記若被 TTL 誤剔（背景分頁的心跳被瀏覽器節流），**下一拍心跳 MUST 把它重建**
   —— 心跳是 **upsert**，不是純更新（research.md #3a）。重建的那一筆 `connectionId` 另產，
   改由心跳的生命週期擁有：連線關閉後心跳停止，≤45 秒由惰性回收清掉。
+  心跳定址時**不先套 TTL 濾網**：逾期但尚未被讀取剔除的舊筆直接刷新、`connectionId` 不變。
+  （正典：[contracts/connection-lifecycle.md §4](./contracts/connection-lifecycle.md)，本段為摘要。）
 - **I-2**：`borrowCredential()` 只回傳 `now - lastSeenAt <= CREDENTIAL_TTL_MS` 的登記；
   逾期者在讀取當下剔除（惰性回收，research.md #4）。
 - **I-3**：`hasForegroundOperator(orgId)` ＝ 該組織**任一**未逾期登記的 `activity === 'foreground'`。
@@ -108,8 +110,13 @@ CopilotAnalysisState {
 |---|---|
 | 情緒批次失敗（`finishBlockError('sentiment')`） | → `true` |
 | 補算後確認已無未涵蓋發言 | → `false` |
-| 補算後仍有剩餘（超過每輪 3 批上限） | 維持 `true` |
-| 冷啟動 / 手動重試成功且涵蓋到最新 | → `false` |
+| 補算後仍有剩餘（超過每輪 18 則上限） | 維持 `true` |
+| 冷啟動成功 / 手動重試成功 | → `false` |
+
+⚠️ **「冷啟動／手動重試成功」不需要另行判定「是否涵蓋到最新」**：兩者的輸入都是
+`fetchLatest()` 的完整視窗（`retryBlock()` 把整份 `history` 交給 `analyzeSentimentBatch()`，
+**不是**只重跑失敗的那一批），成功即必然涵蓋視窗內全部客戶發言；視窗之前的訊息依下方
+左界規則本來就不是缺口。因此這兩條轉移是「成功即清」，實作 MUST NOT 為它另撈一趟歷史。
 
 ### 缺口的定義（FR-007／FR-008，⚠️ 含左界）
 
@@ -134,6 +141,13 @@ CopilotAnalysisState {
 錨點若已被擠出最近 50 則視窗，`fetchSince()` 依既有約定回傳整批，
 而 `newCustomerMessagesSince()` 對整條 timeline 做差集，正好吃得下這個形狀。
 
+⚠️ **timeline 為空時**（冷啟動情緒整批失敗後 `sentimentGap === true`）沒有 `timeline[0]`：
+錨點為 `null`，`resolveHistory(conversationId, null)` 依 `fetchSince()` 既有約定回傳整批，
+整個視窗的客戶發言都是缺口（`newCustomerMessagesSince()` 對空 timeline 做差集＝全部），
+取前 18 則。這與 `stream.get.ts` 重連快照路徑對 `lastCoveredMessageId() === null` 的處理
+**完全相同**，不是新行為（2026-09-02 裁定；spec FR-008）。MUST NOT 寫成「沒有左界就跳過」——
+那會讓 US2 對「冷啟動就失敗」這個最極端的故障情境整個不成立。
+
 ### 不變式
 
 > ⚠️ 本組刻意用 **S-** 前綴。`I-1`～`I-8` 已被
@@ -141,7 +155,9 @@ CopilotAnalysisState {
 > 兩組同號會讓「測試對應哪一條」在 US1／US2 之間指錯人。
 
 - **S-1**：`sentimentGap === false` 時，恢復路徑 **MUST NOT** 取歷史，行為與現況逐字相同（FR-012）。
-- **S-2**：單輪補算的批次數 ≤ 3（＝ `SENTIMENT_CHUNK_SIZE × 3` ＝ 18 則客戶發言，FR-009）。
+- **S-2**：單輪補算的**缺口訊息數 ≤ 18**（＝ `SENTIMENT_CHUNK_SIZE × 3`，FR-009）。
+  ⚠️ 操作定義是「18 則缺口訊息」不是「3 批」：缺口與本輪新發言合併後才切批，
+  新發言本身的批次**不計入**；單輪 AI 呼叫次數的上界是 ⌈新發言數 ÷ 6⌉ ＋ 3。
 - **S-3**：補算 **MUST NOT** 自行排下一輪（FR-009／FR-010，003 SC-001 優先）。
 - **S-4**：補算只擴充 `analyzeSentimentBatch()` 的輸入。摘要與建議卡的輸入不變（research.md #11）。
 
@@ -198,6 +214,10 @@ spec 的 Assumption 排除的是「這個區塊分析到**第幾批**」這種�
 ```
 
 - 只在**模組載入時**讀一次 → 同一行程內不可變 → 掃描必須 per-tier 子行程（research.md #19）。
+- ⚠️ **MUST 驗證為正整數，否則回退 3 並在 stderr 留一行**：`Number('')` 是 `0`、
+  `Number('abc')` 是 `NaN`，交給 `mapWithConcurrency()` 是零並行或永遠不完成的**靜默錯誤**
+  —— 正是本規格要防的那一類。上面那行是示意，實作 MUST 帶驗證。
+- 常數改為 **export**（現況是未匯出的 `const`），否則 T044a 的預設值守衛只能靠行為推測。
 - **守衛**：新增契約測試，斷言 `.env.example` 與 `nuxt.config.ts` 等設定檔
   **MUST NOT** 設定 `SENTIMENT_CONCURRENCY`。這道門只為量測而開，
   被生產環境誤用的症狀是「某個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤訊息。

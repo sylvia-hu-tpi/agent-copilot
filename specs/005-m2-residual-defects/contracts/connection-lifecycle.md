@@ -83,6 +83,11 @@ body: { clientId: string }
 - 前端在 SSE 連線建立後每 `CREDENTIAL_HEARTBEAT_MS`（20 秒）送一次，
   **與有沒有進入對話無關**（分頁開著但還沒點進任何對話時仍須送達）。
 - server 端把 `(orgId, operatorId, clientId)` 命中的**全部**登記的 `lastSeenAt` 更新為 `now`。
+  ⚠️ **定址時 MUST NOT 先套 TTL 濾網**（2026-09-02 裁定）：命中「已逾期但尚未被讀取剔除」的
+  舊筆時直接刷新它 —— 原 `connectionId` 保留，SSE 關閉時的 unsubscribe 仍打得中，
+  I-1 完全成立。回收是惰性的（下方「回收」），逾期筆只有在 `borrowCredential()` 等讀取點
+  跑過之後才會真的消失；只有那時心跳才會命中 0 筆而走下一條的 upsert。
+  先套濾網再比對的寫法會讓每一次漏拍都製造一筆孤兒登記，I-1 的例外窗口白白變大。
 - **命中 0 筆時 MUST 重新登記一筆**（upsert 語意），身分與憑證取自
   `requireActiveBffSession(event)` —— 與 `stream.get.ts` 同一個來源，
   端點**仍不接受、也不回傳任何 token**（憲法 1.1）。
@@ -93,6 +98,9 @@ body: { clientId: string }
   由惰性回收清掉 —— 與 SC-002 對「異常中斷」已接受的保證是同一個，不是新的洩漏類別。
 
 ### ⚠️ 心跳 MUST 是 upsert，MUST NOT 是「純更新」
+
+> **本節是這段論證的正典。** spec FR-005a 與 Clarifications、`data-model.md` §1、
+> `tasks.md` 必讀 3a 都是它的摘要 —— 改動時以這裡為準，並 grep 其餘四處。
 
 **這是本契約最容易照抄錯的一行。** 45 秒 TTL ／ 20 秒心跳這組數字抄自 presence
 （`PRESENCE_TTL_MS`／`PRESENCE_HEARTBEAT_MS`），但 presence 真正的安全網不是那組數字，
@@ -154,7 +162,7 @@ hasForegroundOperator(orgId)
 
 | # | 不變式 | 對應 |
 |---|---|---|
-| I-1 | 一條 SSE 連線 ⟺ 恰好一筆憑證登記。**心跳漏拍導致登記被 TTL 剔除時，下一拍心跳 MUST 把它重建**（upsert，見 §4）；重建後該筆改由心跳擁有，連線關閉後 ≤45 秒由 TTL 回收 | FR-001、FR-005a |
+| I-1 | 一條 SSE 連線 ⟺ 恰好一筆憑證登記。**心跳漏拍導致登記被 TTL 剔除時，下一拍心跳 MUST 把它重建**（upsert，見 §4）。⚠️ **唯一例外**：重建的那一筆 `connectionId` 另產、不屬於任何 SSE 連線的關閉路徑，改由心跳擁有，連線關閉後 ≤45 秒由 TTL 回收（spec FR-005 第二句）。逾期但尚未被讀取剔除的舊筆由心跳直接刷新、不重建，因此例外只在「讀取點已跑過」之後才出現 | FR-001、FR-005、FR-005a |
 | I-2 | 逾期登記不被 `borrowCredential()` 回傳 | FR-005a、SC-002 |
 | I-3 | `hasForegroundOperator()` ＝ 任一登記為前景 | FR-002 |
 | I-4 | `watchers.length === pipeline.refs`（單副本） | **FR-004** |
