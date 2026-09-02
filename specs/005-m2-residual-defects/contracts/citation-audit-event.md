@@ -85,8 +85,10 @@ id.length <= 64 ? id : `sha256:${sha256(id).slice(0, 16)}+${id.length}`
 
 ⚠️ 六值 MUST 與 `settleNone()` 的每一個進入點一一對應：`hits.length === 0` → `no-hits`、
 `cards.length === 0` 且未失敗 → `no-cards` 或 `discarded`（以 `cardsReturned` 分）、
-`catch` → `failed`。判定順序：先 `failed`，再 `no-hits`，再依 `cardsReturned`／`cardsKept`。
-`failed` 與 `no-cards` 的 `hitCount === 0` 情形一律記 `no-hits`（沒有命中就沒有引用可談）。
+`catch` → `failed`。判定順序（`deriveCitationOutcome()`）：**先 `hitCount === 0` → `no-hits`**
+（沒有命中就沒有引用可談，失敗與回空也一樣），再 `failed`，再 `cardsReturned === 0` → `no-cards`，
+再 `cardsKept === 0` → `discarded`，最後依保留的卡有沒有帶 `sopId` 分 `cited`／`not-cited`。
+單段（背景、命中已在手）失敗會轉 `error` 而非靜默 `none`，但同樣發 `failed` —— 個案排查要查得到。
 
 > **SC-005 的判準**：任何一次「未引用知識庫」的建議卡，
 > 在**不重跑分析**的情況下，由這一筆事件的 `outcome` 即可判定屬於 ①～⑤ 哪一種。

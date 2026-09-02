@@ -215,16 +215,16 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T034 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 `outcome` 的**六值**判定：`cited`／`no-hits`／`not-cited`／`discarded`／`no-cards`／`failed` 各造一組輸入（contracts/citation-audit-event.md §2），並驗判定順序（先 `failed`、再 `no-hits`；`hitCount === 0` 的失敗記 `no-hits`）。⚠️ `discarded`／`no-cards`／`failed` 三組 MUST 順帶斷言 **FR-016 的靜默行為未變**：`status` 仍是 `ready`、`citation` 落 `'none'`、不重試、不轉 `error`。⚠️ `no-cards`（模型回 0 張／整批未過 Zod）與 `failed`（第二段呼叫失敗）是 2026-09-02 補的：原本四值對這兩種「未引用」無值可填，SC-005 的「任何一次」對它們不成立
-- [ ] T035 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 PII 型別守：以型別層測試（`@ts-expect-error`）確認 `text`／`title`／`snippet` 塞不進事件；並驗證 `invalidSopIds` **有**被保留。⚠️ 另加**長度收斂**測試（contracts §1）：≤64 字元原樣保留、>64 字元改記 `sha256:<前16碼>+<原長度>` 且原字串不出現在輸出裡——型別守擋不到這個欄位，這條是它唯一的機械式保證
-- [ ] T036 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 FR-015a 的降級：**開檔**失敗時不拋出、不中止、標準輸出的事件仍完整、stderr 留下一行可辨識的原因
+- [x] T034 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 `outcome` 的**六值**判定：`cited`／`no-hits`／`not-cited`／`discarded`／`no-cards`／`failed` 各造一組輸入（contracts/citation-audit-event.md §2），並驗判定順序（先 `failed`、再 `no-hits`；`hitCount === 0` 的失敗記 `no-hits`）。⚠️ `discarded`／`no-cards`／`failed` 三組 MUST 順帶斷言 **FR-016 的靜默行為未變**：`status` 仍是 `ready`、`citation` 落 `'none'`、不重試、不轉 `error`。⚠️ `no-cards`（模型回 0 張／整批未過 Zod）與 `failed`（第二段呼叫失敗）是 2026-09-02 補的：原本四值對這兩種「未引用」無值可填，SC-005 的「任何一次」對它們不成立
+- [x] T035 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 PII 型別守：以型別層測試（`@ts-expect-error`）確認 `text`／`title`／`snippet` 塞不進事件；並驗證 `invalidSopIds` **有**被保留。⚠️ 另加**長度收斂**測試（contracts §1）：≤64 字元原樣保留、>64 字元改記 `sha256:<前16碼>+<原長度>` 且原字串不出現在輸出裡——型別守擋不到這個欄位，這條是它唯一的機械式保證
+- [x] T036 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 FR-015a 的降級：**開檔**失敗時不拋出、不中止、標準輸出的事件仍完整、stderr 留下一行可辨識的原因
 
 ### Implementation for User Story 3 —— 第一段：稽核事件（改 prompt 之前）
 
-- [ ] T037 [US3] 新增 `server/utils/citation-audit.ts`：定義 `CitationAuditEvent` 型別（含 `text?: never` 等型別守）與 `emitCitationAudit()`；`invalidSopIds` 逐筆施加**長度收斂**（>64 字元改記 `sha256:<前16碼>+<原長度>`，理由寫進註解）；標準輸出寫一行 JSON（NDJSON）。⚠️ 檔案放在**管線外**，理由寫進檔頭（動工前必讀 #9）
-- [ ] T038 [US3] 在 `server/utils/citation-audit.ts` 加入額外落點（JSONL，環境變數開啟、**預設不啟用**）：建目錄／開檔包在 try/catch，失敗降級為只寫標準輸出並在 stderr 留一行。⚠️ 預設值 MUST NOT 是相對路徑（容器的 WORKDIR 屬 root 卻跑非 root，bind mount 會遮蔽 `chown`）
-- [ ] T039 [US3] 在 `server/services/blocks/suggestion.ts` 的**三條**落定路徑發出事件：前景兩段式的第二段落定、背景單段落定、「命中已在手」的單段落定。⚠️ **落定包含失敗**：`settleNone()` 的每一個進入點（`hits.length === 0`、`cards.length === 0`、`catch`）都是落定，`failed`／`no-cards` 只會從那裡發出；只在 `publishSuggestionReady()` 發事件會漏掉這兩值。⚠️ 漏掉任一條會讓該路徑的個案永遠查不到（SC-005 對它不成立）
-- [ ] T040 [US3] 新增 `scripts/spike/27-citation-quality.ts` 與 `npm run spike:citation-quality`：沿用 `spike:progressive` 的骨架（走生產路徑的 `runColdStart()`），收集稽核事件並聚合出整體杜撰率**與逐對話分布**（分母 ＝ `hitCount > 0` 且 `outcome ∉ { no-cards, failed }`，contracts §5）。⚠️ 口徑固定為 **15 段對話 × 3 輪 ＝ 45 次帶命中的生成**，輪次間輪換對話順序（FR-017）——每段對話固定 3 個樣本，是「逐對話分布」看得出集中性的最小條件
+- [x] T037 [US3] 新增 `server/utils/citation-audit.ts`：定義 `CitationAuditEvent` 型別（含 `text?: never` 等型別守）與 `emitCitationAudit()`；`invalidSopIds` 逐筆施加**長度收斂**（>64 字元改記 `sha256:<前16碼>+<原長度>`，理由寫進註解）；標準輸出寫一行 JSON（NDJSON）。⚠️ 檔案放在**管線外**，理由寫進檔頭（動工前必讀 #9）
+- [x] T038 [US3] 在 `server/utils/citation-audit.ts` 加入額外落點（JSONL，環境變數開啟、**預設不啟用**）：建目錄／開檔包在 try/catch，失敗降級為只寫標準輸出並在 stderr 留一行。⚠️ 預設值 MUST NOT 是相對路徑（容器的 WORKDIR 屬 root 卻跑非 root，bind mount 會遮蔽 `chown`）
+- [x] T039 [US3] 在 `server/services/blocks/suggestion.ts` 的**三條**落定路徑發出事件：前景兩段式的第二段落定、背景單段落定、「命中已在手」的單段落定。⚠️ **落定包含失敗**：`settleNone()` 的每一個進入點（`hits.length === 0`、`cards.length === 0`、`catch`）都是落定，`failed`／`no-cards` 只會從那裡發出；只在 `publishSuggestionReady()` 發事件會漏掉這兩值。⚠️ 漏掉任一條會讓該路徑的個案永遠查不到（SC-005 對它不成立）
+- [x] T040 [US3] 新增 `scripts/spike/27-citation-quality.ts` 與 `npm run spike:citation-quality`：沿用 `spike:progressive` 的骨架（走生產路徑的 `runColdStart()`），收集稽核事件並聚合出整體杜撰率**與逐對話分布**（分母 ＝ `hitCount > 0` 且 `outcome ∉ { no-cards, failed }`，contracts §5）。⚠️ 口徑固定為 **15 段對話 × 3 輪 ＝ 45 次帶命中的生成**，輪次間輪換對話順序（FR-017）——每段對話固定 3 個樣本，是「逐對話分布」看得出集中性的最小條件
 - [ ] T041 [US3] **取基線**：`npm run spike:agent-prompts` 後執行 `npm run spike:citation-quality`（15 段對話 × 3 輪 ＝ n=45，FR-017；實跑約 21 分鐘），把結果存進 `scripts/spike/out/` 並記下執行時段。⚠️ 這一步 MUST 在 T042 之前完成
 
 ### Implementation for User Story 3 —— 第二段：封閉清單（基線之後）
