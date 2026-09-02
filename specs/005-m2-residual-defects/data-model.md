@@ -33,6 +33,9 @@ PollingCredential {
 ### 不變式
 
 - **I-1**：一條 SSE 連線 ⟺ 恰好一筆登記。連線建立時新增，`stream.onClosed()` 時移除。
+  登記若被 TTL 誤剔（背景分頁的心跳被瀏覽器節流），**下一拍心跳 MUST 把它重建**
+  —— 心跳是 **upsert**，不是純更新（research.md #3a）。重建的那一筆 `connectionId` 另產，
+  改由心跳的生命週期擁有：連線關閉後心跳停止，≤45 秒由惰性回收清掉。
 - **I-2**：`borrowCredential()` 只回傳 `now - lastSeenAt <= CREDENTIAL_TTL_MS` 的登記；
   逾期者在讀取當下剔除（惰性回收，research.md #4）。
 - **I-3**：`hasForegroundOperator(orgId)` ＝ 該組織**任一**未逾期登記的 `activity === 'foreground'`。
@@ -116,12 +119,31 @@ CopilotAnalysisState {
 `DEFAULT_MESSAGE_LIMIT = 50` 則，更早的訊息是刻意不看的、不是缺口
 （理由與後果見 research.md #8）。
 
+### 抓取範圍（⚠️ 與缺口的「集合定義」是兩件事）
+
+上面定義的是缺口**是哪些訊息**；這裡定義**要去撈哪一段歷史**才看得到它們。
+
+> **抓取錨點 ＝ `timeline[0].messageId`**，即 `resolveHistory(conversationId, timeline[0].messageId)`。
+
+⚠️ **MUST NOT 用 `lastCoveredMessageId()` 當錨點。** 它回傳 timeline 的**最後**一筆（高水位）；
+中段批次失敗後，後續成功的批次會把高水位推到缺口**之後**，以它為錨點就永遠撈不到中段缺口
+—— US2 的每一項任務都做完，卻一則也沒補到，而且沒有任何東西會變紅
+（測試若把缺口造在尾端也會通過，見 tasks T021 的情境要求）。
+
+`timeline[0]` 本身已被涵蓋，`fetchSince()` 回的是它**之後**的訊息，左界天然成立。
+錨點若已被擠出最近 50 則視窗，`fetchSince()` 依既有約定回傳整批，
+而 `newCustomerMessagesSince()` 對整條 timeline 做差集，正好吃得下這個形狀。
+
 ### 不變式
 
-- **I-7**：`sentimentGap === false` 時，恢復路徑 **MUST NOT** 取歷史，行為與現況逐字相同（FR-012）。
-- **I-8**：單輪補算的批次數 ≤ 3（＝ `SENTIMENT_CHUNK_SIZE × 3` ＝ 18 則客戶發言，FR-009）。
-- **I-9**：補算 **MUST NOT** 自行排下一輪（FR-009／FR-010，003 SC-001 優先）。
-- **I-10**：補算只擴充 `analyzeSentimentBatch()` 的輸入。摘要與建議卡的輸入不變（research.md #11）。
+> ⚠️ 本組刻意用 **S-** 前綴。`I-1`～`I-8` 已被
+> [contracts/connection-lifecycle.md §6](./contracts/connection-lifecycle.md) 的連線不變式佔用，
+> 兩組同號會讓「測試對應哪一條」在 US1／US2 之間指錯人。
+
+- **S-1**：`sentimentGap === false` 時，恢復路徑 **MUST NOT** 取歷史，行為與現況逐字相同（FR-012）。
+- **S-2**：單輪補算的批次數 ≤ 3（＝ `SENTIMENT_CHUNK_SIZE × 3` ＝ 18 則客戶發言，FR-009）。
+- **S-3**：補算 **MUST NOT** 自行排下一輪（FR-009／FR-010，003 SC-001 優先）。
+- **S-4**：補算只擴充 `analyzeSentimentBatch()` 的輸入。摘要與建議卡的輸入不變（research.md #11）。
 
 ### ⚠️ 為什麼這不是被禁止的「第四種狀態」
 
@@ -161,6 +183,9 @@ spec 的 Assumption 排除的是「這個區塊分析到**第幾批**」這種�
   **MUST NOT** 加任何前端欄位（spec Clarifications Q3 的裁定）。
 - **P-2**：不含 PII（憲法 1.5）。型別上把 `text`／`title`／`snippet` 標成 `never`，
   讓「順手記進去」在 `npm run typecheck` 就過不了（research.md #17）。
+  ⚠️ 型別守擋不到 `invalidSopIds`（它是 `string[]`，內容由模型自由生成），
+  因此該欄位另有一道**機械式**收斂：> 64 字元者改記雜湊，見
+  [contracts/citation-audit-event.md §1](./contracts/citation-audit-event.md)。
 - **P-3**：**完整集合 MUST 出現在標準輸出**；額外落點只能是它的拷貝（FR-015）。
 
 ---

@@ -31,7 +31,9 @@
 ### #2 心跳與活躍度的定址：`(orgId, operatorId, clientId)` 命中的**全部**登記
 
 **決定**：`setCredentialActivity()` 與新的存活心跳都以 `(orgId, operatorId, clientId)` 定址，
-並更新**所有命中的登記**，而不是「取一筆」。找不到任何一筆時 no-op。
+並更新**所有命中的登記**，而不是「取一筆」。
+存活心跳找不到任何一筆時**重新登記**（upsert，見 #3a）；
+`setCredentialActivity()` 找不到時 no-op（活躍度沒有登記可依附時本來就無事可做）。
 
 **理由**：承 #1，複製分頁會讓兩條連線共用 `clientId`。若心跳只更新「其中一筆」，
 另一筆會在 TTL 到期後被回收 —— 而那條連線還活著。更新全部命中者是安全的：
@@ -63,6 +65,33 @@ server 端心跳會**恆真**地一直把登記續命下去 —— 兜底變成�
 **否決的替代方案**：把 `presence.post.ts` 的 `conversationId` 改成 optional ——
 那支路由的 `state`／`joined`／`visible` 三個欄位都以「對某個對話」為前提，
 拿掉對話之後這些欄位沒有意義，會讓一支語意清楚的端點變成兩件事的混合體。
+
+### #3a 心跳是 **upsert**：命中 0 筆時重新登記，MUST NOT no-op
+
+**決定**：`POST /api/connection/beat` 命中 0 筆登記時，以
+`requireActiveBffSession(event)` 取得的 `operatorId`／`orgId`／`accessToken`
+**重新登記一筆**（`connectionId` 由 server 現場另產，維持「不離開 server」）。端點仍不接受、也不回傳任何 token（憲法 1.1），
+身分來源與 `stream.get.ts:85` 的 `registerCredential()` 完全相同。
+
+**理由**：⚠️ **只抄 presence 的數字、不抄它的語意，兜底會自己變成本規格要修的缺陷。**
+`CREDENTIAL_TTL_MS = 45_000` ／ `CREDENTIAL_HEARTBEAT_MS = 20_000` 抄自 presence，
+但 presence 真正的安全網是 `reportViewing()`（`server/services/presence.ts:55`）是 **upsert**
+—— 項目被 TTL 清掉後，下一拍心跳把它重建。
+
+心跳若寫成「找不到就 no-op」，**背景分頁會自己觸發原始缺陷**：
+瀏覽器對隱藏分頁的計時器有節流（Chrome 在分頁隱藏數分鐘後壓到約每分鐘一次），
+60 秒 > 45 秒 → 登記被 TTL 剔除 → 而 SSE 連線**沒有斷**、不會有重連、
+沒有任何路徑會重新登記 → 那條連線的憑證永遠回不來。
+症狀與 US1 的原始缺陷逐字相同：畫面正常、不報錯、訊息不再進來。
+
+**否決的替代方案**：
+- **把 `CREDENTIAL_TTL_MS` 拉長到 150 秒**（大於節流週期）—— 異常中斷後已登出的憑證
+  會被繼續拿去輪詢最長 2.5 分鐘，把 FR-005a 要關的窗口反而拉大；
+  而 150 這個數字是在賭「Chrome 的節流不會比一分鐘更慢」，那是實作細節不是規範，
+  改變時不會有任何訊號 —— 用一個不會報錯的假設換另一個。
+- **前端改用不受節流的訊號**（Web Worker 計時器、`visibilitychange` ＋ `sendBeacon`）——
+  Chrome 對背景分頁的 Worker 計時器同樣會節流，各瀏覽器保證不一致，
+  前端複雜度上升而假設沒有變可靠。
 
 ### #4 過期回收用惰性剔除，不加計時器
 
@@ -112,15 +141,35 @@ FR-004 的「同一件事只有一個真相」以**可執行的斷言**呈現，
 
 ### #7 缺口的判定基準已經存在，缺的是「用在哪條路徑上」
 
-**決定**：沿用既有的 `lastCoveredMessageId()` 與 `newCustomerMessagesSince()`
-（`copilot-analysis.ts`）—— 它們正是 FR-007 要的「以情緒時間軸涵蓋到哪裡為基準」。
-本規格要做的是把同一個判準接到**恢復路徑**（`runIncremental()` 的情緒輸入）上；
-今天它只用在 `stream.get.ts` 的重連快照路徑。
+**決定**：缺口的**篩選**沿用既有的 `newCustomerMessagesSince()`（`copilot-analysis.ts:676`）
+—— 它對整條 timeline 的 `messageId` 集合做差集，正是 FR-007 要的
+「以情緒時間軸涵蓋到哪裡為基準」。本規格要做的是把同一個判準接到**恢復路徑**
+（`runIncremental()` 的情緒輸入）上；今天它只用在 `stream.get.ts` 的重連快照路徑。
+
+⚠️ **`lastCoveredMessageId()` MUST NOT 被拿來當補算的抓取錨點。**
+它回傳的是 timeline 的**最後**一筆（高水位），而中段批次失敗後，
+後續成功的批次會把高水位推到缺口**之後** —— 以它為錨點呼叫 `fetchSince()`
+就永遠取不到中段的缺口，US2 的所有任務做完仍然一則都補不到，而且不報錯。
+抓取範圍見 #8 與 data-model.md §3。
+（它在重連快照路徑上是對的，因為那條路徑要的正是「比高水位更新的訊息」。）
 
 ### #8 缺口的**左界**是時間軸的第一個點，不是對話的第一則訊息
 
 **決定**：補算範圍 = 「時間軸第一個點之後、尚未涵蓋的客戶發言」，
 **MUST NOT** 回頭補時間軸起點之前的訊息。
+
+**抓取錨點因此是 `timeline[0].messageId`**（不是 `lastCoveredMessageId()`，見 #7）：
+
+```
+resolveHistory(conversationId, timeline[0].messageId)   // fetchSince 的錨點
+  → newCustomerMessagesSince(state, 那批)               // 對整條 timeline 做差集
+  → 取前 3 批
+```
+
+`timeline[0]` 本身已被涵蓋，`fetchSince()` 回傳的是它**之後**的訊息，左界天然成立。
+⚠️ `fetchSince()` 的既有約定是「錨點找不到（已被擠出最近 50 則視窗）時**回傳整批**，
+由呼叫端自行去重」（`server/sources/message-fetch.ts`）——
+`newCustomerMessagesSince()` 對整條 timeline 去重，正好吃得下這個回傳形狀，不需額外處理。
 
 **理由**：⚠️ 這是本組需求最容易做錯的地方。冷啟動一次只吃最近
 `DEFAULT_MESSAGE_LIMIT = 50` 則（`server/sources/message-fetch.ts`），

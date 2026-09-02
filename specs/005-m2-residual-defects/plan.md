@@ -10,11 +10,15 @@
 
 - **US1（雙分頁）**：憑證登記與 `session.watchers` 的唯一性單位由「客服身分」改為
   **server 端產生的 `connectionId`**（research.md #1），並補上**連線層級**的心跳＋TTL 存活兜底
-  （新端點 `POST /api/connection/beat`，#3）。FR-004 以一條可執行的等式
+  （新端點 `POST /api/connection/beat`，#3）。⚠️ 該心跳是 **upsert**：命中 0 筆時重新登記
+  （#3a）—— 只抄 presence 的 45／20 秒而不抄它的 upsert 語意，背景分頁的計時器節流
+  會讓兜底自己重現 US1 的原始缺陷。FR-004 以一條可執行的等式
   `watchers.length === pipeline.refs` 驗收。⚠️ **`leave.post.ts` 一行不動** —— 主動離開與關閉分頁
   今天天然是兩條路（#6），本計畫只改後者，並補一條守衛防止日後被「統一」。
-- **US2（補算）**：缺口的判準沿用既有的 `lastCoveredMessageId()`／`newCustomerMessagesSince()`，
-  改的是**把它接到恢復路徑上**（#7）；歷史經 `setHistoryResolver()` 注入（比照 `setJoinedResolver()`，#10）；
+- **US2（補算）**：缺口的**篩選**沿用既有的 `newCustomerMessagesSince()`（對整條 timeline 做差集），
+  改的是**把它接到恢復路徑上**（#7）；⚠️ 抓取錨點是 **`timeline[0].messageId`**，
+  **不是** `lastCoveredMessageId()` —— 後者是高水位，中段失敗後會被後續成功批次推過缺口，
+  以它為錨點就永遠撈不到中段缺口（data-model §3「抓取範圍」）；歷史經 `setHistoryResolver()` 注入（比照 `setJoinedResolver()`，#10）；
   以 `CopilotAnalysisState.sentimentGap` 這個布林讓無缺口的正常路徑**零額外往返**（#9）；
   ⚠️ 缺口的**左界是時間軸第一個點**，不回頭補冷啟動 50 則視窗之前的訊息（#8）。
 - **US3（引用品質）**：`buildSuggestionPrompt()` 加一份**顯式封閉清單**（#13），
@@ -51,12 +55,16 @@
 
 **Constraints**:
 - 補算 MUST NOT 讓 AI 呼叫量脫離「客戶發言次數」這個上界（003 SC-001）。
-- 存活兜底的訊號 MUST 由**對側**（瀏覽器）發出 —— server 端心跳在半開連線下恆真。
+- 存活兜底的訊號 MUST 由**對側**（瀏覽器）發出 —— server 端心跳在半開連線下恆真；
+  且該心跳 MUST 是 **upsert**（命中 0 筆時重新登記），否則背景分頁的計時器節流
+  會讓兜底自己重現 US1 的原始缺陷（research.md #3a）。
 - 稽核證據 MUST 落在生產路徑、MUST 不含 PII、標準輸出 MUST 是完整集合。
-- 量測樣本 MUST NOT 並行取得（並行度正是被量的變數），實跑約 1 小時。
+- 量測樣本 MUST NOT 並行取得（並行度正是被量的變數）：FR-018 的掃描約 1 小時，
+  FR-017 的基線與改動後各約 21 分鐘，量測總時數約 **1 小時 40 分**。
 
-**Scale/Scope**: 4 則 User Story、21 條 FR（含 5 條 clarify 新增）、8 條 SC。
-影響 7 個既有檔案、新增 4 個檔案（1 支 route、1 支 util、2 支 spike）。
+**Scale/Scope**: 4 則 User Story、**26 條 FR**（FR-001～FR-021 ＋ 5 條 clarify 新增的
+`a` 尾綴：FR-005a／006a／015a／018a／020a）、**9 條 SC**（SC-001～008 ＋ SC-002a）。
+影響 **14 個既有檔案**、新增 **7 個檔案**（1 支 route、1 支 util、2 支 spike、3 支測試）。
 
 ## Constitution Check
 
@@ -64,7 +72,7 @@
 
 | 條 | 適用性 | 檢核結果 |
 |---|---|---|
-| **一、安全邊界** | 動到憑證登記；新增稽核日誌 | ✅ 通過。1.1：新端點 body 只有 `clientId`、回應只有 `{ ok: true }`，**不回傳也不接受任何 token**；`accessToken` 仍只存在 server 端 `Map`。1.3：借用的憑證仍**只用於唯讀輪詢**，本規格不新增任何寫入路徑；`user_id` 是 **AI 服務的 client user id、與客服身分無關**，不是操作歸屬（research.md #21）。1.5：稽核事件不含訊息全文與知識庫標題，且以**型別守**（`text?: never`）而非 review 保證；`invalidSopIds` 是模型憑空造的字串、非客戶內容，理由已寫進契約 |
+| **一、安全邊界** | 動到憑證登記；新增稽核日誌 | ✅ 通過。1.1：新端點 body 只有 `clientId`、回應只有 `{ ok: true }`，**不回傳也不接受任何 token**；`accessToken` 仍只存在 server 端 `Map`。1.3：借用的憑證仍**只用於唯讀輪詢**，本規格不新增任何寫入路徑；`user_id` 是 **AI 服務的 client user id、與客服身分無關**，不是操作歸屬（research.md #21）。1.5：稽核事件不含訊息全文與知識庫標題，且以**型別守**（`text?: never`）而非 review 保證；`invalidSopIds` 是模型憑空造的字串、非客戶內容，且另有**機械式**收斂（> 64 字元改記雜湊）而非只靠論證，理由與界的選法寫進契約 |
 | **二、外部依賴的抽象邊界** | `AIProvider`／`KnowledgeProvider`／`MessageSource`／`StateStore` 簽章 | ✅ 通過。四個 provider 介面**全部不變**。`setHistoryResolver()` 是既有 `setJoinedResolver()` 的同型注入點（用來繞開「管線不得 import `copilot-runtime`」的守衛），**不是新的 provider 介面** —— 2.4 明文禁止對已定案依賴另包一層，這裡包的是相依方向，不是依賴本身。`user_id` 的取得與快取關在防腐層 `imbrace.ts`（SDK 繞道不得散落到 route） |
 | **三、Copilot 不得拖垮主線** | US1 正是主線自己這一側破的；FR-015a 的降級 | ✅ 通過，且是 US1 的存在理由：3.1「AI 故障時客服 MUST 還能看對話」——雙分頁缺陷讓客服**連新訊息都收不到**，破口在主線。3.2：補算失敗維持該區塊 `error` ＋ 手動重試，其他區塊照常。**FR-015a 是 3.1 的一個反例的直接對策**：日誌落不了地 MUST NOT 賠掉服務（開檔失敗降級為只寫標準輸出）。3.3：不新增任何刻意阻斷情境，封閉集合不變 |
 | **四、AI 輸出必須可驗證** | 4.3 的白名單流程 | ✅ 通過。FR-013 強化的正是 4.3 流程裡「**要求模型只能從 hits 的 id 中選擇**」那一步（把散在每筆 hit 的 id 收成一份顯式封閉清單）；4.3 的「後端再驗證一次」＝ `whitelistFilter()`，**一行不改**（FR-014）。4.2 的 Zod 驗證順序不變。4.4：`confidence` 的 null 規則不動。4.5：不改 `requiresData` 的處置 |
@@ -94,11 +102,11 @@
 ```text
 specs/005-m2-residual-defects/
 ├── plan.md                            # 本檔
-├── research.md                        # Phase 0：21 項技術決策
+├── research.md                        # Phase 0：22 項技術決策
 ├── data-model.md                      # Phase 1：四項既有形狀的修改
 ├── quickstart.md                      # Phase 1：驗證指南
 ├── contracts/
-│   ├── connection-lifecycle.md        # US1：連線／分頁／客服三層與八條不變式
+│   ├── connection-lifecycle.md        # US1：連線／分頁／客服三層與八條不變式（I-1～I-8）
 │   └── citation-audit-event.md        # US3：具名事件（＝ SC-005 的驗收形式）
 ├── checklists/requirements.md         # 既有
 ├── spec.md                            # 既有
@@ -128,14 +136,16 @@ server/
     └── citation-audit.ts              # 🆕 US3：具名事件（⚠️ 管線外，量測腳本 import 得到）
 
 app/
-├── stores/stream.ts                   # ✏️ US1：連線建立後啟動 20 秒連線層級心跳
-└── composables/useConversationView.ts # ✏️（若心跳掛在此）
+└── stores/stream.ts                   # ✏️ US1：連線建立後啟動 20 秒連線層級心跳
+                                       #    （⚠️ 刻意不掛在 useConversationView.ts —— 那支的
+                                       #      presence 心跳以「進入某個對話」為前提，
+                                       #      而連線心跳必須與有沒有進入對話無關）
 
 test/
 ├── contract-guards.test.ts            # ✏️ sentimentGap 不得進 shared/；env 不得設並行度；LEAVE 不得併入連線計數
 ├── connection-counting.test.ts        # 🆕 US1：八條不變式
 ├── sentiment-backfill.test.ts         # 🆕 US2：缺口、左界、3 批上限、零成本
-└── citation-audit.test.ts             # 🆕 US3：四種 outcome、PII 型別守、開檔失敗降級
+└── citation-audit.test.ts             # 🆕 US3：四種 outcome、PII 型別守與長度收斂、開檔失敗降級
 
 scripts/spike/
 ├── 26-sentiment-concurrency.ts        # 🆕 US4：檔位掃描（per-tier 子行程、三輪輪換）

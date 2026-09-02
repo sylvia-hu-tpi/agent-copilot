@@ -44,6 +44,12 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 3. **MUST NOT 用 server 端的 `stream.heartbeat` 當存活訊號**（research.md #3）。
    它證明的是「server 還認為連線在」，半開連線下**恆真** —— 兜底變成永不觸發的裝飾。
    存活訊號必須由對側（瀏覽器）發出。
+3a. **心跳 MUST 是 upsert：命中 0 筆時重新登記，MUST NOT no-op**（research.md #3a）。
+   45／20 秒這組數字抄自 presence，但 presence 真正的安全網是 `reportViewing()` 是 upsert
+   —— 項目被 TTL 清掉後下一拍會重建。**只抄數字不抄語意，背景分頁會自己重現本規格要修的缺陷**：
+   瀏覽器把隱藏分頁的計時器節流到約每分鐘一次（> 45 秒 TTL）→ 登記被剔除 →
+   而 SSE 連線**沒有斷、不會重連**，沒有任何路徑會重新登記 → 那條連線的憑證永遠回不來。
+   症狀與原始缺陷逐字相同：畫面正常、不報錯、訊息不再進來。
 4. **`leave.post.ts` 一行不動**（research.md #6）。主動離開走
    `removeJoinedConversation()` ＋ 廣播 `control.updated`，**完全不經 `watchers`**，
    與連線計數今天就是分開的。把兩者「統一」會讓 003 T032a 已驗過的行為靜默退步。
@@ -51,6 +57,11 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
    冷啟動一次只吃最近 `DEFAULT_MESSAGE_LIMIT`（50）則，更早的訊息是**刻意不看**、不是缺口。
    寫成「全量歷史 − 已涵蓋」的後果是長對話每輪補一點、永遠補不完，
    每次客戶發言都多打 3 批 AI —— 測試全綠、畫面正常，只有帳單知道。
+5a. **抓取錨點是 `timeline[0].messageId`，MUST NOT 用 `lastCoveredMessageId()`**
+   （research.md #7／#8、data-model.md §3「抓取範圍」）。後者回傳 timeline 的**最後**一筆
+   （高水位）—— 中段批次失敗後，後續成功的批次會把高水位推到缺口**之後**，
+   以它為錨點就**永遠撈不到中段缺口**：US2 的每一項任務都做完，卻一則也沒補到。
+   而且若測試把缺口造在尾端，這個寫法會**通過測試**。
 6. **補算只擴充 `analyzeSentimentBatch()` 的輸入**（research.md #11）。摘要與建議卡的錨點語意不同：
    摘要用 `summaryBlock.summary.basedOnMessageId`（`catchUpSummaryIfStale()` 的註解已警告過誤用的後果），
    建議卡是針對「這一批」生成的。把舊發言塞進去會產生一批答非所問的卡。
@@ -65,6 +76,10 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 11. **`invalidSopIds` 不是 PII，MUST 保留**（contracts/citation-audit-event.md §1）。
     它是模型憑空造的字串、不是客戶內容，而它正是 FR-017 歸因分析的原料。
     `text`／`title`／`snippet` 則以型別標 `never` 擋掉。
+    ⚠️ 但**型別守擋不到 `invalidSopIds` 本身**（它是 `string[]`，內容由模型自由生成），
+    因此該欄位另加一道機械式收斂：**> 64 字元者改記 `sha256:<前16碼>+<原長度>`**。
+    真實 id 與「像 id 的杜撰字串」都遠短於 64，原樣保留；長段客戶內容必然超過而被擋。
+    MUST NOT 簡化成「一律雜湊」——那會殺掉 SC-006 判斷杜撰形狀的原料。
 12. **US3 的量測基線 MUST 在改 prompt 之前取**（research.md #13）。
     `buildSuggestionPrompt()` 是刻意與 `spike:agent-latency` 共用的同一份，
     改動會同時改變量測用的 prompt —— 沒有先取基線就失去了「改動前後可比較」這個 SC-006 的判準。
@@ -110,7 +125,7 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 - [ ] T004 [P] [US1] 在 `test/connection-counting.test.ts` 建立不變式 I-1／I-2／I-3（憑證登記）：一條連線一筆登記、逾期登記不被 `borrowCredential()` 回傳、`hasForegroundOperator()` ＝任一登記為前景
 - [ ] T005 [P] [US1] 在 `test/connection-counting.test.ts` 建立**不變式 I-4** —— `session.watchers.length === pipeline.refs`，對「同一客服兩條連線」「兩位客服各一條」「異常中斷」三組情境各驗一次。⚠️ 測試名稱與註解 MUST 標明它驗的是**單副本**（`pipeline.refs` 是 process-local，多副本下這條等式本來就不成立，見 data-model.md §2）
 - [ ] T006 [P] [US1] 在 `test/connection-counting.test.ts` 建立 contracts/connection-lifecycle.md §3 的四個情境（關一條／session 不刪／全關才清／不同客服互不影響）
-- [ ] T007 [P] [US1] 在 `test/connection-counting.test.ts` 建立存活兜底測試：以假時鐘推進超過 `CREDENTIAL_TTL_MS`，驗證逾期登記被回收；心跳抵達後不被回收
+- [ ] T007 [P] [US1] 在 `test/connection-counting.test.ts` 建立存活兜底測試：以假時鐘推進超過 `CREDENTIAL_TTL_MS`，驗證逾期登記被回收；心跳抵達後不被回收。⚠️ **MUST 另加一條「漏拍後重建」**：推進 60 秒（模擬背景分頁被節流成每分鐘一拍）讓登記被剔除，然後送一拍心跳，斷言登記**被重新建立**且 `borrowCredential()` 又回得出來（upsert，必讀 3a）。少了這條，兜底自己就是缺陷，而沒有東西會變紅
 - [ ] T008 [P] [US1] 在 `test/connection-counting.test.ts` 建立**複製分頁**測試：兩條連線帶**相同** `clientId`，驗證 ① 關掉其中一條不影響另一條、② 一次心跳把兩筆的 `lastSeenAt` 都更新（研究 #1／#2 的兩個坑各對應一條斷言）
 - [ ] T009 [P] [US1] 在 `test/connection-counting.test.ts` 建立 **I-7／I-8 夾擊測試**：主動離開對該客服**所有**連線生效、連線關閉只影響該條連線。⚠️ 兩條 MUST 同時存在——只驗其中一條時，把兩條路徑合併的錯誤修法會通過測試（SC-002a）
 
@@ -118,14 +133,14 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 
 - [ ] T010 [US1] 改寫 `server/services/credentials.ts`：registry 形狀改為 `Map<orgId, Map<connectionId, PollingCredential>>`；`PollingCredential` 加 `connectionId`／`clientId`／`lastSeenAt`；`registerCredential()` 收 `connectionId` 與 `clientId`，回傳的 unsubscribe 只移除該筆
 - [ ] T011 [US1] 在 `server/services/credentials.ts` 加入 `CREDENTIAL_TTL_MS = 45_000`／`CREDENTIAL_HEARTBEAT_MS = 20_000`，並在 `borrowCredential()`／`hasForegroundOperator()`／`registeredOrgIds()` 三個讀取點做**惰性剔除**（research.md #4：不加計時器，理由寫進註解）
-- [ ] T012 [US1] 在 `server/services/credentials.ts` 新增 `touchCredential(orgId, operatorId, clientId)`，更新**命中的全部**登記的 `lastSeenAt`；`setCredentialActivity()` 簽章加 `clientId`，同樣更新全部命中者。⚠️ 兩者都 MUST NOT 寫成「取一筆」，理由（複製分頁共用 clientId）寫進註解
-- [ ] T013 [US1] 新增 `server/api/connection/beat.post.ts`：body 只有 `clientId`（Zod 驗證），呼叫 `touchCredential()`，回傳 `{ ok: true }`。⚠️ **MUST NOT** 接受或回傳任何 token（憲法 1.1）
+- [ ] T012 [US1] 在 `server/services/credentials.ts` 新增 `touchCredential(cred)`，更新**命中的全部**登記的 `lastSeenAt`，**命中 0 筆時以傳入的身分與憑證新增一筆**（upsert，`connectionId` 現場 `crypto.randomUUID()` 另產）；`setCredentialActivity()` 簽章加 `clientId`，同樣更新全部命中者（但**不** upsert —— 活躍度沒有登記可依附時本來就無事可做）。⚠️ 兩者都 MUST NOT 寫成「取一筆」（複製分頁共用 clientId），且 `touchCredential()` 的 upsert **不是保險而是必要**——理由（背景分頁計時器節流 > TTL）MUST 寫進註解，見必讀 3a
+- [ ] T013 [US1] 新增 `server/api/connection/beat.post.ts`：body 只有 `clientId`（Zod 驗證），以 `requireActiveBffSession(event)` 取得 `operatorId`／`orgId`／`accessToken`（與 `stream.get.ts:85` 同一來源）後呼叫 `touchCredential()`，回傳 `{ ok: true }`。upsert 時的 `connectionId` **由 server 現場另產**——`connectionId` 維持「永不離開 server」，body 一如既往只有 `clientId`。⚠️ **MUST NOT** 接受或回傳任何 token（憲法 1.1）——身分一律從 session 取，不從 body 取
 - [ ] T014 [US1] 修改 `server/api/stream.get.ts`：連線建立時 `const connectionId = crypto.randomUUID()`；`registerCredential()` 帶上 `connectionId` 與 `clientId`；`attach()` 內的 `watchConversation()` 帶上 `connectionId`
 - [ ] T015 [US1] 修改 `server/services/session-manager.ts`：`WatchRequest` 加 `connectionId`；`upsertSession()` 每條連線各推一筆（不再以 operatorId 去重）；`releasePipeline()` 收 `connectionId` 並只 filter 掉該筆
 - [ ] T016 [US1] 在 `server/services/session-manager.ts` 調整 `isResume` 的判準與註解：新語意是「這個對話在我 attach 之前已經有人在看」。⚠️ 這是**行為變更**（同一客服的第二個分頁由 `join` 變成 `resume`），MUST 在註解裡寫明，並確認 `session.opened` 的 `reason` 仍無前端消費者
 - [ ] T017 [US1] 修改 `server/api/presence.post.ts`：`setCredentialActivity()` 呼叫帶上 body 既有的 `clientId`
 - [ ] T018 [US1] 在 `app/stores/stream.ts` 加入連線層級心跳：SSE 連線建立後每 `CREDENTIAL_HEARTBEAT_MS`（20 秒）打一次 `POST /api/connection/beat`，**與有沒有進入對話無關**；連線關閉時停止。⚠️ 與 presence 心跳是**兩支獨立**的心跳，回答的是不同問題，MUST NOT 合併
-- [ ] T019 [US1] 在 `test/contract-guards.test.ts` 新增守衛：`server/api/conversations/[id]/leave.post.ts` **MUST NOT** 出現 `connectionId`／`releasePipeline`／`unregisterCredential` 等連線層級識別項——防止日後有人為了「統一清理路徑」把主動離開接到連線計數上（research.md #6）
+- [ ] T019 [US1] 在 `test/contract-guards.test.ts` 新增守衛：`server/api/conversations/[id]/leave.post.ts` **MUST NOT** 出現 `connectionId`／`releasePipeline`／`touchCredential`／`registerCredential` 這四個連線層級識別項——防止日後有人為了「統一清理路徑」把主動離開接到連線計數上（research.md #6）。⚠️ 清單裡的每一個名字 MUST 是**實際存在於程式碼的識別項**（沒有 `unregisterCredential` 這支函式——移除是 `registerCredential()` 回傳的閉包），並比照 T033／T046 加上「守衛本身有效」的自檢，否則守衛會恆綠
 - [ ] T020 [US1] 執行 `npm run build && npm run smoke`（含 `smoke:realtime` 的兩位客服／兩條 SSE），確認 HTTP route 與 cookie 往返正常且憑證不外洩
 
 **Checkpoint**: US1 可獨立驗收。單獨交付這一條就已消除一類客服會回報「訊息不見了」的事故。
@@ -141,21 +156,24 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T021 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立主線情境：中段若干批失敗 → 新發言觸發恢復 → 時間軸無中斷區間（SC-003）
+- [ ] T021 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立主線情境：中段若干批失敗 → 新發言觸發恢復 → 時間軸無中斷區間（SC-003）。⚠️ 缺口 **MUST 造在中段**，且其後 MUST 另有成功的批次把高水位推過缺口——把缺口造在尾端時，錯用 `lastCoveredMessageId()` 當錨點的實作也會通過（必讀 5a）
 - [ ] T022 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**左界測試**：造一段長度超過 `DEFAULT_MESSAGE_LIMIT`（50）的對話，冷啟動只涵蓋最近 50 則，驗證補算**不**回頭處理 `timeline[0]` 之前的訊息。⚠️ 這是本 story 最容易漏的測試（動工前必讀 #5）
 - [ ] T023 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立上限測試：未涵蓋量很大時，單輪最多 3 批（＝18 則），以 AI 呼叫次數斷言（FR-009）
-- [ ] T024 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**零成本測試**：無缺口（`sentimentGap === false`）時，AI 呼叫次數**與取歷史次數**皆與現況逐一相同（FR-012、不變式 I-7）
+- [ ] T024 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**零成本測試**：無缺口（`sentimentGap === false`）時，AI 呼叫次數**與取歷史次數**皆與現況逐一相同（FR-012、不變式 S-1）
 - [ ] T025 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立止血不退步測試：補算失敗 → 停在 `error` 等待手動重試、**MUST NOT** 自行再排一輪（FR-010、SC-004 對應 003 SC-001）
-- [ ] T026 [P] [US2] 在 `test/sentiment-backfill.test.ts` 驗證補算**只**擴充情緒的輸入：摘要與建議卡收到的訊息集合不變（FR-011 之外，research.md #11 的獨立斷言）
+- [ ] T026 [P] [US2] 在 `test/sentiment-backfill.test.ts` 驗證補算**只**擴充情緒的輸入：摘要與建議卡收到的訊息集合不變（research.md #11 的獨立斷言）
+- [ ] T026a [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立 **LEAVE 優先測試**（FR-011）：客服已離開該對話時，恢復觸發**不得**取歷史、不得排入補算；補算進行中發生 LEAVE 時，**已在飛的不中斷**、但不得再排新的批次。⚠️ MUST 是**新寫**的測試，不能宣稱由 003 FR-012 的既有測試涵蓋——補算是一條新的輸入路徑，既有測試根本不會經過它
+- [ ] T026b [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**併發測試**（spec Edge Case「補算與新發言同時發生」）：補算在飛時再來一批新客戶發言，斷言同一則客戶發言**只被送進 AI 一次**、兩者不互相覆蓋涵蓋範圍
 
 ### Implementation for User Story 2
 
 - [ ] T027 [US2] 在 `server/services/analysis-state.ts` 掛上 `sentimentGap` 的轉移：情緒批次失敗（`finishBlockError(_, 'sentiment', _)`）時設為 `true`。⚠️ 只改狀態一律走 `updateAnalysisState()`（`stateLocks` 的不變式）
 - [ ] T028 [US2] 在 `server/services/copilot-analysis.ts` 新增 `setHistoryResolver()` 與 `resolveHistory()`，形狀完全比照既有的 `setJoinedResolver()`；預設值是安全的無作用值（回空陣列＝視為無缺口）
 - [ ] T029 [US2] 在 `server/services/copilot-runtime.ts` 載入時呼叫 `setHistoryResolver()`，注入 `messageSource.fetchSince`（相依方向與 `setJoinedResolver()` 相同，管線 MUST NOT 反向 import）
-- [ ] T030 [US2] 在 `server/services/copilot-analysis.ts` 實作缺口計算：`sentimentGap === true` 時取歷史，缺口 ＝「`timeline[0]` 之後、不在 timeline 的客戶發言」，取前 3 批；沿用既有的 `newCustomerMessagesSince()` 去重約定
+- [ ] T030 [US2] 在 `server/services/copilot-analysis.ts` 實作缺口計算：`sentimentGap === true` 時以 **`timeline[0].messageId` 為錨點**呼叫 `resolveHistory()`（⚠️ **不是** `lastCoveredMessageId()`，必讀 5a），缺口 ＝「`timeline[0]` 之後、不在 timeline 的客戶發言」，取前 3 批；沿用既有的 `newCustomerMessagesSince()` 去重約定（它對整條 timeline 做差集，正好吃得下 `fetchSince()` 錨點失效時回傳整批的既有約定）
 - [ ] T031 [US2] 在 `server/services/copilot-analysis.ts` 的 `runIncremental()` 內把「新訊息 ∪ 缺口」只交給 `analyzeSentimentBatch()`；`analyzeSummary()` 與 `analyzeSuggestions()` 的輸入**一個字不變**（動工前必讀 #6）
 - [ ] T032 [US2] 在 `server/services/copilot-analysis.ts` 補算完成後更新 `sentimentGap`：已無未涵蓋發言時清為 `false`，仍有剩餘時維持 `true`；**MUST NOT** 自行排下一輪（動工前必讀 #7）
+- [ ] T032a [US2] 在 `server/services/analysis-state.ts`／`copilot-analysis.ts` 補上 `sentimentGap` 生命週期表的**其餘兩條轉移**（data-model.md §3）：**冷啟動**與**手動重試成功**且已涵蓋到最新時，清為 `false`。⚠️ 少了這條，手動重試成功後旗標永遠是 `true`，此後**每一輪客戶發言都多撈一趟歷史**——正是 research.md #9 立這個旗標要避免的成本，而畫面與測試全綠。T024 的零成本測試 MUST 增加「手動重試成功之後」這一組
 - [ ] T033 [US2] 在 `test/contract-guards.test.ts` 新增守衛：`shared/` 底下不得出現 `sentimentGap`（比照既有的 `failedBatches` 契約 1.1，含「守衛本身有效」的自檢）
 
 **Checkpoint**: US2 可獨立驗收。此時第三刀拆檔（`blocks/sentiment.ts`）的觸發條件已滿足，但**不在本規格範圍**。
@@ -174,23 +192,23 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 
 ### Tests for User Story 3 ⚠️
 
-- [ ] T034 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 `outcome` 的四值判定：`cited`／`no-hits`／`not-cited`／`discarded` 各造一組輸入（contracts/citation-audit-event.md §2）
-- [ ] T035 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 PII 型別守：以型別層測試（`@ts-expect-error`）確認 `text`／`title`／`snippet` 塞不進事件；並驗證 `invalidSopIds` **有**被保留
+- [ ] T034 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 `outcome` 的四值判定：`cited`／`no-hits`／`not-cited`／`discarded` 各造一組輸入（contracts/citation-audit-event.md §2）。⚠️ `discarded` 那一組 MUST 順帶斷言 **FR-016 的靜默行為未變**：`status` 仍是 `ready`、`citation` 落 `'none'`、不重試、不轉 `error`
+- [ ] T035 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 PII 型別守：以型別層測試（`@ts-expect-error`）確認 `text`／`title`／`snippet` 塞不進事件；並驗證 `invalidSopIds` **有**被保留。⚠️ 另加**長度收斂**測試（contracts §1）：≤64 字元原樣保留、>64 字元改記 `sha256:<前16碼>+<原長度>` 且原字串不出現在輸出裡——型別守擋不到這個欄位，這條是它唯一的機械式保證
 - [ ] T036 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 FR-015a 的降級：**開檔**失敗時不拋出、不中止、標準輸出的事件仍完整、stderr 留下一行可辨識的原因
 
 ### Implementation for User Story 3 —— 第一段：稽核事件（改 prompt 之前）
 
-- [ ] T037 [US3] 新增 `server/utils/citation-audit.ts`：定義 `CitationAuditEvent` 型別（含 `text?: never` 等型別守）與 `emitCitationAudit()`；標準輸出寫一行 JSON（NDJSON）。⚠️ 檔案放在**管線外**，理由寫進檔頭（動工前必讀 #9）
+- [ ] T037 [US3] 新增 `server/utils/citation-audit.ts`：定義 `CitationAuditEvent` 型別（含 `text?: never` 等型別守）與 `emitCitationAudit()`；`invalidSopIds` 逐筆施加**長度收斂**（>64 字元改記 `sha256:<前16碼>+<原長度>`，理由寫進註解）；標準輸出寫一行 JSON（NDJSON）。⚠️ 檔案放在**管線外**，理由寫進檔頭（動工前必讀 #9）
 - [ ] T038 [US3] 在 `server/utils/citation-audit.ts` 加入額外落點（JSONL，環境變數開啟、**預設不啟用**）：建目錄／開檔包在 try/catch，失敗降級為只寫標準輸出並在 stderr 留一行。⚠️ 預設值 MUST NOT 是相對路徑（容器的 WORKDIR 屬 root 卻跑非 root，bind mount 會遮蔽 `chown`）
 - [ ] T039 [US3] 在 `server/services/blocks/suggestion.ts` 的**三條**落定路徑發出事件：前景兩段式的第二段落定、背景單段落定、「命中已在手」的單段落定。⚠️ 漏掉任一條會讓該路徑的個案永遠查不到（SC-005 對它不成立）
-- [ ] T040 [US3] 新增 `scripts/spike/27-citation-quality.ts` 與 `npm run spike:citation-quality`：沿用 `spike:progressive` 的骨架（走生產路徑的 `runColdStart()`），收集稽核事件並聚合出整體杜撰率**與逐對話分布**
-- [ ] T041 [US3] **取基線**：`npm run spike:agent-prompts` 後執行 `npm run spike:citation-quality`（n=45 口徑，FR-018a），把結果存進 `scripts/spike/out/` 並記下執行時段。⚠️ 這一步 MUST 在 T042 之前完成
+- [ ] T040 [US3] 新增 `scripts/spike/27-citation-quality.ts` 與 `npm run spike:citation-quality`：沿用 `spike:progressive` 的骨架（走生產路徑的 `runColdStart()`），收集稽核事件並聚合出整體杜撰率**與逐對話分布**。⚠️ 口徑固定為 **15 段對話 × 3 輪 ＝ 45 次帶命中的生成**，輪次間輪換對話順序（FR-017）——每段對話固定 3 個樣本，是「逐對話分布」看得出集中性的最小條件
+- [ ] T041 [US3] **取基線**：`npm run spike:agent-prompts` 後執行 `npm run spike:citation-quality`（15 段對話 × 3 輪 ＝ n=45，FR-017；實跑約 21 分鐘），把結果存進 `scripts/spike/out/` 並記下執行時段。⚠️ 這一步 MUST 在 T042 之前完成
 
 ### Implementation for User Story 3 —— 第二段：封閉清單（基線之後）
 
 - [ ] T042 [US3] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `buildSuggestionPrompt()` 加入**顯式封閉清單**段落（可用的 sopId 列舉 ＋「只能從清單中選、不得自創」）；空集合時明示「本次沒有可用的 sopId，全部填 null」。既有規則 ② 保留
 - [ ] T043 [US3] 確認 `whitelistFilter()`（`server/services/blocks/suggestion.ts`）**一行未改**，並在該函式加一行註解指向 FR-014
-- [ ] T044 [US3] **改動後量測**：再跑一次 `npm run spike:citation-quality`（同樣 n=45、同一組對話），與 T041 的基線並列比較，把兩組數字寫進 `docs/ARCHITECTURE.md`。⚠️ **本項不承諾 004 SC-002 的 80% 會提高**——沒有改善**不代表失敗**，交付物是「答得出為什麼」與「量得出來」
+- [ ] T044 [US3] **改動後量測**：再跑一次 `npm run spike:citation-quality`（**同一組 15 段對話、同樣 3 輪**，約 21 分鐘），與 T041 的基線並列比較，把兩組數字寫進 `docs/ARCHITECTURE.md`。⚠️ **本項不承諾 004 SC-002 的 80% 會提高**——沒有改善**不代表失敗**，交付物是「答得出為什麼」與「量得出來」
 
 **Checkpoint**: US3 可獨立驗收。SC-005 由事件名與欄位判定，不需讀程式碼。
 
@@ -202,14 +220,23 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 
 **Independent Test**: 跑一次並行度掃描，對每一個檔位同時得到總時間與單次失敗率兩列。
 
+### Tests for User Story 4 ⚠️
+
+> US4 的兩項改動都落在**生產路徑**上（並行度常數、每一次 AI 呼叫），
+> 而它們壞掉的方式與其他三則一樣不會報錯。手動 spike 不算「會變紅的東西」——
+> 它要有人去跑、去讀數字，而回歸時沒有人會跑它。
+
+- [ ] T044a [P] [US4] 在 `test/contract-guards.test.ts`（或就近的單元測試）斷言**未設 env 時 `SENTIMENT_CONCURRENCY === 3`**——這道門只為量測而開，預設值被改掉時 MUST 有東西變紅
+- [ ] T044b [P] [US4] 對假 gateway 斷言 `callAgent()` 的請求 payload **只多了 `user_id`**：其餘欄位與呼叫次數逐一不變（FR-021「MUST NOT 改變任何既有分析行為」的自動化守衛）。⚠️ 並斷言 `user_id` **不等於** `operatorId`——填錯不會報錯，只會讓 AI 服務端的用量統計掛到錯的人身上（research.md #21）
+
 ### Implementation for User Story 4 —— 並行度掃描
 
 - [ ] T045 [US4] 在 `server/services/copilot-analysis.ts` 把 `SENTIMENT_CONCURRENCY` 改為 `Number(process.env.SENTIMENT_CONCURRENCY ?? 3)`，**只在模組載入時讀一次**；註解寫明「這道門只為 `spike:sentiment-concurrency` 而開，生產設定 MUST NOT 設定它」，並說明為何 `SENTIMENT_CHUNK_SIZE` 不比照辦理
-- [ ] T046 [P] [US4] 在 `test/contract-guards.test.ts` 新增守衛：`.env.example`／`nuxt.config.ts` 等設定檔**MUST NOT** 出現 `SENTIMENT_CONCURRENCY`（含「守衛本身有效」的自檢）。⚠️ 它一旦被抄進某個環境的設定，症狀是「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤
+- [ ] T046 [P] [US4] 在 `test/contract-guards.test.ts` 新增守衛：受檢清單**明列**為 `.env.example`、`nuxt.config.ts`、`package.json` 的 scripts 三處，斷言它們**MUST NOT** 出現 `SENTIMENT_CONCURRENCY`（含「守衛本身有效」的自檢）。⚠️ 受檢範圍 MUST NOT 擴大成全 repo 掃描——`scripts/spike/26-*.ts` 正是唯一該設定它的地方，擴大範圍會讓守衛自傷。⚠️ 它一旦被抄進某個環境的設定，症狀是「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤
 - [ ] T047 [US4] 新增 `scripts/spike/26-sentiment-concurrency.ts` 與 `npm run spike:sentiment-concurrency`：對 3／4／5 三個檔位**各開一個子行程**（同一行程內改不了 module-level const），三輪、輪次間輪換檔位順序（3,4,5／4,5,3／5,3,4）、同一時段連續跑完、**序列執行不得並行取樣**
 - [ ] T048 [US4] 讓 26 號腳本重用 `spike:progressive` 既有的 `sentimentCalls`（每次呼叫的延遲與成敗）與峰值並發，輸出**總時間分布**與**單次呼叫失敗率**兩列並陳（FR-018）
-- [ ] T049 [US4] **執行掃描**（實跑約 1 小時；先跑 `npm run spike:agent-prompts`），把原始產出存進 `scripts/spike/out/`，並記錄執行時段；平台若處於已知降級時段 MUST 明確標註（FR-020）
-- [ ] T050 [US4] 依 FR-019 的判準做決定並寫進 `docs/ARCHITECTURE.md`：總時間改善**且**失敗率未上升才採用；只有總時間改善 **MUST NOT** 作為採用理由，且該結論本身要留在文件裡。⚠️ 15 秒門檻在本規格期間維持不動（FR-020a）
+- [ ] T049 [US4] **執行掃描**（實跑約 1 小時，加上 T041／T044 的兩次杜撰率量測，本規格量測總時數約 1 小時 40 分；先跑 `npm run spike:agent-prompts`），把原始產出存進 `scripts/spike/out/`，並記錄執行時段；平台若處於已知降級時段 MUST 明確標註（FR-020）
+- [ ] T050 [US4] 依 FR-019 的判準做決定並寫進 `docs/ARCHITECTURE.md`：總時間改善**且**失敗率未上升才採用；只有總時間改善 **MUST NOT** 作為採用理由，且該結論本身要留在文件裡。⚠️ 15 秒門檻在本規格期間維持不動（FR-020a）。⚠️ 若決定採用新檔位，MUST **一併複查 FR-009 的「每輪 3 批」上限**並把結論寫進文件——那個數字的理由是「對齊 `SENTIMENT_CONCURRENCY` 的一波並行」，並行度一改，理由就不再自動成立（維持 3 批仍在一波之內，但 MUST 是被複查過的決定，不是被遺忘的常數）
 
 ### Implementation for User Story 4 —— `user_id` 衛生
 
@@ -228,7 +255,7 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 - [ ] T056 [P] 檢查 `docs/IMBRACE_QUESTIONS.md` 的 0-3e：US3 的封閉清單結果會影響該題的敘述（該題引用了「44% 的呼叫至少產生一張杜撰的知識庫來源編號」）。有新數字就更新，**自行解決的部分要明確撤回並附上解法**，不是默默刪掉
 - [ ] T057 [P] 在 `docs/ARCHITECTURE.md` §18 M2「分析管線拆檔」註記第三刀的觸發條件（「005 的情緒改動落地之後」）**已滿足**，但**不在本規格執行**
 - [ ] T058 依 [quickstart.md](./quickstart.md) 逐項執行手動驗收，特別是 US1 的真實雙分頁情境與「斷網而非關分頁」的存活兜底驗證
-- [ ] T059 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認 001～004 的既有驗收全部維持通過（SC-008），與 T002 的基線對照
+- [ ] T059 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認 001～004 的既有驗收全部維持通過（SC-008），與 T002 的基線對照。⚠️ 回歸清單 MUST 點名 T016 的行為變更（`isResume` 語意改變、同一客服的第二個分頁由 `join` 變 `resume`）：它在 spec 沒有對應的 FR／SC，只記在 data-model §2，是最容易在回歸時被忽略的一項
 
 ---
 
@@ -246,7 +273,7 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 - **US1（P1）**：Phase 2 之後即可開始。與其他三則**無相依**
 - **US2（P2）**：Phase 2 之後即可開始。與 US1 **無相依**（不同檔案：credentials／session-manager vs analysis 管線）
 - **US3（P2）**：**完全獨立**，Phase 1 之後即可開始。內部順序嚴格：T037～T041 → T042～T044
-- **US4（P3）**：**完全獨立**，Phase 1 之後即可開始。內部可再拆兩束（掃描 T045～T050、`user_id` T051～T053，兩束互不相依）
+- **US4（P3）**：**完全獨立**，Phase 1 之後即可開始。內部可再拆兩束（掃描 T044a／T045～T050、`user_id` T044b／T051～T053，兩束互不相依）
 
 ### Within Each User Story
 
@@ -257,25 +284,27 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 ### Parallel Opportunities
 
 - **T004～T009**（US1 測試）可平行撰寫
-- **T021～T026**（US2 測試）可平行撰寫
+- **T021～T026b**（US2 測試）可平行撰寫
 - **T034～T036**（US3 測試）可平行撰寫
+- **T044a／T044b**（US4 測試）可平行撰寫
 - **US3 與 US4 可與 Phase 2／US1／US2 完全平行**——它們不碰 `server/state/types.ts`、
   不碰 `credentials.ts`、不碰 `session-manager.ts`
 - **T051～T053（`user_id`）是整份清單裡最獨立的一束**，任何時候都能插進去做
 
-⚠️ **不可平行**的地方：T010～T012 全在 `credentials.ts`；T014／T017 分別改 `stream.get.ts`／
-`presence.post.ts` 但都相依 T010 的新簽章；T027～T032 全在分析管線且共用 `sentimentGap` 的轉移。
+⚠️ **不可平行**的地方：T010～T012 全在 `credentials.ts`；T013 相依 T012 的 upsert 簽章；
+T014／T017 分別改 `stream.get.ts`／`presence.post.ts` 但都相依 T010 的新簽章；
+T027～T032a 全在分析管線且共用 `sentimentGap` 的轉移。
 
 ---
 
 ## Parallel Example: User Story 1 的測試
 
 ```bash
-# 這五項在同一個檔案的不同 describe，可由不同人同時撰寫後合併：
+# 這六項在同一個檔案的不同 describe，可由不同人同時撰寫後合併：
 Task: "I-1／I-2／I-3 憑證登記的三條不變式"
 Task: "I-4 watchers.length === pipeline.refs（三組情境、標明單副本）"
 Task: "contracts §3 的四個情境"
-Task: "存活兜底（假時鐘推進 45 秒）"
+Task: "存活兜底（假時鐘推進 45 秒）＋ 漏拍後 upsert 重建"
 Task: "複製分頁共用 clientId 的兩條斷言"
 Task: "I-7／I-8 夾擊（LEAVE 對全部連線 vs 關線只影響自己）"
 ```

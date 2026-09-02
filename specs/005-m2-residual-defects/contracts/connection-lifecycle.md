@@ -49,9 +49,13 @@ releasePipeline(conversationId, connectionId)
   → watchers = watchers.filter(w => w.connectionId !== connectionId)
   → watchers.length === 0 ? deleteCopilotSession() : setCopilotSession({...})
   → refs--；refs === 0 時拆 publisher 並 publish session.closed
-unregisterCredential(connectionId)
+registerCredential() 回傳的 unsubscribe（該條連線各自持有）
   → 只移除這一筆
 ```
+
+⚠️ **登記的移除沒有獨立的具名函式** —— 它是 `registerCredential()` 回傳的閉包，
+由 `stream.get.ts` 推進 `cleanups` 陣列、連線關閉時執行（現況即如此）。
+本契約 MUST NOT 被讀成「要新增一支 `unregisterCredential()`」。
 
 **後置條件**：等式仍成立；同一客服的其他連線**完全不受影響**（FR-006、SC-001）。
 
@@ -79,7 +83,28 @@ body: { clientId: string }
 - 前端在 SSE 連線建立後每 `CREDENTIAL_HEARTBEAT_MS`（20 秒）送一次，
   **與有沒有進入對話無關**（分頁開著但還沒點進任何對話時仍須送達）。
 - server 端把 `(orgId, operatorId, clientId)` 命中的**全部**登記的 `lastSeenAt` 更新為 `now`。
-- 命中 0 筆時 no-op（連線已被回收，下一次重連會重新登記）。
+- **命中 0 筆時 MUST 重新登記一筆**（upsert 語意），身分與憑證取自
+  `requireActiveBffSession(event)` —— 與 `stream.get.ts` 同一個來源，
+  端點**仍不接受、也不回傳任何 token**（憲法 1.1）。
+  該筆的 `connectionId` **由 server 現場另產**（`crypto.randomUUID()`）——
+  `connectionId` 維持「永不離開 server、不信任 client」（§2），body 一如既往只有 `clientId`。
+  ⚠️ 連線關閉時，那條 SSE 手上的 unsubscribe 拿的是**舊** `connectionId`，移除會打空；
+  重建的那一筆改由**心跳的生命週期**擁有，分頁關掉後心跳停止，≤ `CREDENTIAL_TTL_MS`（45 秒）
+  由惰性回收清掉 —— 與 SC-002 對「異常中斷」已接受的保證是同一個，不是新的洩漏類別。
+
+### ⚠️ 心跳 MUST 是 upsert，MUST NOT 是「純更新」
+
+**這是本契約最容易照抄錯的一行。** 45 秒 TTL ／ 20 秒心跳這組數字抄自 presence
+（`PRESENCE_TTL_MS`／`PRESENCE_HEARTBEAT_MS`），但 presence 真正的安全網不是那組數字，
+而是 `reportViewing()` 是 **upsert** —— 項目被 TTL 清掉後，下一拍心跳會把它重建。
+
+若心跳寫成「找不到就 no-op」，**背景分頁會自己觸發本規格要修的那個缺陷**：
+瀏覽器對隱藏分頁的計時器有節流（Chrome 在分頁隱藏數分鐘後壓到約每分鐘一次），
+60 秒 > 45 秒 → 登記被回收 → 而 SSE 連線還開著、沒有任何東西會重新登記 →
+**那條連線的憑證永遠回不來**。症狀與 US1 要修的原始缺陷一模一樣：畫面正常、不報錯、
+訊息不再進來。等於用一個看得見的缺陷，換一個更難查的。
+
+⚠️ 「下一次重連會重新登記」**不成立** —— SSE 連線沒有斷，不會有重連。
 
 ### 回收
 
@@ -87,7 +112,7 @@ body: { clientId: string }
 先剔除 `now - lastSeenAt > CREDENTIAL_TTL_MS`（45 秒）的登記。
 沒有計時器（research.md #4）。
 
-### ⚠️ 三條容易寫錯的地方
+### ⚠️ 四條容易寫錯的地方
 
 1. **MUST NOT 用 server 端的 `stream.heartbeat` 當存活訊號。**
    它證明的是「server 還認為連線在」，在半開連線下**恆真** —— 兜底變成永不觸發的裝飾。
@@ -96,6 +121,8 @@ body: { clientId: string }
    分頁還沒進入任何對話時完全不送，會留一個永遠洩漏的視窗。
 3. **心跳與 activity 更新 MUST 命中全部、MUST NOT「取一筆」。**
    複製分頁會共用 `clientId`；只更新其中一筆會讓另一條活著的連線在 45 秒後被回收。
+4. **心跳 MUST 是 upsert（見上）。** 抄了 presence 的 45／20 秒，就 MUST 一併抄它的
+   `reportViewing()` upsert 語意；只抄數字不抄語意，背景分頁節流會讓兜底自己變成缺陷。
 
 ### 為什麼這條是 FR-001 的必要配套，不是保險
 
@@ -127,7 +154,7 @@ hasForegroundOperator(orgId)
 
 | # | 不變式 | 對應 |
 |---|---|---|
-| I-1 | 一條 SSE 連線 ⟺ 恰好一筆憑證登記 | FR-001 |
+| I-1 | 一條 SSE 連線 ⟺ 恰好一筆憑證登記。**心跳漏拍導致登記被 TTL 剔除時，下一拍心跳 MUST 把它重建**（upsert，見 §4）；重建後該筆改由心跳擁有，連線關閉後 ≤45 秒由 TTL 回收 | FR-001、FR-005a |
 | I-2 | 逾期登記不被 `borrowCredential()` 回傳 | FR-005a、SC-002 |
 | I-3 | `hasForegroundOperator()` ＝ 任一登記為前景 | FR-002 |
 | I-4 | `watchers.length === pipeline.refs`（單副本） | **FR-004** |
