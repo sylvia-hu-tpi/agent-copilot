@@ -249,22 +249,22 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 > 而它們壞掉的方式與其他三則一樣不會報錯。手動 spike 不算「會變紅的東西」——
 > 它要有人去跑、去讀數字，而回歸時沒有人會跑它。
 
-- [ ] T044a [P] [US4] 在 `test/contract-guards.test.ts`（或就近的單元測試）斷言**未設 env 時 `SENTIMENT_CONCURRENCY === 3`**——這道門只為量測而開，預設值被改掉時 MUST 有東西變紅。⚠️ 另加兩組：`SENTIMENT_CONCURRENCY=''` 與 `='abc'` 時仍為 3（`Number('')` 是 0、`Number('abc')` 是 NaN，交給 `mapWithConcurrency()` 是靜默錯誤）。常數現況是**未匯出**的 `const`（`copilot-analysis.ts:168`），T045 MUST 一併 export，否則本條只能靠行為推測
-- [ ] T044b [P] [US4] 對假 gateway 斷言 `callAgent()` 的請求 payload **只多了 `user_id`**：其餘欄位與呼叫次數逐一不變（FR-021「MUST NOT 改變任何既有分析行為」的自動化守衛）。⚠️ 並斷言 `user_id` **不等於** `operatorId`——填錯不會報錯，只會讓 AI 服務端的用量統計掛到錯的人身上（research.md #21）
+- [x] T044a [P] [US4] 在 `test/contract-guards.test.ts`（或就近的單元測試）斷言**未設 env 時 `SENTIMENT_CONCURRENCY === 3`**——這道門只為量測而開，預設值被改掉時 MUST 有東西變紅。⚠️ 另加兩組：`SENTIMENT_CONCURRENCY=''` 與 `='abc'` 時仍為 3（`Number('')` 是 0、`Number('abc')` 是 NaN，交給 `mapWithConcurrency()` 是靜默錯誤）。常數現況是**未匯出**的 `const`（`copilot-analysis.ts:168`），T045 MUST 一併 export，否則本條只能靠行為推測
+- [x] T044b [P] [US4] 對假 gateway 斷言 `callAgent()` 的請求 payload **只多了 `user_id`**：其餘欄位與呼叫次數逐一不變（FR-021「MUST NOT 改變任何既有分析行為」的自動化守衛）。⚠️ 並斷言 `user_id` **不等於** `operatorId`——填錯不會報錯，只會讓 AI 服務端的用量統計掛到錯的人身上（research.md #21）
 
 ### Implementation for User Story 4 —— 並行度掃描
 
-- [ ] T045 [US4] 在 `server/services/copilot-analysis.ts` 把 `SENTIMENT_CONCURRENCY` 改為從 `process.env.SENTIMENT_CONCURRENCY` 讀取，**MUST 驗證為正整數、否則回退 3 並在 stderr 留一行**（data-model §6；`Number()` 直接轉會把空字串變 0、typo 變 NaN），**只在模組載入時讀一次**，並改為 `export`（T044a 要斷言它）；註解寫明「這道門只為 `spike:sentiment-concurrency` 而開，生產設定 MUST NOT 設定它」，並說明為何 `SENTIMENT_CHUNK_SIZE` 不比照辦理
-- [ ] T046 [P] [US4] 在 `test/contract-guards.test.ts` 新增守衛：受檢清單**明列**為 `.env.example`、`nuxt.config.ts`、`package.json` 的 scripts 三處，斷言它們**MUST NOT** 出現 `SENTIMENT_CONCURRENCY`（含「守衛本身有效」的自檢）。⚠️ 受檢範圍 MUST NOT 擴大成全 repo 掃描——`scripts/spike/26-*.ts` 正是唯一該設定它的地方，擴大範圍會讓守衛自傷。⚠️ 它一旦被抄進某個環境的設定，症狀是「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤。⚠️ **守衛看不到 gitignored 的 `.env.local`**——那正是最可能被貼進去的地方；T045 的註解與 quickstart MUST 寫明此殘餘風險（本地的 `.env.local` 與 Nuxt 共用，貼了就等於改生產路徑）
-- [ ] T047 [US4] 新增 `scripts/spike/26-sentiment-concurrency.ts` 與 `npm run spike:sentiment-concurrency`：對 3／4／5 三個檔位**各開一個子行程**（同一行程內改不了 module-level const），三輪、輪次間輪換檔位順序（3,4,5／4,5,3／5,3,4）、同一時段連續跑完、**序列執行不得並行取樣**
-- [ ] T048 [US4] 讓 26 號腳本重用 `spike:progressive` 既有的 `sentimentCalls`（每次呼叫的延遲與成敗）與峰值並發，輸出**總時間分布**與**單次呼叫失敗率**兩列並陳（FR-018）
+- [x] T045 [US4] 在 `server/services/copilot-analysis.ts` 把 `SENTIMENT_CONCURRENCY` 改為從 `process.env.SENTIMENT_CONCURRENCY` 讀取，**MUST 驗證為正整數、否則回退 3 並在 stderr 留一行**（data-model §6；`Number()` 直接轉會把空字串變 0、typo 變 NaN），**只在模組載入時讀一次**，並改為 `export`（T044a 要斷言它）；註解寫明「這道門只為 `spike:sentiment-concurrency` 而開，生產設定 MUST NOT 設定它」，並說明為何 `SENTIMENT_CHUNK_SIZE` 不比照辦理
+- [x] T046 [P] [US4] 在 `test/contract-guards.test.ts` 新增守衛：受檢清單**明列**為 `.env.example`、`nuxt.config.ts`、`package.json` 的 scripts 三處，斷言它們**MUST NOT** 出現 `SENTIMENT_CONCURRENCY`（含「守衛本身有效」的自檢）。⚠️ 受檢範圍 MUST NOT 擴大成全 repo 掃描——`scripts/spike/26-*.ts` 正是唯一該設定它的地方，擴大範圍會讓守衛自傷。⚠️ 它一旦被抄進某個環境的設定，症狀是「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤。⚠️ **守衛看不到 gitignored 的 `.env.local`**——那正是最可能被貼進去的地方；T045 的註解與 quickstart MUST 寫明此殘餘風險（本地的 `.env.local` 與 Nuxt 共用，貼了就等於改生產路徑）
+- [x] T047 [US4] 新增 `scripts/spike/26-sentiment-concurrency.ts` 與 `npm run spike:sentiment-concurrency`：對 3／4／5 三個檔位**各開一個子行程**（同一行程內改不了 module-level const），三輪、輪次間輪換檔位順序（3,4,5／4,5,3／5,3,4）、同一時段連續跑完、**序列執行不得並行取樣**
+- [x] T048 [US4] 讓 26 號腳本重用 `spike:progressive` 既有的 `sentimentCalls`（每次呼叫的延遲與成敗）與峰值並發，輸出**總時間分布**與**單次呼叫失敗率**兩列並陳（FR-018）
 - [ ] T049 [US4] **執行掃描**（實跑約 1 小時，加上 T041／T044 的兩次杜撰率量測，本規格量測總時數約 1 小時 40 分；先跑 `npm run spike:agent-prompts`），把原始產出存進 `scripts/spike/out/`，並記錄執行時段；平台若處於已知降級時段 MUST 明確標註（FR-020）
 - [ ] T050 [US4] 依 FR-019 的判準做決定並寫進 `docs/ARCHITECTURE.md`：總時間改善**且**失敗率未上升才採用；只有總時間改善 **MUST NOT** 作為採用理由，且該結論本身要留在文件裡。⚠️ 15 秒門檻在本規格期間維持不動（FR-020a）。⚠️ 若決定採用新檔位，MUST **一併複查 FR-009 的「每輪 18 則缺口訊息（＝3 批）」上限**並把結論寫進文件——那個數字的理由是「對齊 `SENTIMENT_CONCURRENCY` 的一波並行」，並行度一改，理由就不再自動成立（維持 18 則仍在一波之內，但 MUST 是被複查過的決定，不是被遺忘的常數）
 
 ### Implementation for User Story 4 —— `user_id` 衛生
 
-- [ ] T051 [P] [US4] 在 `server/services/imbrace.ts`（防腐層）新增 AI 服務 client user id 的取得與 process-local 快取。⚠️ 註解 MUST 寫明它**與客服身分無關**，填成 `operatorId` 會讓 AI 服務端的用量統計掛到錯的人身上而不報錯
-- [ ] T052 [US4] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `callAgent()` 帶上 `user_id`，省去 SDK 每次呼叫先 await 一次 auth 的往返（實測 54ms）
+- [x] T051 [P] [US4] 在 `server/services/imbrace.ts`（防腐層）新增 AI 服務 client user id 的取得與 process-local 快取。⚠️ 註解 MUST 寫明它**與客服身分無關**，填成 `operatorId` 會讓 AI 服務端的用量統計掛到錯的人身上而不報錯
+- [x] T052 [US4] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `callAgent()` 帶上 `user_id`，省去 SDK 每次呼叫先 await 一次 auth 的往返（實測 54ms）
 - [ ] T053 [US4] 執行 `npm run spike:userid` 驗證：帶上 `user_id` 不會 400、輸出照常、多次取得的 id 一致；並確認既有分析行為完全不變（FR-021）
 
 **Checkpoint**: 四則 user story 全部可獨立驗收。
