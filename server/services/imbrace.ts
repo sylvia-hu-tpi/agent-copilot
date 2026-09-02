@@ -415,6 +415,70 @@ export async function searchConversations(
   return r.json()
 }
 
+// ── AI Agent 的 client user id（specs/005-m2-residual-defects FR-021，research.md #21）──
+//
+// ⚠️ SDK 的 `aiAgent.streamChat()` 在 `user_id` 缺席時會**先串行 await 一次**
+//    `POST /ai-agent/chat-client/auth/user` 取 id 才打 `/v2/chat`（`node_modules/@imbrace/sdk/dist/resources/ai-agent.js`）。
+//    每一次摘要、每一次情緒批次、每一次建議卡都多付一趟往返去查同一個固定值，實測 54ms
+//    （`npm run spike:userid`，並核對過多次取得的 id 一致 —— 快取的前提成立）。
+//
+// ⚠️ **這個 id 是 AI 服務的 client user id，與客服身分無關。** 填成客服的 `operatorId` 不會報錯，
+//    只會讓 AI 服務端的用量統計掛到錯的人身上。憲法 1.3 管的是寫入歸屬，本項不觸及該條，
+//    但這個註解 MUST 留在這裡。
+//
+// ⚠️ 直接複製 SDK 內部那一行的呼叫形狀（`POST`、無 body），不用 `client.aiAgent.getChatClientUser()`
+//    （它會多送一個 JSON body）—— 省下的必須是 `streamChat()` 實際付出的那一趟。
+//    存取 SDK 的 private `http`／`base` 是與 `exchangeOrganizationToken()` 同一類的繞道，關在本檔。
+
+const AI_USER_KEY = Symbol.for('agent-copilot.ai-client-user-id')
+type AiUserGlobal = typeof globalThis & { [AI_USER_KEY]?: Map<string, Promise<string>> }
+
+function aiUserCache(): Map<string, Promise<string>> {
+  const g = globalThis as AiUserGlobal
+  if (!g[AI_USER_KEY]) g[AI_USER_KEY] = new Map()
+  return g[AI_USER_KEY]
+}
+
+/**
+ * 取得（並以 process-local 快取）這個 client 對 AI Agent 服務的 user id。
+ *
+ * 快取鍵是 `aiAgent.base`（gateway 位址）—— AI provider 只用一個 API-key client，spike 19 已驗證
+ * 同一個 client 多次取得的 id 一致。取得失敗**不快取**（下一次再試），由呼叫端決定要不要退回
+ * 「不帶 `user_id`、讓 SDK 自己去查」的舊路徑。
+ *
+ * @throws SDK 內部結構變動（找不到 `aiAgent.http`／`base`）、HTTP 非 2xx、回應缺 `id`
+ */
+export async function resolveAiClientUserId(client: ImbraceClient): Promise<string> {
+  const agent = client.aiAgent as unknown as { http?: { getFetch?: () => typeof fetch }, base?: unknown }
+  if (typeof agent?.http?.getFetch !== 'function' || typeof agent.base !== 'string') {
+    // SDK 內部結構變動時要立刻炸開，而不是靜默退回舊路徑而讓 FR-021 無聲失效
+    throw new Error(
+      '@imbrace/sdk 內部結構已變更：找不到 client.aiAgent.http.getFetch／client.aiAgent.base。'
+      + '請重新確認 chat-client/auth/user 的呼叫形狀（見 scripts/spike/19-userid-roundtrip.ts）',
+    )
+  }
+  const key = agent.base
+  const cached = aiUserCache().get(key)
+  if (cached) return cached
+
+  const fetchFn = agent.http.getFetch()
+  const task = (async () => {
+    const res = await fetchFn(`${key}/chat-client/auth/user`, { method: 'POST' })
+    if (!res.ok) throw new Error(`chat-client/auth/user 失敗：HTTP ${res.status}`)
+    const data = await res.json() as { id?: unknown }
+    if (typeof data.id !== 'string' || !data.id) throw new Error('chat-client/auth/user 回應缺少 id')
+    return data.id
+  })()
+  aiUserCache().set(key, task)
+  task.catch(() => aiUserCache().delete(key))
+  return task
+}
+
+/** 測試用：清掉快取 */
+export function resetAiClientUserIdCache(): void {
+  aiUserCache().clear()
+}
+
 /**
  * 補上 `conv_` 前綴。
  *

@@ -26,6 +26,7 @@ import type {
   SuggestionCard,
 } from '../../../shared/types/copilot.js'
 import type { KnowledgeHit } from '../../../shared/types/knowledge.js'
+import { resolveAiClientUserId } from '../imbrace.js'
 import { AIOutputValidationError, AIProviderHttpError } from './retry-policy.js'
 
 /**
@@ -289,11 +290,25 @@ export class ImbraceAgentProvider implements AIProvider {
    *    放在各自的 parse 裡會漏掉沒有結構化欄位的輸出，也會變成三份要同步的程式碼。
    */
   private async callAgent(assistantId: string, prompt: string): Promise<string> {
+    /**
+     * specs/005 FR-021：帶上 AI 服務的 client user id，省去 SDK 每次呼叫先 await 一次 auth 的往返
+     * （實測 54ms）。**它不是客服的 operatorId** —— 這個 provider 根本拿不到客服身分，那是刻意的。
+     * 取不到時退回舊路徑（不帶，SDK 自己去查）：行為完全不變，只是沒省到那一趟；警告只留一行。
+     */
+    let userId: string | undefined
+    try {
+      userId = await resolveAiClientUserId(this.client)
+    }
+    catch (err) {
+      warnUserIdOnce(err)
+    }
+
     let res: { text: () => Promise<string> }
     try {
       res = await this.client.aiAgent.streamChat({
         assistant_id: assistantId,
         messages: [{ role: 'user', parts: [{ type: 'text', text: prompt }] }],
+        ...(userId ? { user_id: userId } : {}),
       } as Parameters<typeof this.client.aiAgent.streamChat>[0])
     }
     catch (err) {
@@ -330,13 +345,14 @@ export class ImbraceAgentProvider implements AIProvider {
   }
 }
 
-/**
- * 只出現在簡體中文的常用字（取樣本，不求完整）。
- *
- * ⚠️ 這些字**在繁體中文裡不會出現**，因此不會誤判 —— 刻意不收「后」「干」「里」這類
- *    兩邊都存在、只是語意分工不同的字。寧可漏報，不可誤報：這個偵測的用途是
- *    「agent 的 system prompt 改了之後有沒有生效」，誤報會讓那個訊號失去意義。
- */
+let userIdWarned = false
+/** 取不到 user id 只影響延遲（多一趟往返），不影響結果 —— 留一行就好，不要每次呼叫都吼 */
+function warnUserIdOnce(err: unknown): void {
+  if (userIdWarned) return
+  userIdWarned = true
+  console.warn(`[ai] 取不到 AI Agent 的 client user id，改由 SDK 每次自行查詢（每次呼叫多約 54ms）：${err instanceof Error ? err.message : String(err)}`)
+}
+
 /**
  * 只出現在**簡體**中文的常用字（取樣，不求完整）。
  *

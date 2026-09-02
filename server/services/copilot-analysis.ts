@@ -146,6 +146,12 @@ export {
 export const SENTIMENT_CHUNK_SIZE = 6
 
 /**
+ * `SENTIMENT_CONCURRENCY` 的預設值 —— 2026-09-01 使用者裁定的 3；`test/sentiment-concurrency.test.ts`
+ * 斷言未設 env 時就是它。⚠️ MUST 宣告在下面的 `SENTIMENT_CONCURRENCY` 之前（模組載入時就會用到）。
+ */
+export const DEFAULT_SENTIMENT_CONCURRENCY = 3
+
+/**
  * 同時最多幾批在飛（2026-09-01 使用者裁定，取代原本的「依序送出」）。
  *
  * **為什麼改**：2026-09-01 的端到端實測（`npm run spike:progressive -- --repeat 3`，n=15）
@@ -164,8 +170,37 @@ export const SENTIMENT_CHUNK_SIZE = 6
  *    也就是「總時間變短」與「失敗率上升」可能同時發生，而畫面上只會看到偶發紅字。
  *    調高這個數字前 MUST 重跑 `spike:progressive` 並同時看**單次延遲**與**失敗率**，
  *    不能只看總時間變快就加碼。
+ *
+ * ── 為什麼開放 env 覆寫（specs/005-m2-residual-defects US4，research.md #19）──────
+ * **這道門只為 `spike:sentiment-concurrency` 而開，生產設定 MUST NOT 設定它。**
+ * FR-018 要求對 3／4／5 三個檔位各跑 n=45，而這是 module-level `const`，**同一行程內無法切換**，
+ * 掃描必須換行程，換行程只能靠 env 傳遞。兩個被否決的替代：「讓量測腳本自己複製一份並行邏輯」
+ * 違反本專案吃過虧的「量測工具比正式路徑寬鬆會漏掉真的缺陷」；「改成每次呼叫時讀的可變值」
+ * 才是真的在生產路徑上開旋鈕。折衷是只在**模組載入時**讀一次，並由 `test/contract-guards.test.ts`
+ * 守住 `.env.example`／`nuxt.config.ts`／`package.json` 的 scripts 不得設定它。
+ * ⚠️ 它一旦被抄進某個環境的設定（例如本機的 `.env.local`，守衛看不到那裡），症狀是
+ *    「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤。
+ * ⚠️ `SENTIMENT_CHUNK_SIZE` **不比照辦理**：它決定的是「一次呼叫的工作量」，那是 FR-014 逾時數字
+ *    的前提，不是量測的自變數。
  */
-const SENTIMENT_CONCURRENCY = 3
+export const SENTIMENT_CONCURRENCY = resolveSentimentConcurrency(process.env.SENTIMENT_CONCURRENCY)
+
+/**
+ * 把 env 字串解析成並行度：MUST 是正整數，否則回退預設值並在 stderr 留一行。
+ *
+ * ⚠️ 不能寫成 `Number(process.env.X ?? 3)`：`Number('')` 是 `0`、`Number('abc')` 是 `NaN`，
+ *    交給 `mapWithConcurrency()` 會變成零並行或永遠不完成 —— 正是本規格要防的那一類靜默錯誤。
+ *    匯出是為了讓測試對這個判斷本身驗（`SENTIMENT_CONCURRENCY` 在模組載入時就綁定了，測試改不了 env）。
+ */
+export function resolveSentimentConcurrency(raw: string | undefined): number {
+  if (raw === undefined || raw === '') return DEFAULT_SENTIMENT_CONCURRENCY
+  const n = Number(raw)
+  if (!Number.isInteger(n) || n < 1) {
+    process.stderr.write(`[copilot-analysis] SENTIMENT_CONCURRENCY=${JSON.stringify(raw)} 不是正整數，改用預設 ${DEFAULT_SENTIMENT_CONCURRENCY}\n`)
+    return DEFAULT_SENTIMENT_CONCURRENCY
+  }
+  return n
+}
 
 function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = []
