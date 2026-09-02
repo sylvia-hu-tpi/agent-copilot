@@ -1122,6 +1122,7 @@ p90 64ms、**20/20 皆同一個 id**（可快取）、傳入 `user_id` 後輸出
 ⛔ **它是衛生問題，不是效能解方** —— 54ms 補不上任何延遲門檻的缺口。
 ⏳ **但仍應該做，且尚未做**（`callAgent()` 至今未傳 `user_id`）：省一趟往返、id 可快取、
 傳入不破壞輸出，且 `streamChat()` 的型別本來就宣告了 `user_id`（不需繞道）。
+**2026-09-02 已歸屬 `specs/005-m2-residual-defects` US4 / FR-021**，不再是無主的欠帳。
 
 ⚠️ **量測方法**：MUST 隔離量該趟呼叫，MUST NOT 用「傳 vs 不傳」比端到端 —— 第一段的
 σ ≈ 849ms，要偵測約 300ms 的差異，n=15 兩組的差異標準誤就有 310ms（＝待測量級本身），
@@ -2352,7 +2353,9 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 **不含**客戶資料卡（§19.1 #21）、語音與舊資料型 `file` 附件、圖片／PDF 的 vision 分析（皆延至 M3）。
 
 **規格**：`specs/001-sentiment-panel`（完成）、`002-suggestion-knowledge-search`、
-`003-analysis-trigger-policy`、`004-progressive-citations`（皆 implement 完成）。
+`003-analysis-trigger-policy`、`004-progressive-citations`（皆 implement 完成，
+共押 `m2-004-done`）、`005-m2-residual-defects`（2026-09-02 開立，收下方未關閉項目中
+**本 repo 有能力關閉**的四類；`m2-done` 之前的最後一份）。
 
 #### 驗收
 
@@ -2374,6 +2377,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       **15 秒對 2 波原本只剩約 15% 餘裕，而平台自身漂移約 36%** —— 餘裕小於已知漂移，遲早失守。
       ⚠️ 此處記錄的是**現況未定**，不是修法。真要修時唯一能縮短時間的槓桿是並行度
       （5 批次由 2 波變 1 波），但 MUST 配一次專門的並行度掃描（3→4→5，每檔兩列一起看）
+      —— **該掃描已歸屬 `specs/005-m2-residual-defects` US4**，其 FR-019 把採用判準寫死成
+      「總時間改善**且**單次失敗率未上升」，只有總時間變快 MUST NOT 作為採用理由
       ⚠️ **門檻由 10 秒改為 15 秒的同時也改了程式**，不是單純放寬：情緒的總時間
       **≈ ⌈批次數 ÷ 並行度⌉ × 單次延遲**，依序送出時 10 秒門檻**只在客戶發言 ≤ 6 則時成立**。
       改為 `SENTIMENT_CONCURRENCY = 3` 後中位由 16.9 秒降到 7.7 秒。
@@ -2433,7 +2438,10 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       中欄照常收發、草稿在離開對話後仍保留）
 - [x] 建議卡的 `sopId` 不在白名單即整卡丟棄（2026-08-29 實測：10 次帶命中的第二段生成中
       2 次整批捨棄、2 次部分捨棄）。⚠️ 「通過」指**防線有效**，不是模型不會杜撰——
-      44% 的呼叫至少含一張杜撰引用，該品質問題另案（004 spec SC-002）
+      44% 的呼叫至少含一張杜撰引用，該品質問題**已歸屬 `specs/005-m2-residual-defects` US3**
+      （004 spec SC-002）。⚠️ 005 承諾的是「答得出為什麼沒有引用」（未命中／未引用／
+      引用被捨棄三者可分辨）與強化我方組出的封閉命中清單，**不承諾把 80% 拉到 90%** ——
+      最強的槓桿是建議卡 agent 的 system prompt 與選型，兩者都在 iMBrace 後台、不在本 repo
 - [x] `confidence` 無真實分數來源時留空，不得以模型自評頂替（§11.6②）
       （`forceNullConfidence()` 在 Zod 之後強制覆寫；`test/suggestion-whitelist.test.ts`）
 - [x] Copilot 面板可見性依 003 FR-016～FR-017b：未 JOIN 時整欄不呈現、JOIN 時展開可收合、
@@ -2470,7 +2478,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       刻意背離畫布之處（字級、WCAG AA 的等效混色等）記於 `DESIGN_FEEDBACK.md`
 
 **未修的缺陷與未歸屬項目**（皆不報錯、皆不阻塞 004。前三條為真實環境挖出的缺陷，
-已決議另開 005 收；後兩條是 M2 期間發現、但**還沒有里程碑認領**的項目）
+**已於 2026-09-02 開立 `specs/005-m2-residual-defects` 認領**（US1 收前兩條、US2 收第三條）；
+後兩條是 M2 期間發現、但**還沒有里程碑認領**的項目）
 
 - [ ] **`registerCredential()` 雙分頁**：以 `(orgId, operatorId)` 為鍵，取消登記時無條件
       `byOperator.delete(operatorId)`。同一客服開兩分頁、關掉其一，會把仍開著那條的憑證一併移除
@@ -2645,11 +2654,11 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 待拍板（M3 開工前） | 憲法 5.3 的待修憲事項（與上一項**同進同出**） | `CONSTITUTION.md` 5.3 |
 | 驗收未定 | 摘要 10 秒、建議卡第一段 20 秒、情緒 15 秒 —— 三項皆未達 90%，但**單輪 n=15 判不動**（相隔 30 分鐘的兩輪結論相反）。門檻一律**不放寬** | §18 M2、§8.2b |
 | 量測規程 | 兩輪之間 MUST 留 ≥30 分鐘冷卻且跨時段；隔離單次量測 MUST NOT 用來預測驗收 | §8.2b |
-| 未修的缺陷 | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次 | §18 M2（決議另開 005） |
+| 未修的缺陷 | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次。**2026-09-02 已開立 `specs/005-m2-residual-defects` 認領**（US1／US2） | §18 M2 |
 | 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力 | §18 M2、§18 M4（**一起關閉**） |
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
 | 設計張力（非缺陷） | 正式路徑每 6 則切一批，落在分數帶界線上的句子會因批次組成而在 `frustrated`／`angry` 之間移動，示警圖示跟著在 ⚠️ 與 🔥 之間變。這是 prompt 規則 4「參考同批前後文」的必然代價，不是迴歸；24-A 已證實**固定批次下**是穩的 | §8.2b、附錄 C-3 |
-| 未做（衛生） | `callAgent()` 未傳 `user_id`，每次呼叫多一趟往返（值 54ms） | §8.2b |
+| 未做（衛生） | `callAgent()` 未傳 `user_id`，每次呼叫多一趟往返（值 54ms）。**2026-09-02 歸屬 `specs/005-m2-residual-defects` US4 / FR-021** | §8.2b |
 | 未建立 | `config/categories.yaml`（M3）、`supervisors.yaml`（隨主管接管）。⚠️ `sop.yaml` 不在此列 —— 該路徑已於 2026-08-28 撤銷，不是待辦 | §5 目錄結構 |
 | 未押 | tag `m2-004-done` | §18 M2 |
 | 文案先於行為 | `conversation.exitHint` 已對客服承諾「結案＝產生摘要供確認後寫入」，M2 尚未實作 | §18 M3 |
