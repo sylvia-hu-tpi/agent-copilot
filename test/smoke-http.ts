@@ -430,6 +430,31 @@ async function main(): Promise<void> {
     check('缺 clientId 回 400（少了它控制訊息會廣播給所有分頁）',
       noClient.status === 400, `實際 ${noClient.status}`)
 
+    console.log('\n── 005 連線層級存活心跳（FR-005a、憲法 1.1）──────────')
+    /**
+     * ⚠️ 這一段只有 smoke 驗得到：`beat.post.ts` 用了 Nitro auto-import，vitest 碰不得。
+     *    守的是憲法 1.1 —— 這支端點 MUST NOT 接受或回傳任何 token；身分一律從 session 取。
+     *    smoke 的憑證外洩掃描只掃它打過的 route，新端點不加進來等於沒掃。
+     */
+    const connBeat = await call('/api/connection/beat', {
+      method: 'POST',
+      body: JSON.stringify({ clientId: 'smoke-1' }),
+    })
+    check('POST /api/connection/beat 回 200', connBeat.status === 200, `實際 ${connBeat.status} ${connBeat.body}`)
+    check('回應只有 { ok: true }（不帶 connectionId、不帶任何憑證）',
+      connBeat.body === '{"ok":true}', connBeat.body)
+    assertNoSecrets('connection beat', connBeat.body, connBeat.setCookie)
+
+    const beatNoClient = await call('/api/connection/beat', { method: 'POST', body: JSON.stringify({}) })
+    check('缺 clientId 回 400（心跳沒有定址標籤就無事可做）', beatNoClient.status === 400, `實際 ${beatNoClient.status}`)
+
+    const beatWithToken = await call('/api/connection/beat', {
+      method: 'POST',
+      body: JSON.stringify({ clientId: 'smoke-1', accessToken: 'acc_INJECTED' }),
+    })
+    check('body 夾帶 token 會被忽略、不外洩、也不改變回應', beatWithToken.status === 200 && beatWithToken.body === '{"ok":true}',
+      `實際 ${beatWithToken.status} ${beatWithToken.body}`)
+
     console.log('\n── 登出 ────────────────────────────────────────────')
     const logout = await call('/api/auth/logout', { method: 'POST' })
     check('POST /api/auth/logout 回 200', logout.status === 200)

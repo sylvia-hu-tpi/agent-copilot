@@ -407,6 +407,45 @@ describe('004 FR-008：程式主動更新 MUST NOT 碰 Composer 草稿', () => {
   })
 })
 
+// ── specs/005-m2-residual-defects（US1：FR-006a、SC-002a；research.md #6）────────
+
+describe('005 FR-006a：主動離開 MUST NOT 接到連線計數上', () => {
+  const LEAVE = 'server/api/conversations/[id]/leave.post.ts'
+  /**
+   * 連線層級的識別項。⚠️ 清單裡的每一個名字 MUST 是**實際存在於程式碼的識別項**
+   * （下面有一條自檢逐一核對）—— 沒有 `unregisterCredential` 這支函式，移除是
+   * `registerCredential()` 回傳的閉包；寫一個不存在的名字進來，守衛會恆綠。
+   */
+  const CONNECTION_LEVEL = ['connectionId', 'releasePipeline', 'touchCredential', 'registerCredential'] as const
+  const serverFiles = filesUnder(resolve(ROOT, 'server'), ['.ts'])
+
+  /**
+   * 主動離開走 `removeJoinedConversation()`（per-operator 的持久紀錄）＋ 廣播 `control.updated`，
+   * 該客服**所有**分頁的面板一起消失（003 T032a 驗過的行為）；關掉分頁走
+   * `stream.onClosed()` → `releasePipeline()`，只少一條連線。**兩條路徑今天就是分開的。**
+   * 日後若有人為了「統一清理路徑」把 LEAVE 接到連線計數上，SC-002a 會靜默退步 ——
+   * 修好一個靜默缺陷、換來另一個。
+   */
+  it('leave.post.ts 不得出現任何連線層級識別項', () => {
+    const source = stripNonCode(readFileSync(resolve(ROOT, LEAVE), 'utf8'))
+    const offenders = CONNECTION_LEVEL.filter(name => new RegExp(`\\b${name}\\b`).test(source))
+    expect(offenders).toEqual([])
+  })
+
+  it.each(CONNECTION_LEVEL)('%s 確實存在於 server/ 的程式碼裡（否則上面那條是在驗一個不存在的名字）', (name) => {
+    const found = serverFiles.some(f => new RegExp(`\\b${name}\\b`).test(stripNonCode(readFileSync(f, 'utf8'))))
+    expect(found).toBe(true)
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 對著含識別項的程式碼抓得出來，且不被註解騙', () => {
+    const check = (s: string): boolean => CONNECTION_LEVEL.some(name => new RegExp(`\\b${name}\\b`).test(stripNonCode(s)))
+    expect(check('await releasePipeline(ctx.id, connectionId)')).toBe(true)
+    expect(check('cleanups.push(registerCredential({ connectionId }))')).toBe(true)
+    expect(check('// 不要在這裡呼叫 releasePipeline()')).toBe(false)
+    expect(check("throw new Error('connectionId 不可在此使用')")).toBe(false)
+  })
+})
+
 describe('對話清單查詢 MUST 走防腐層（skip → offset）', () => {
   /**
    * SDK 宣告的分頁參數是 `skip`，平台實際吃的是 `offset`；傳 `skip` 會回 200
