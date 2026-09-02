@@ -251,7 +251,7 @@ export class ImbraceAgentProvider implements AIProvider {
    * ⚠️ `id` 由本層以 `crypto.randomUUID()` 產生，不信任模型輸出——模型沒有理由知道
    *    穩定唯一的 id，比照 `analyzeSentiment()` 不信任模型給的 `messageId`/`at` 同一原則。
    *    其餘欄位原樣帶出，交由呼叫端的 `parseSuggestionCards()`（憲法 4.2）與
-   *    `whitelistFilter()`（憲法 4.3）驗證與後驗。
+   *    `whitelistFilter()`（`server/services/blocks/suggestion.ts`，憲法 4.3）驗證與後驗。
    */
   async suggest(input: {
     history: Message[]

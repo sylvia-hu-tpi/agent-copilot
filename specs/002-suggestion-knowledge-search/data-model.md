@@ -218,6 +218,10 @@ export interface KnowledgeSearchResponse {
 
 ```ts
 // server/services/copilot-analysis.ts 內部模組狀態，globalThis-keyed（HMR 安全，比照既有單例）
+// ⚠️ 2026-09-02 訂正：實作**從來就不是** globalThis-keyed，是普通的 `new Set()`，
+//    因此它與分析管線其餘七份執行期狀態一樣是 process-local，多副本下上限會變成 N × 10
+//    而不報錯。本行保留原文以存記錄，但 MUST NOT 據它認定該狀態已跨副本安全。
+//    正典敘述在 docs/ARCHITECTURE.md §18 M2「分析管線拆檔」的 📌 註記，§18 M4 有對應驗收項。
 const BACKGROUND_CONCURRENCY_LIMIT = 10
 const backgroundInFlight = new Set<string>() // conversationId
 ```

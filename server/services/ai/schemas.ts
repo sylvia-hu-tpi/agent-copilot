@@ -122,7 +122,7 @@ export function parseSentimentPoints(raw: unknown[]): SentimentPoint[] {
  * ⚠️ 這裡只管「格式對不對」。`sopId` 是否真的存在於本次 `knowledgeHits` 集合裡是
  *    另一層業務白名單檢查（憲法 4.3），刻意不放進這個 schema——
  *    `knowledgeHits` 是呼叫當下的動態上下文，硬塞進 schema 會讓 schema 定義依賴呼叫時的參數
- *    （見 server/services/copilot-analysis.ts::whitelistFilter()，research.md #6）。
+ *    （見 server/services/blocks/suggestion.ts::whitelistFilter()，research.md #6）。
  *
  * ⚠️ `tone` 是必要展示欄位（不像 `riskFlags` 可安全省略），列舉外一律視為該卡驗證失敗。
  */
