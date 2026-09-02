@@ -558,14 +558,31 @@ async function main(): Promise<void> {
     //    連線**。原本這裡用的是 B（從未 JOIN），那條斷言驗的是已被推翻的行為。改用 A 自己的
     //    第二個分頁重連 —— 001 FR-010 的 2 秒門檻**不得退步**（SC-005）。
     //
-    // ⚠️ **關閉順序有意義，不可對調**（2026-08-28 踩到）：`registerCredential()` 以
-    //    `(orgId, operatorId)` 為鍵，取消登記時**無條件刪掉該 operator 的那一筆** ——
-    //    同一位客服的第二條連線關閉時，會把還開著的第一條連線的憑證一併移除，
-    //    於是 `borrowCredential()` 回 null、兩層輪詢全部拉回空陣列，之後的場景會在
-    //    「訊息根本沒被偵測到」這一層逾時（症狀看起來像分析壞了，實際是取數停了）。
-    //    因此這裡**先關掉 A 既有的兩條連線，再開新的那一條** —— 新連線的登記
-    //    才不會被隨後的關閉動作抹掉。⚠️ 這是既有缺陷的迴避，不是本規格造成的。
+    // ⚠️ **2026-09-02 改寫（specs/005-m2-residual-defects US1、SC-001）**：這裡原本是「先關掉 A 既有的
+    //    兩條連線、再開新的那一條」—— 因為 `registerCredential()` 以 `(orgId, operatorId)` 為鍵，同一位客服
+    //    的第二條連線關閉時會把還開著的第一條連線的憑證一併移除，`borrowCredential()` 回 null、兩層輪詢
+    //    全部拉回空陣列，畫面正常但訊息再也不進來。那是既有缺陷的**迴避**。
+    //    005 把登記與 `session.watchers` 都改以連線為單位，這一段因此改成**真實情境**：關掉 A 的第二個
+    //    分頁，斷言第一個分頁仍在 4 秒內收到新訊息。這是 `connectionId` 從 `stream.get.ts` 一路接到
+    //    `registerCredential()`／`watchConversation()` 的接線**唯一**能自動化驗到的地方
+    //    （`test/connection-counting.test.ts` 只驗 registry，碰不到 route）。
     streamA2.close()
+    await sleep(300)
+
+    const cursorA1 = streamA.cursor()
+    const afterTabCloseAt = Date.now()
+    gateway.pushMessage('con_1', '客戶：關掉一個分頁之後這句還看得到嗎')
+    const stillAlive = await streamA.waitFor(
+      e => appendedTexts(e).includes('客戶：關掉一個分頁之後這句還看得到嗎'),
+      { since: cursorA1, label: 'A 關掉第二個分頁後仍收到新訊息', timeoutMs: DELIVERY_BUDGET_MS },
+    )
+    check(
+      '同一客服關掉其中一個分頁，另一個分頁仍在 4 秒內收到新訊息（005 SC-001；修正前 100% 失聯）',
+      stillAlive.at - afterTabCloseAt <= DELIVERY_BUDGET_MS,
+      `實際 ${stillAlive.at - afterTabCloseAt}ms`,
+    )
+
+    // 之後的場景沿用「A 只有一條全新連線」的前提 —— 這裡才把第一個分頁也關掉
     streamA.close()
     await sleep(300)
 
