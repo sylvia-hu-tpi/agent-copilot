@@ -2160,9 +2160,11 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       （`forceNullConfidence()` 在 Zod 之後強制覆寫；`test/suggestion-whitelist.test.ts`）
 - [x] Copilot 面板可見性依 003 FR-016～FR-017b：未 JOIN 時整欄不呈現、JOIN 時展開可收合、
       收合狀態 per 客服 per 對話存 `localStorage`，且伺服器不推分析事件給未 JOIN 的連線（FR-016a）
-      ⚠️ FR-016a 的真實環境驗證**缺一組第二個客服帳號**（真實登入是 email + OTP），
-      目前只有自動化涵蓋（`test/stream-analysis-visibility.test.ts`、`smoke:realtime`）。
-      MUST NOT 以同一帳號兩分頁替代——那驗的是別的東西
+      ⚠️ FR-016a 的真實環境驗證**已於 2026-09-02 以兩個不同的客服帳號在 stable 完成**
+      （四項判準全數符合），自動化涵蓋另見 `test/stream-analysis-visibility.test.ts`、`smoke:realtime`。
+      **重跑時**：MUST NOT 以同一帳號兩分頁替代（那是 T032a 的情境，驗的是別的東西）；
+      「未 JOIN 端收不到」MUST 用 DevTools 的 EventStream 從**連線建立起**確認 ——
+      只在前端隱藏而伺服器照推時，畫面看起來一模一樣
 - [x] SC-001：注入 AI 故障後靜置 10 分鐘且無新發言，分析嘗試不超過 1 輪（對照修正前約 30 輪）
       2026-08-28 實測新增 0 次。⚠️ 這項**只有故障注入驗得出來**，自動化全綠不代表止血成功
 - [x] SC-002：離開或結案後 5 秒內不再有新分析事件，中欄與草稿不受影響
@@ -2365,7 +2367,6 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 未押 | tag `m2-004-done` | §18 M2 |
 | 文案先於行為 | `conversation.exitHint` 已對客服承諾「結案＝產生摘要供確認後寫入」，M2 尚未實作 | §18 M3 |
 | UI 缺口 | Composer 的夾帶檔案按鈕（卡在 H-6c，**刻意不放 disabled 佔位鈕**） | §18 M2 |
-| 驗證缺口 | 003 FR-016a 缺一組第二個客服帳號做真實環境驗證 | §18 M2 |
 | 待對方回覆 | 見 §19.1 風險表與 `IMBRACE_QUESTIONS.md`（🔴：#19 RAG 品質、#24 內部中繼訊息） | §19.1／§19.2 |
 
 ---
