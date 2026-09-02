@@ -31,12 +31,16 @@ description: "M2 遺留缺陷與量測補強 —— 實作任務清單"
 `test/`（vitest）／`scripts/spike/`（真實環境量測）。
 本規格新增一個目錄：`server/api/connection/`（Nitro 檔案路由慣例）。
 
-⚠️ **分支名 `feat/m2-copilot-panel` 不含 `005`**，`check-prerequisites.ps1` 會依分支名解析到
-`004-progressive-citations`（2026-09-02 `/speckit-analyze` 實際發生）。執行任何 speckit 指令前先設：
+⚠️ **分支名 `feat/m2-copilot-panel` 不含 `005`**，`check-prerequisites.ps1` 會依
+`.specify/feature.json` 持久化的目錄解析（2026-09-02 `/speckit-analyze` 時它還指著 004）。
+覆寫用的環境變數是 **`SPECIFY_FEATURE_DIRECTORY`**（`SPECIFY_FEATURE` 只影響分支名，對目錄無效），
+設一次就會寫回 `feature.json`，之後不必再帶：
 
 ```powershell
-$env:SPECIFY_FEATURE = '005-m2-residual-defects'
+$env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 ```
+
+（2026-09-02 `/speckit-implement` 已執行過一次，`feature.json` 目前指向 005。）
 
 ---
 
@@ -109,8 +113,8 @@ $env:SPECIFY_FEATURE = '005-m2-residual-defects'
 
 **Purpose**: 讓「本規格造成的紅」與「動工前就有的紅」分得開
 
-- [ ] T001 執行 `npm run spike:agent-prompts`，確認四個 agent 的 system prompt 與 `docs/AGENT_PROMPTS.md` 快照逐字元相同；有差異時**先停下來**釐清，不要帶著漂移的 prompt 開始
-- [ ] T002 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，記錄動工前全綠（或既有的紅）作為基線
+- [x] T001 執行 `npm run spike:agent-prompts`，確認四個 agent 的 system prompt 與 `docs/AGENT_PROMPTS.md` 快照逐字元相同；有差異時**先停下來**釐清，不要帶著漂移的 prompt 開始
+- [x] T002 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，記錄動工前全綠（或既有的紅）作為基線（2026-09-02：四個 agent prompt 與快照一致；typecheck 綠；37 檔 462 測試全綠；build 綠；smoke:flow 與 smoke:realtime 全過）
 
 ---
 
@@ -120,7 +124,7 @@ $env:SPECIFY_FEATURE = '005-m2-residual-defects'
 
 **⚠️ CRITICAL**: 本階段完成前，US1／US2 無法開始（US3／US4 不受此阻塞）
 
-- [ ] T003 在 `server/state/types.ts` 同時改兩處：① `CopilotSession.watchers` 由 `string[]` 改為 `Array<{ operatorId: string, connectionId: string }>`；② `CopilotAnalysisState` 新增 server-only 欄位 `sentimentGap: boolean`（預設 `false`）。兩者在同一個檔案，**不可平行**；此時 `npm run typecheck` 會紅，那正是本任務的目的——它會逐一指出所有需要改的呼叫點
+- [x] T003 在 `server/state/types.ts` 同時改兩處（`sentimentGap` 以 optional 布林落地：`undefined` 與 `false` 同義，避免既有測試裡手寫的 `CopilotAnalysisState` 字面值全部要補欄位；判斷一律寫 `=== true`）：① `CopilotSession.watchers` 由 `string[]` 改為 `Array<{ operatorId: string, connectionId: string }>`；② `CopilotAnalysisState` 新增 server-only 欄位 `sentimentGap: boolean`（預設 `false`）。兩者在同一個檔案，**不可平行**；此時 `npm run typecheck` 會紅，那正是本任務的目的——它會逐一指出所有需要改的呼叫點
 
 **Checkpoint**: 型別已就位，US1 與 US2 可以開始（US3／US4 從一開始就可平行）
 
@@ -137,29 +141,29 @@ $env:SPECIFY_FEATURE = '005-m2-residual-defects'
 
 > 先寫測試並確認它們**會紅**，再實作。這一組測試就是本 story「壞掉時會變紅的東西」。
 
-- [ ] T004 [P] [US1] 在 `test/connection-counting.test.ts` 建立不變式 I-1／I-2／I-3（憑證登記）：一條連線一筆登記、逾期登記不被 `borrowCredential()` 回傳、`hasForegroundOperator()` ＝任一登記為前景
-- [ ] T005 [P] [US1] 在 `test/connection-counting.test.ts` 建立**不變式 I-4** —— `session.watchers.length === pipeline.refs`，對「同一客服兩條連線」「兩位客服各一條」「異常中斷」三組情境各驗一次。⚠️ 測試名稱與註解 MUST 標明它驗的是**單副本**（`pipeline.refs` 是 process-local，多副本下這條等式本來就不成立，見 data-model.md §2）
-- [ ] T006 [P] [US1] 在 `test/connection-counting.test.ts` 建立 contracts/connection-lifecycle.md §3 的四個情境（關一條／session 不刪／全關才清／不同客服互不影響）
-- [ ] T007 [P] [US1] 在 `test/connection-counting.test.ts` 建立存活兜底測試：以假時鐘推進超過 `CREDENTIAL_TTL_MS`，驗證逾期登記被回收；心跳抵達後不被回收。⚠️ **MUST 另加兩條「漏拍後」測試**（必讀 3a）：
+- [x] T004 [P] [US1] 在 `test/connection-counting.test.ts` 建立不變式 I-1／I-2／I-3（憑證登記）：一條連線一筆登記、逾期登記不被 `borrowCredential()` 回傳、`hasForegroundOperator()` ＝任一登記為前景
+- [x] T005 [P] [US1] 在 `test/connection-counting.test.ts` 建立**不變式 I-4**（⚠️ 實作時發現 `session-manager.ts` 經 `copilot-runtime.ts` 用到 Nitro auto-import，vitest／tsc 不能 import 它；計數核心因此抽成 `server/services/session-registry.ts`，等式的兩邊都在那裡，測試對它驗） —— `session.watchers.length === pipeline.refs`，對「同一客服兩條連線」「兩位客服各一條」「異常中斷」三組情境各驗一次。⚠️ 測試名稱與註解 MUST 標明它驗的是**單副本**（`pipeline.refs` 是 process-local，多副本下這條等式本來就不成立，見 data-model.md §2）
+- [x] T006 [P] [US1] 在 `test/connection-counting.test.ts` 建立 contracts/connection-lifecycle.md §3 的四個情境（關一條／session 不刪／全關才清／不同客服互不影響）
+- [x] T007 [P] [US1] 在 `test/connection-counting.test.ts` 建立存活兜底測試：以假時鐘推進超過 `CREDENTIAL_TTL_MS`，驗證逾期登記被回收；心跳抵達後不被回收。⚠️ **MUST 另加兩條「漏拍後」測試**（必讀 3a）：
   ① **漏拍後重建（upsert）**：推進 60 秒（模擬背景分頁被節流成每分鐘一拍）後，**先呼叫 `borrowCredential()` 觸發惰性剔除、斷言登記數為 0**，再送一拍心跳，斷言登記**被重新建立**（新 `connectionId`）且 `borrowCredential()` 又回得出來。⚠️ 回收是惰性的（research #4）——推進時鐘本身**不會移除任何東西**；少了那一步讀取，心跳只是刷新了仍在 Map 裡的舊筆，upsert 分支從未被執行而測試全綠。
   ② **漏拍後刷新（不重建）**：推進 60 秒但**不**讀取，直接送一拍心跳，斷言舊筆被刷新、`connectionId` **不變**、登記數仍為 1（contracts §4「定址時不先套 TTL 濾網」）。
   少了 ①，兜底自己就是缺陷而沒有東西會變紅；少了 ②，「先套濾網」的寫法會通過 ①
-- [ ] T008 [P] [US1] 在 `test/connection-counting.test.ts` 建立**複製分頁**測試：兩條連線帶**相同** `clientId`，驗證 ① 關掉其中一條不影響另一條、② 一次心跳把兩筆的 `lastSeenAt` 都更新（研究 #1／#2 的兩個坑各對應一條斷言）
-- [ ] T009 [P] [US1] 在 `test/connection-counting.test.ts` 建立 **I-7／I-8 夾擊測試**：主動離開對該客服**所有**連線生效、連線關閉只影響該條連線。⚠️ 兩條 MUST 同時存在——只驗其中一條時，把兩條路徑合併的錯誤修法會通過測試（SC-002a）
+- [x] T008 [P] [US1] 在 `test/connection-counting.test.ts` 建立**複製分頁**測試：兩條連線帶**相同** `clientId`，驗證 ① 關掉其中一條不影響另一條、② 一次心跳把兩筆的 `lastSeenAt` 都更新（研究 #1／#2 的兩個坑各對應一條斷言）
+- [x] T009 [P] [US1] 在 `test/connection-counting.test.ts` 建立 **I-7／I-8 夾擊測試**：主動離開對該客服**所有**連線生效、連線關閉只影響該條連線。⚠️ 兩條 MUST 同時存在——只驗其中一條時，把兩條路徑合併的錯誤修法會通過測試（SC-002a）
 
 ### Implementation for User Story 1
 
-- [ ] T010 [US1] 改寫 `server/services/credentials.ts`：registry 形狀改為 `Map<orgId, Map<connectionId, PollingCredential>>`；`PollingCredential` 加 `connectionId`／`clientId`／`lastSeenAt`；`registerCredential()` 收 `connectionId` 與 `clientId`，回傳的 unsubscribe 只移除該筆
-- [ ] T011 [US1] 在 `server/services/credentials.ts` 加入 `CREDENTIAL_TTL_MS = 45_000`／`CREDENTIAL_HEARTBEAT_MS = 20_000`，並在 `borrowCredential()`／`hasForegroundOperator()`／`registeredOrgIds()` 三個讀取點做**惰性剔除**（research.md #4：不加計時器，理由寫進註解）
-- [ ] T012 [US1] 在 `server/services/credentials.ts` 新增 `touchCredential(cred)`，更新**命中的全部**登記的 `lastSeenAt`（⚠️ 定址時**不先套 TTL 濾網**：逾期但尚未被讀取剔除的舊筆直接刷新、`connectionId` 保留，contracts §4），**命中 0 筆時以傳入的身分與憑證新增一筆**（upsert，`connectionId` 現場 `crypto.randomUUID()` 另產）；`setCredentialActivity()` 簽章加 `clientId`，同樣更新全部命中者（但**不** upsert —— 活躍度沒有登記可依附時本來就無事可做）。⚠️ 兩者都 MUST NOT 寫成「取一筆」（複製分頁共用 clientId），且 `touchCredential()` 的 upsert **不是保險而是必要**——理由（背景分頁計時器節流 > TTL）MUST 寫進註解，見必讀 3a
-- [ ] T013 [US1] 新增 `server/api/connection/beat.post.ts`：body 只有 `clientId`（Zod 驗證），以 `requireActiveBffSession(event)` 取得 `operatorId`／`orgId`／`accessToken`（與 `stream.get.ts:48` 同一來源）後呼叫 `touchCredential()`，回傳 `{ ok: true }`。upsert 時的 `connectionId` **由 server 現場另產**——`connectionId` 維持「永不離開 server」，body 一如既往只有 `clientId`。⚠️ **MUST NOT** 接受或回傳任何 token（憲法 1.1）——身分一律從 session 取，不從 body 取
-- [ ] T014 [US1] 修改 `server/api/stream.get.ts`：連線建立時 `const connectionId = crypto.randomUUID()`；`registerCredential()` 帶上 `connectionId` 與 `clientId`；`attach()` 內的 `watchConversation()` 帶上 `connectionId`
-- [ ] T015 [US1] 修改 `server/services/session-manager.ts`：`WatchRequest` 加 `connectionId`；`upsertSession()` 每條連線各推一筆（不再以 operatorId 去重）；`releasePipeline()` 收 `connectionId` 並只 filter 掉該筆
-- [ ] T016 [US1] 在 `server/services/session-manager.ts` 調整 `isResume` 的判準與註解：新語意是「這個對話在我 attach 之前已經有人在看」。⚠️ 這是**行為變更**（同一客服的第二個分頁由 `join` 變成 `resume`），MUST 在註解裡寫明，並確認 `session.opened` 的 `reason` 仍無前端消費者
-- [ ] T017 [US1] 修改 `server/api/presence.post.ts`：`setCredentialActivity()` 呼叫帶上 body 既有的 `clientId`
-- [ ] T018 [US1] 在 `app/stores/stream.ts` 加入連線層級心跳：SSE 連線建立後每 `CREDENTIAL_HEARTBEAT_MS`（20 秒）打一次 `POST /api/connection/beat`，**與有沒有進入對話無關**；連線關閉時停止。⚠️ 與 presence 心跳是**兩支獨立**的心跳，回答的是不同問題，MUST NOT 合併
-- [ ] T019 [US1] 在 `test/contract-guards.test.ts` 新增守衛：`server/api/conversations/[id]/leave.post.ts` **MUST NOT** 出現 `connectionId`／`releasePipeline`／`touchCredential`／`registerCredential` 這四個連線層級識別項——防止日後有人為了「統一清理路徑」把主動離開接到連線計數上（research.md #6）。⚠️ 清單裡的每一個名字 MUST 是**實際存在於程式碼的識別項**（沒有 `unregisterCredential` 這支函式——移除是 `registerCredential()` 回傳的閉包），並比照 T033／T046 加上「守衛本身有效」的自檢，否則守衛會恆綠
-- [ ] T020 [US1] 先把 `POST /api/connection/beat` **加進 `scripts/smoke` 的 `smoke:flow` 呼叫序列與憑證外洩掃描**（回應只允許 `{ ok: true }`；憲法 1.1），再執行 `npm run build && npm run smoke`（含 `smoke:realtime` 的兩位客服／兩條 SSE），確認 HTTP route 與 cookie 往返正常且憑證不外洩。⚠️ smoke 的掃描只掃它打過的 route，新端點不加進去等於沒掃
+- [x] T010 [US1] 改寫 `server/services/credentials.ts`：registry 形狀改為 `Map<orgId, Map<connectionId, PollingCredential>>`；`PollingCredential` 加 `connectionId`／`clientId`／`lastSeenAt`；`registerCredential()` 收 `connectionId` 與 `clientId`，回傳的 unsubscribe 只移除該筆
+- [x] T011 [US1] 在 `server/services/credentials.ts` 加入 `CREDENTIAL_TTL_MS = 45_000`／`CREDENTIAL_HEARTBEAT_MS = 20_000`，並在 `borrowCredential()`／`hasForegroundOperator()`／`registeredOrgIds()` 三個讀取點做**惰性剔除**（research.md #4：不加計時器，理由寫進註解）
+- [x] T012 [US1] 在 `server/services/credentials.ts` 新增 `touchCredential(cred)`，更新**命中的全部**登記的 `lastSeenAt`（⚠️ 定址時**不先套 TTL 濾網**：逾期但尚未被讀取剔除的舊筆直接刷新、`connectionId` 保留，contracts §4），**命中 0 筆時以傳入的身分與憑證新增一筆**（upsert，`connectionId` 現場 `crypto.randomUUID()` 另產）；`setCredentialActivity()` 簽章加 `clientId`，同樣更新全部命中者（但**不** upsert —— 活躍度沒有登記可依附時本來就無事可做）。⚠️ 兩者都 MUST NOT 寫成「取一筆」（複製分頁共用 clientId），且 `touchCredential()` 的 upsert **不是保險而是必要**——理由（背景分頁計時器節流 > TTL）MUST 寫進註解，見必讀 3a
+- [x] T013 [US1] 新增 `server/api/connection/beat.post.ts`：body 只有 `clientId`（Zod 驗證），以 `requireActiveBffSession(event)` 取得 `operatorId`／`orgId`／`accessToken`（與 `stream.get.ts:48` 同一來源）後呼叫 `touchCredential()`，回傳 `{ ok: true }`。upsert 時的 `connectionId` **由 server 現場另產**——`connectionId` 維持「永不離開 server」，body 一如既往只有 `clientId`。⚠️ **MUST NOT** 接受或回傳任何 token（憲法 1.1）——身分一律從 session 取，不從 body 取
+- [x] T014 [US1] 修改 `server/api/stream.get.ts`：連線建立時 `const connectionId = crypto.randomUUID()`；`registerCredential()` 帶上 `connectionId` 與 `clientId`；`attach()` 內的 `watchConversation()` 帶上 `connectionId`
+- [x] T015 [US1] 修改 `server/services/session-manager.ts`（計數本體移至 `session-registry.ts`：`attachWatcher()`／`acquirePipeline()`／`detachWatcher()`／`releasePipelineRef()`；`session-manager.ts` 只接 `messageSource` 訂閱與 EventBus 推播）：`WatchRequest` 加 `connectionId`；`upsertSession()` 每條連線各推一筆（不再以 operatorId 去重）；`releasePipeline()` 收 `connectionId` 並只 filter 掉該筆
+- [x] T016 [US1] 在 `server/services/session-manager.ts` 調整 `isResume` 的判準與註解：新語意是「這個對話在我 attach 之前已經有人在看」。⚠️ 這是**行為變更**（同一客服的第二個分頁由 `join` 變成 `resume`），MUST 在註解裡寫明，並確認 `session.opened` 的 `reason` 仍無前端消費者
+- [x] T017 [US1] 修改 `server/api/presence.post.ts`：`setCredentialActivity()` 呼叫帶上 body 既有的 `clientId`
+- [x] T018 [US1] 在 `app/stores/stream.ts` 加入連線層級心跳（常數 `CONNECTION_HEARTBEAT_MS` 住在 `shared/types/events.ts`，server 端的 `CREDENTIAL_HEARTBEAT_MS` 是同一個 binding；`vitest.config.ts` 因此補上 `#shared` alias，否則 app 檔的值匯入在 vitest 下 `Cannot find module`）：SSE 連線建立後每 `CREDENTIAL_HEARTBEAT_MS`（20 秒）打一次 `POST /api/connection/beat`，**與有沒有進入對話無關**；連線關閉時停止。⚠️ 與 presence 心跳是**兩支獨立**的心跳，回答的是不同問題，MUST NOT 合併
+- [x] T019 [US1] 在 `test/contract-guards.test.ts` 新增守衛：`server/api/conversations/[id]/leave.post.ts` **MUST NOT** 出現 `connectionId`／`releasePipeline`／`touchCredential`／`registerCredential` 這四個連線層級識別項——防止日後有人為了「統一清理路徑」把主動離開接到連線計數上（research.md #6）。⚠️ 清單裡的每一個名字 MUST 是**實際存在於程式碼的識別項**（沒有 `unregisterCredential` 這支函式——移除是 `registerCredential()` 回傳的閉包），並比照 T033／T046 加上「守衛本身有效」的自檢，否則守衛會恆綠
+- [x] T020 [US1] 先把 `POST /api/connection/beat` **加進 `scripts/smoke` 的 `smoke:flow` 呼叫序列與憑證外洩掃描**（回應只允許 `{ ok: true }`；憲法 1.1），再執行 `npm run build && npm run smoke`（含 `smoke:realtime` 的兩位客服／兩條 SSE），確認 HTTP route 與 cookie 往返正常且憑證不外洩。⚠️ smoke 的掃描只掃它打過的 route，新端點不加進去等於沒掃
 
 **Checkpoint**: US1 可獨立驗收。單獨交付這一條就已消除一類客服會回報「訊息不見了」的事故。
 
