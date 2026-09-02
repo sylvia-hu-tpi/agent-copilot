@@ -42,7 +42,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { env, isMain, loadEnv, OUT_DIR, ROOT, SkipProbe } from './lib/harness.js'
-import { fallbackInputs } from './21-progressive-citations.js'
+import { budgetStats, fallbackInputs, percentile } from './21-progressive-citations.js'
 
 const DEFAULT_TIERS = [3, 4, 5]
 const DEFAULT_ROUNDS = 3
@@ -89,9 +89,9 @@ interface TierStats {
   calls: { n: number, medianMs: number | null, p90Ms: number | null, maxMs: number | null, failed: number, failedRate: number | null, overTimeout: number, overTimeoutRate: number | null, peakInFlight: number }
 }
 
-function percentile(sorted: number[], p: number): number | null {
-  if (sorted.length === 0) return null
-  return sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)] ?? null
+/** 21 號的 `percentile()` 對空陣列回 0；這裡的表格要能分辨「沒有樣本」，包一層回 null */
+function pctOrNull(sorted: number[], p: number): number | null {
+  return sorted.length === 0 ? null : percentile(sorted, p)
 }
 
 function rotate<T>(items: T[], round: number): T[] {
@@ -139,32 +139,31 @@ function runTier(round: number, tier: number, order: number, targets: string[], 
 
 function aggregate(tier: number, runs: Run[]): TierStats {
   const samples = runs.flatMap(r => r.samples).filter(s => !s.error)
-  const landed = samples.map(s => s.sentimentReadyMs).filter((v): v is number => v !== null).sort((a, b) => a - b)
+  const landed = samples.map(s => s.sentimentReadyMs).filter((v): v is number => v !== null)
   const n = samples.length
-  // 第 90 百分位落在「已落地值 ++ 未落地(+∞)」這個長度 n 的序列上（與 21 號的 budgetStats 同一個定義）
-  const p90Index = Math.ceil(0.9 * n) - 1
+  // ⚠️ 直接用 21 號的 budgetStats()：未落地者計為未達且進分母 —— 與 SC-005 的判定是同一把尺
+  const block = budgetStats(landed, SENTIMENT_BUDGET_MS, n)
   const calls = samples.flatMap(s => s.sentimentCalls ?? [])
   const callMs = calls.map(c => c.elapsedMs).sort((a, b) => a - b)
   const failed = calls.filter(c => !c.ok).length
   const over = calls.filter(c => c.elapsedMs > CALL_TIMEOUT_MS).length
-  const withinBudget = landed.filter(v => v <= SENTIMENT_BUDGET_MS).length
   return {
     tier,
     runs: runs.length,
     n,
     block: {
-      landed: landed.length,
-      missing: n - landed.length,
-      medianMs: percentile(landed, 0.5),
-      p90Ms: n > 0 && p90Index < landed.length ? landed[p90Index]! : null,
-      maxMs: landed[landed.length - 1] ?? null,
-      withinBudget,
-      passRate: n > 0 ? withinBudget / n : null,
+      landed: block.n,
+      missing: block.missing,
+      medianMs: block.n > 0 ? block.medianMs : null,
+      p90Ms: block.p90Ms,
+      maxMs: block.n > 0 ? block.maxMs : null,
+      withinBudget: block.withinBudget,
+      passRate: n > 0 ? block.withinBudget / n : null,
     },
     calls: {
       n: calls.length,
-      medianMs: percentile(callMs, 0.5),
-      p90Ms: percentile(callMs, 0.9),
+      medianMs: pctOrNull(callMs, 0.5),
+      p90Ms: pctOrNull(callMs, 0.9),
       maxMs: callMs[callMs.length - 1] ?? null,
       failed,
       failedRate: calls.length > 0 ? failed / calls.length : null,

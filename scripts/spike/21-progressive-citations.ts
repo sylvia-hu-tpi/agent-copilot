@@ -338,7 +338,8 @@ function instrumentProviders(startedAt: () => number) {
   }
 }
 
-function percentile(sorted: number[], p: number): number {
+/** ⚠️ 匯出給 26 號共用：p90 的取法（nearest-rank）只維護這一份 */
+export function percentile(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0
   return sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)]!
 }
@@ -374,8 +375,11 @@ function fmtBudget(ms: number | null, budgetMs: number): string {
  *    最後面（視為 +∞），第 90 百分位落在未落地那一段時 `p90Ms` 為 `null`。
  *
  * @param n 分母＝**可用樣本總數**，不是 `values.length`
+ *
+ * ⚠️ 匯出給 26 號（並行度掃描）共用：FR-019 的「總時間改善」與 SC-005 的判定 MUST 是同一把尺，
+ *    抄一份過去就是兩把尺。
  */
-function budgetStats(values: number[], budgetMs: number, n: number) {
+export function budgetStats(values: number[], budgetMs: number, n: number) {
   const sorted = [...values].sort((a, b) => a - b)
   const withinBudget = sorted.filter(v => v <= budgetMs).length
   // 第 90 百分位在「已落地值 ++ 未落地(+∞)」這個長度 n 的序列上的索引
