@@ -59,11 +59,18 @@ export async function runBlockDeduped(
     }
   })()
   analysisInFlight.set(key, task)
-  await task
 
-  const rerun = analysisRerunPending.get(key)
-  if (rerun) {
-    analysisRerunPending.delete(key)
-    await runBlockDeduped(conversationId, block, rerun)
+  // ⚠️ 進行中的那次即使拋出，等待中的 rerun 也 MUST 被消化掉：留在 Map 裡的閉包會在幾分鐘後
+  //    下一次成功的觸發之後被「補跑」，那時它手上的訊息早已過期。各分析入口自己會 catch AI 失敗，
+  //    這裡防的是它們之外的意外（例如狀態層拋錯）。
+  try {
+    await task
+  }
+  finally {
+    const rerun = analysisRerunPending.get(key)
+    if (rerun) {
+      analysisRerunPending.delete(key)
+      await runBlockDeduped(conversationId, block, rerun)
+    }
   }
 }

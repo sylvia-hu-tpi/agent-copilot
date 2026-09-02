@@ -154,7 +154,9 @@ export interface ExchangeResult {
  *    而設定它的 `client.http` 在 SDK 中是 private。
  *
  *    因此這裡複製 selectOrganization 的前半段（setOrganizationId）再自行 exchange。
- *    **這個 cast 是整個專案唯一允許存取 SDK private 成員的地方** ——
+ *    **存取 SDK private 成員的 cast 全部關在本檔**（本函式的 `http.setOrganizationId`、
+ *    `searchConversations()` 的 `http.getFetch`／`v1`、`resolveAiClientUserId()` 的
+ *    `aiAgent.http`／`base`；2026-09-02 起不再是「唯一一處」，但仍是唯一一個檔案）——
  *    若 SDK 日後開放保留 refresh_token 的官方做法，只需改這一個函式。
  */
 export async function exchangeOrganizationToken(

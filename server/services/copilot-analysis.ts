@@ -325,9 +325,20 @@ async function analyzeSummary(
 
     await beginAnalyzing(conversationId, 'summary')
 
+    /**
+     * ⚠️ 增量情境的 `previousSummary` MUST 在**回呼內**從 state 重讀，不能用觸發當下捕捉的那份
+     *    （2026-09-02，005 code review 抓到）：`runBlockDeduped()` 的 rerun 跑的是最新那次觸發的閉包，
+     *    而它的 `previousSummary` 是在前一批還在飛時讀的 —— 前一批落地後 rerun 拿舊摘要 ＋ 新訊息
+     *    重算，前一批的事實從摘要裡消失、`basedOnMessageId` 直接跳過它們，不報錯。
+     *    冷啟動與手動重試傳 `undefined`（全量歷史），維持 undefined。
+     */
+    const previousSummary = input.previousSummary === undefined
+      ? undefined
+      : (await useStateStore().getAnalysisState(conversationId))?.summaryBlock.summary ?? input.previousSummary
+
     try {
       const outcome = await withRetry(
-        async () => parseConversationSummary(await useAIProvider().summarize(input)),
+        async () => parseConversationSummary(await useAIProvider().summarize({ history: input.history, previousSummary })),
         { onRetry: info => publishRetrying(conversationId, 'summary', info) },
       )
 
@@ -499,8 +510,10 @@ async function narrateSentimentTrend(conversationId: string): Promise<void> {
  *    與 `stream.get.ts` 重連快照對 `lastCoveredMessageId() === null` 的處理相同（spec FR-008）。
  *
  * ⚠️ **MUST 在 `runBlockDeduped()` 的回呼內呼叫**：併發觸發會合併成 rerun，rerun 重新執行的是
- *    **第一次**的閉包（同一組 `messages`）。缺口在回呼內從**當下**的時間軸重算，
- *    rerun 才看得到前一輪剛落地的點 —— 同一則客戶發言只送進 AI 一次（spec Edge Case「補算與新發言同時發生」）。
+ *    **最新那次觸發**的閉包（`analysis-dedupe.ts`，2026-09-02 起）—— 而那批訊息很可能已被前一輪的
+ *    補算當作缺口撈進來評完（它們在平台上早就存在）。缺口在回呼內從**當下**的時間軸重算、
+ *    並先濾掉已在時間軸上的訊息（下方 `fresh`，**不是多餘的**），同一則客戶發言才只送進 AI 一次
+ *    （spec Edge Case「補算與新發言同時發生」，`test/sentiment-backfill.test.ts` 的併發測試守著）。
  */
 async function resolveSentimentInput(
   conversationId: string,
@@ -520,7 +533,20 @@ async function resolveSentimentInput(
   const freshIds = new Set(fresh.map(m => m.id))
 
   const anchor = state.sentimentBlock.timeline[0]?.messageId ?? null
-  const history = await resolveHistory(conversationId, anchor)
+  let history: Message[]
+  try {
+    history = await resolveHistory(conversationId, anchor)
+  }
+  catch (err) {
+    /**
+     * ⚠️ 取歷史是一趟 REST 往返，MUST NOT 讓它的失敗往外拋：這裡在 `runBlockDeduped()` 的回呼內、
+     *    AI 呼叫的 try/catch 之外，拋出去會讓 `void runIncremental()` 變成 unhandled rejection ——
+     *    Copilot 的故障拖垮主線（憲法 3.1）。降級為「這一輪不補、只分析新發言」，旗標維持 true，
+     *    下一次自然觸發再試。只記 id 與錯誤類別（憲法 1.5）。
+     */
+    console.error(`[copilot-analysis] ${conversationId} 補算取歷史失敗，這一輪只分析新發言：${err instanceof Error ? err.constructor.name : typeof err}`)
+    return { input: fresh, gapChecked: false, gapRemaining: false }
+  }
   // 歷史依 fetchSince() 的約定由舊到新，取前 18 則就是時間最早的 18 則
   const gap = newCustomerMessagesSince(state, history).filter(m => !freshIds.has(m.id))
   const take = gap.slice(0, SENTIMENT_BACKFILL_MAX_MESSAGES)
@@ -543,18 +569,26 @@ async function analyzeSentimentBatch(
   messages: Message[],
   opts: { backfill?: boolean } = {},
 ): Promise<void> {
-  if (!opts.backfill && !messages.some(isTextCustomerMessage)) {
-    // 純附件輪不呼叫模型，因此不受失敗批次記憶約束 —— 它不會失敗，也不該被擋
-    const markerMessages = messages.filter(isAttachmentOnlyCustomerMessage)
-    if (markerMessages.length > 0) await mergeMarkersOnly(conversationId, markerMessages)
-    return
+  if (!messages.some(isTextCustomerMessage)) {
+    /**
+     * 純附件輪不呼叫模型，因此不受失敗批次記憶約束 —— 它不會失敗，也不該被擋，
+     * 更 MUST NOT 進去重鎖：`runBlockDeduped()` 只保留最新那次觸發的 fn，一則附件若在文字批次
+     * 在飛時抵達，會把等待中的文字批次擠掉（那批就從此不被分析）。
+     * 唯一的例外是補算模式下已知有缺口：那一輪要撈歷史、要送 AI，得走鎖內的完整路徑。
+     */
+    const state = opts.backfill ? await useStateStore().getAnalysisState(conversationId) : null
+    if (state?.sentimentGap !== true) {
+      const markerMessages = messages.filter(isAttachmentOnlyCustomerMessage)
+      if (markerMessages.length > 0) await mergeMarkersOnly(conversationId, markerMessages)
+      return
+    }
   }
 
   await runBlockDeduped(conversationId, 'sentiment', async () => {
     // FR-006 的門檻先看「這一批新發言」：同一批剛失敗過就連歷史都不必撈（SC-004 守的是呼叫量，
-    // 但補算在錯誤狀態上每輪多撈一趟歷史同樣沒有意義）
+    // 但補算在錯誤狀態上每輪多撈一趟歷史同樣沒有意義）。`null` 錨點由 isBatchAlreadyFailed() 自己放行
     const preAnchor = batchAnchor(messages)
-    if (preAnchor !== null && await isBatchAlreadyFailed(conversationId, 'sentiment', preAnchor)) return
+    if (await isBatchAlreadyFailed(conversationId, 'sentiment', preAnchor)) return
 
     const { input, gapChecked, gapRemaining } = opts.backfill
       ? await resolveSentimentInput(conversationId, messages)

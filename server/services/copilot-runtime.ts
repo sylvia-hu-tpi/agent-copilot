@@ -101,12 +101,17 @@ setJoinedResolver(isConversationJoined)
  *
  * 一個對話只屬於一個組織：補算只在仍有人 JOIN 時發生（`resolveJoined` 先擋），
  * 因此以 `messageSource.isJoined()` 找出正確的 runtime；找不到時（例如只有一個組織在跑）
- * 退回唯一的那個，仍找不到才回空陣列。
+ * 退回唯一的那個。
+ *
+ * ⚠️ **仍找不到時 MUST 拋錯，MUST NOT 回空陣列**：呼叫端把空陣列當成「沒有缺口」而清掉
+ *    `sentimentGap`，一次多組織下的 LEAVE 競態就會把缺口永久抹掉而不報錯；拋錯則走它的
+ *    降級路徑（這一輪不補、旗標保留、下一次自然觸發再試）。
  */
 setHistoryResolver(async (conversationId, sinceMessageId) => {
   const all = [...runtimes().values()]
   const owner = all.find(r => r.messageSource.isJoined(conversationId)) ?? (all.length === 1 ? all[0] : undefined)
-  return owner ? owner.messageSource.fetchSince(conversationId, sinceMessageId) : []
+  if (!owner) throw new Error(`找不到擁有對話 ${conversationId} 的 runtime（${all.length} 個組織在跑）`)
+  return owner.messageSource.fetchSince(conversationId, sinceMessageId)
 })
 
 /** 測試與程序關閉用 */

@@ -37,12 +37,10 @@ import {
   releasePipelineRef,
 } from './session-registry.js'
 
-/**
- * ⚠️ 計數本身（`session.watchers` 與 `pipeline.refs`）住在 `session-registry.ts`，不在本檔 ——
- *    本檔 import `copilot-runtime.ts`，vitest／tsc 碰不得（理由見該檔檔頭）。FR-004 的等式
- *    `watchers.length === pipeline.refs` 由 `test/connection-counting.test.ts` 對那個模組驗。
- */
-export { pipelineCount } from './session-registry.js'
+// ⚠️ 計數本身（`session.watchers` 與 `pipeline.refs`）住在 `session-registry.ts`，不在本檔 ——
+//    本檔 import `copilot-runtime.ts`，vitest／tsc 碰不得（理由見該檔檔頭）。FR-004 的等式
+//    `watchers.length === pipeline.refs` 由 `test/connection-counting.test.ts` 對那個模組驗；
+//    監控用的 `pipelineCount()` 也從那裡 import，本檔不再 re-export（單一出處）。
 
 export interface WatchRequest {
   conversationId: string

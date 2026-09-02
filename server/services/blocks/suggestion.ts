@@ -404,14 +404,16 @@ async function generateSuggestionCards(
     },
   )
 
-  // 005 FR-015：被白名單擋下的識別碼字串本身是稽核證據（也是 FR-017 歸因的原料），在這裡順手收下；
-  // 白名單本身一行不改（FR-014），這一行只是「看」，不是「擋」
-  const validIds = new Set(hits.map(h => h.id))
-  const invalidSopIds = outcome.value
-    .map(c => c.sopId)
-    .filter((v): v is string => v !== null && !validIds.has(v))
-
   const whitelisted = whitelistFilter(outcome.value, hits)
+  // 005 FR-015：被白名單擋下的識別碼字串本身是稽核證據（也是 FR-017 歸因的原料）。
+  // ⚠️ 從 `whitelistFilter()` 的**結果**反推，MUST NOT 另外重寫一遍判斷 —— 規則只有一份（FR-014），
+  //    量測若用另一份規則，就是本專案吃過虧的「量測工具與正式路徑不一致」。被擋下的卡 `sopId` 必非 null
+  const kept = new Set(whitelisted)
+  const invalidSopIds = outcome.value
+    .filter(c => !kept.has(c))
+    .map(c => c.sopId)
+    .filter((v): v is string => v !== null)
+
   return {
     cards: forceNullConfidence(whitelisted, hits),
     retryAttempt: outcome.retryAttempt,
