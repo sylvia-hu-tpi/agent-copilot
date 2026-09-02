@@ -2765,9 +2765,9 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力 | §18 M2、§18 M4（**一起關閉**） |
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
 | 設計張力（非缺陷） | 正式路徑每 6 則切一批，落在分數帶界線上的句子會因批次組成而在 `frustrated`／`angry` 之間移動，示警圖示跟著在 ⚠️ 與 🔥 之間變。這是 prompt 規則 4「參考同批前後文」的必然代價，不是迴歸；24-A 已證實**固定批次下**是穩的 | §8.2b、附錄 C-3 |
-| 未做（衛生） | `callAgent()` 未傳 `user_id`，每次呼叫多一趟往返（值 54ms）。**2026-09-02 歸屬 `specs/005-m2-residual-defects` US4 / FR-021** | §8.2b |
+| 已做（衛生，留作對照） | `callAgent()` 已於 2026-09-02 帶上 `user_id`（`specs/005-m2-residual-defects` US4 / FR-021），省下每次呼叫的一趟往返（值 54ms）；取不到 id 時退回舊路徑並只警告一行 —— 那條退路是靜默的，`spike:userid` 與 `test/ai-user-id.test.ts` 是它唯一的觀測點 | §8.2b |
 | 未建立 | `config/categories.yaml`（M3）、`supervisors.yaml`（隨主管接管）。⚠️ `sop.yaml` 不在此列 —— 該路徑已於 2026-08-28 撤銷，不是待辦 | §5 目錄結構 |
-| 未押 | tag `m2-004-done` | §18 M2 |
+| 已押（留作對照） | tag `m2-004-done`（2026-09-02）；`m2-done` 待 005 的三段量測與封閉清單改動收尾後再押 | §18 M2 |
 | 文案先於行為 | `conversation.exitHint` 已對客服承諾「結案＝產生摘要供確認後寫入」，M2 尚未實作 | §18 M3 |
 | UI 缺口 | Composer 的夾帶檔案按鈕（卡在 H-6c，**刻意不放 disabled 佔位鈕**） | §18 M2 |
 | 待對方回覆 | 見 §19.1 風險表與 `IMBRACE_QUESTIONS.md`（🔴：#19 RAG 品質、#24 內部中繼訊息） | §19.1／§19.2 |

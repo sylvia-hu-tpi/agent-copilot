@@ -215,7 +215,7 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 
 ### Tests for User Story 3 ⚠️
 
-- [x] T034 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 `outcome` 的**六值**判定：`cited`／`no-hits`／`not-cited`／`discarded`／`no-cards`／`failed` 各造一組輸入（contracts/citation-audit-event.md §2），並驗判定順序（先 `failed`、再 `no-hits`；`hitCount === 0` 的失敗記 `no-hits`）。⚠️ `discarded`／`no-cards`／`failed` 三組 MUST 順帶斷言 **FR-016 的靜默行為未變**：`status` 仍是 `ready`、`citation` 落 `'none'`、不重試、不轉 `error`。⚠️ `no-cards`（模型回 0 張／整批未過 Zod）與 `failed`（第二段呼叫失敗）是 2026-09-02 補的：原本四值對這兩種「未引用」無值可填，SC-005 的「任何一次」對它們不成立
+- [x] T034 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 `outcome` 的**六值**判定：`cited`／`no-hits`／`not-cited`／`discarded`／`no-cards`／`failed` 各造一組輸入（contracts/citation-audit-event.md §2），並驗判定順序（**先 `hitCount === 0` → `no-hits`**（失敗與回空也一樣），再 `failed`，再 `cardsReturned`／`cardsKept`；contracts §2 於 2026-09-02 依實作對齊）。⚠️ `discarded`／`no-cards`／`failed` 三組 MUST 順帶斷言 **FR-016 的靜默行為未變**：`status` 仍是 `ready`、`citation` 落 `'none'`、不重試、不轉 `error`。⚠️ `no-cards`（模型回 0 張／整批未過 Zod）與 `failed`（第二段呼叫失敗）是 2026-09-02 補的：原本四值對這兩種「未引用」無值可填，SC-005 的「任何一次」對它們不成立
 - [x] T035 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 PII 型別守：以型別層測試（`@ts-expect-error`）確認 `text`／`title`／`snippet` 塞不進事件；並驗證 `invalidSopIds` **有**被保留。⚠️ 另加**長度收斂**測試（contracts §1）：≤64 字元原樣保留、>64 字元改記 `sha256:<前16碼>+<原長度>` 且原字串不出現在輸出裡——型別守擋不到這個欄位，這條是它唯一的機械式保證
 - [x] T036 [P] [US3] 在 `test/citation-audit.test.ts` 驗證 FR-015a 的降級：**開檔**失敗時不拋出、不中止、標準輸出的事件仍完整、stderr 留下一行可辨識的原因
 
@@ -235,7 +235,7 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 ### Implementation for User Story 3 —— 第二段：封閉清單（基線之後）
 
 - [ ] T042 [US3] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `buildSuggestionPrompt()` 加入**顯式封閉清單**段落（可用的 sopId 列舉 ＋「只能從清單中選、不得自創」）；空集合時明示「本次沒有可用的 sopId，全部填 null」。既有規則 ② 保留
-- [ ] T043 [US3] 確認 `whitelistFilter()`（`server/services/blocks/suggestion.ts`）**一行未改**，並在該函式加一行註解指向 FR-014
+- [ ] T043 [US3] 確認 `whitelistFilter()`（`server/services/blocks/suggestion.ts`）**一行未改**，並在該函式加一行註解指向 FR-014（⏸ 註解已於 T037 一併加上、函式本體未動；「一行未改」的最終確認留到 T042 落地後再做一次，本項因此暫不勾）
 - [ ] T044 [US3] **改動後量測**：再跑一次 `npm run spike:citation-quality`（**同一組 15 段對話、同樣 3 輪**，約 21 分鐘），與 T041 的基線並列比較，把兩組數字寫進 `docs/ARCHITECTURE.md`。⚠️ **本項不承諾 004 SC-002 的 80% 會提高**——沒有改善**不代表失敗**，交付物是「答得出為什麼」與「量得出來」
 
 **Checkpoint**: US3 可獨立驗收。SC-005 由事件名與欄位判定，不需讀程式碼。
@@ -368,6 +368,39 @@ Task: "I-7／I-8 夾擊（LEAVE 對全部連線 vs 關線只影響自己）"
 以及 `server/services/copilot-analysis.ts`（開發者 B 的 US2 與開發者 C 的 T045 —— 後者排在 US2 之後）。
 
 ---
+
+## 交接（2026-09-02 `/speckit-implement` 第一輪停點）
+
+**已完成**：T001～T040、T044a／T044b、T045～T048、T051～T057、T059（58/65），全部已 commit；
+`/code-review high d1b4417..HEAD` 跑過六個 finder，明確且屬本次變更的項目已修並 commit
+（歷史取回失敗的 try/catch、純附件輪不進去重鎖、dedupe rerun 在 `finally` 消化、摘要 rerun 重讀
+`previousSummary`、`invalidSopIds` 從 `whitelistFilter()` 結果反推、歷史解析器找不到 owner 改拋錯、
+TTL > 2×心跳的不變式測試、26 號改用 21 號的 `budgetStats()`、風險表兩列、死掉的 re-export）。
+
+**下次續跑**：
+1. **T041 → T042 → T043 → T044**：需要你提供固定 15 段對話標題（或填 `.env.local` 的
+   `SPIKE_CITATION_CONVERSATION_IDS`），基線約 21 分鐘、改動後再 21 分鐘，先 `npm run spike:agent-prompts`。
+2. **T049 → T050**：並行度掃描約 1 小時，同一組對話；決定寫進 `docs/ARCHITECTURE.md`，並複查 FR-009 的 18 則。
+3. **T058** 手動驗收（quickstart 的 US1 雙分頁、斷網兜底、背景分頁節流）。
+
+**code review 尚未處置、需要決策的項目**（都不是本次的回歸，屬設計層或既有行為）：
+- `runBlockDeduped()` 三次以上併發時中間那次觸發的訊息會被最新的覆蓋而永久漏掉（旗標不會設，
+  補算撈不到）。深層修法：rerun 的輸入不放閉包、改由回呼從 state 推導（摘要／建議卡也要）。
+- `POST /api/connection/beat` 在 SSE 已關、心跳仍在飛的窗口會 upsert 一筆無人擁有的登記；
+  同一 `clientId` 重連後的心跳會讓它（以及半開舊連線的登記）一直續命，45 秒回收在這條路徑上不成立。
+  選項：beat 命中 0 筆時不重建、改回傳訊號讓前端重連（會回到「背景分頁節流→失聯」的原始問題，
+  需另解）；或重建筆帶「孤兒」標記、由下一次 SSE 登記接管。
+- 重建的登記以 `background` 起算，而只開清單頁（沒有進入對話）的分頁**不會送 presence 心跳**，
+  切回前景後第一層輪詢會停在 30 秒直到開啟某個對話。選項：beat 的 body 加 optional `visible`。
+- `callAgent()` 把 `resolveAiClientUserId()` 的結構性錯誤也吞成一行警告，FR-021 失效時沒有持續訊號；
+  可考慮結構性錯誤直接拋、或在 smoke 斷言 `user_id` 存在。
+- `runSingleStage()` 在命中 > 0 但卡片全數被捨棄時仍寫 `citation: 'cited'`（004 既有行為），
+  與稽核事件的 `discarded` 不一致；`settleOrphanedPendingCitation()`（重啟孤兒）不發事件。
+- `collapseSopId()` 對 ≤ 64 字元的字串原樣輸出，短句客訴若被模型塞進 `sopId` 會進 stdout
+  （contracts §1 已寫明是歸納不是保證；要更嚴可改為含 CJK／空白即雜湊）。
+- `test/realtime-http.ts` 第 567 行仍保留「先關掉 A 兩條連線再開新的」的迴避；缺陷修好後可改成
+  真實情境（開 A2、關 A1、斷言 A2 仍收到 `messages.appended`）——這是 `connectionId` 接線唯一能自動化驗到的地方。
+- 小項：三支 spike 各自複製 `parseArgs`／寫檔邏輯；27 號每輪重抓歷史；`SessionWatcher.operatorId` 目前無讀者。
 
 ## Notes
 
