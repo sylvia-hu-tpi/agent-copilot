@@ -178,26 +178,26 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 
 ### Tests for User Story 2 ⚠️
 
-- [ ] T021 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立主線情境：中段若干批失敗 → 新發言觸發恢復 → 時間軸無中斷區間（SC-003）。⚠️ 缺口 **MUST 造在中段**，且其後 MUST 另有成功的批次把高水位推過缺口——把缺口造在尾端時，錯用 `lastCoveredMessageId()` 當錨點的實作也會通過（必讀 5a）
-- [ ] T022 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**左界測試**：造一段長度超過 `DEFAULT_MESSAGE_LIMIT`（50）的對話，冷啟動只涵蓋最近 50 則，驗證補算**不**回頭處理 `timeline[0]` 之前的訊息。⚠️ 這是本 story 最容易漏的測試（動工前必讀 #5）
-- [ ] T022a [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**空 timeline 測試**（spec FR-008、data-model §3）：冷啟動情緒整批失敗（timeline 為空、`sentimentGap === true`）→ 新客戶發言觸發 → 斷言以 `null` 錨點呼叫 `resolveHistory()`、整個視窗的客戶發言被視為缺口、本輪補 18 則。⚠️ 「沒有 `timeline[0]` 就跳過」的寫法在這條會紅
-- [ ] T023 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立上限測試：未涵蓋量很大時，單輪最多 **18 則缺口訊息**，以 AI 呼叫次數斷言（FR-009）。⚠️ MUST 造兩組：① 無新發言（呼叫次數 ＝ 3）；② 本輪另有 7 則新發言（呼叫次數 ≤ ⌈7 ÷ 6⌉ ＋ 3 ＝ 5）—— 缺口與新發言合併後才切批，只驗 ① 分不出「上限算的是缺口訊息數還是總批次數」
-- [ ] T024 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**零成本測試**：無缺口（`sentimentGap === false`）時，AI 呼叫次數**與取歷史次數**皆與現況逐一相同（FR-012、不變式 S-1）
-- [ ] T025 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立止血不退步測試：補算失敗 → 停在 `error` 等待手動重試、**MUST NOT** 自行再排一輪（FR-010、SC-004 對應 003 SC-001）
-- [ ] T026 [P] [US2] 在 `test/sentiment-backfill.test.ts` 驗證補算**只**擴充情緒的輸入：摘要與建議卡收到的訊息集合不變（research.md #11 的獨立斷言）
-- [ ] T026a [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立 **LEAVE 優先測試**（FR-011）：客服已離開該對話時，恢復觸發**不得**取歷史、不得排入補算；補算進行中發生 LEAVE 時，**已在飛的不中斷**、但不得再排新的批次。⚠️ MUST 是**新寫**的測試，不能宣稱由 003 FR-012 的既有測試涵蓋——補算是一條新的輸入路徑，既有測試根本不會經過它
-- [ ] T026b [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**併發測試**（spec Edge Case「補算與新發言同時發生」）：補算在飛時再來一批新客戶發言，斷言同一則客戶發言**只被送進 AI 一次**、兩者不互相覆蓋涵蓋範圍
+- [x] T021 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立主線情境：中段若干批失敗 → 新發言觸發恢復 → 時間軸無中斷區間（SC-003）。⚠️ 缺口 **MUST 造在中段**，且其後 MUST 另有成功的批次把高水位推過缺口——把缺口造在尾端時，錯用 `lastCoveredMessageId()` 當錨點的實作也會通過（必讀 5a）
+- [x] T022 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**左界測試**：造一段長度超過 `DEFAULT_MESSAGE_LIMIT`（50）的對話，冷啟動只涵蓋最近 50 則，驗證補算**不**回頭處理 `timeline[0]` 之前的訊息。⚠️ 這是本 story 最容易漏的測試（動工前必讀 #5）
+- [x] T022a [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**空 timeline 測試**（spec FR-008、data-model §3）：冷啟動情緒整批失敗（timeline 為空、`sentimentGap === true`）→ 新客戶發言觸發 → 斷言以 `null` 錨點呼叫 `resolveHistory()`、整個視窗的客戶發言被視為缺口、本輪補 18 則。⚠️ 「沒有 `timeline[0]` 就跳過」的寫法在這條會紅
+- [x] T023 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立上限測試：未涵蓋量很大時，單輪最多 **18 則缺口訊息**，以 AI 呼叫次數斷言（FR-009）。⚠️ MUST 造兩組：① 無新發言（呼叫次數 ＝ 3）；② 本輪另有 7 則新發言（呼叫次數 ≤ ⌈7 ÷ 6⌉ ＋ 3 ＝ 5）—— 缺口與新發言合併後才切批，只驗 ① 分不出「上限算的是缺口訊息數還是總批次數」
+- [x] T024 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**零成本測試**：無缺口（`sentimentGap === false`）時，AI 呼叫次數**與取歷史次數**皆與現況逐一相同（FR-012、不變式 S-1）
+- [x] T025 [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立止血不退步測試：補算失敗 → 停在 `error` 等待手動重試、**MUST NOT** 自行再排一輪（FR-010、SC-004 對應 003 SC-001）
+- [x] T026 [P] [US2] 在 `test/sentiment-backfill.test.ts` 驗證補算**只**擴充情緒的輸入：摘要與建議卡收到的訊息集合不變（research.md #11 的獨立斷言）
+- [x] T026a [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立 **LEAVE 優先測試**（FR-011）：客服已離開該對話時，恢復觸發**不得**取歷史、不得排入補算；補算進行中發生 LEAVE 時，**已在飛的不中斷**、但不得再排新的批次。⚠️ MUST 是**新寫**的測試，不能宣稱由 003 FR-012 的既有測試涵蓋——補算是一條新的輸入路徑，既有測試根本不會經過它
+- [x] T026b [P] [US2] 在 `test/sentiment-backfill.test.ts` 建立**併發測試**（spec Edge Case「補算與新發言同時發生」）：補算在飛時再來一批新客戶發言，斷言同一則客戶發言**只被送進 AI 一次**、兩者不互相覆蓋涵蓋範圍。⚠️ 實作時發現兩件事，都改在生產路徑：① `runBlockDeduped()` rerun 重跑的是**第一次**觸發的閉包（註解寫的是「再跑一次最新的」，實作存的是布林旗標）——第二批被丟掉、第一批原封重送；改為保留最新那次的 `fn`。② 缺口補算撈歷史時，同時觸發的那批新發言在平台上已存在、會被當缺口一併補掉，rerun 時再送一次——補算路徑一律先濾掉已在時間軸上的訊息（不撈歷史，零成本仍成立）
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] 在 `server/services/analysis-state.ts` 掛上 `sentimentGap` 的轉移：情緒批次失敗（`finishBlockError(_, 'sentiment', _)`）時設為 `true`。⚠️ 只改狀態一律走 `updateAnalysisState()`（`stateLocks` 的不變式）
-- [ ] T028 [US2] 在 `server/services/copilot-analysis.ts` 新增 `setHistoryResolver()` 與 `resolveHistory()`，形狀完全比照既有的 `setJoinedResolver()`；預設值是安全的無作用值（回空陣列＝視為無缺口）
-- [ ] T029 [US2] 在 `server/services/copilot-runtime.ts` 載入時呼叫 `setHistoryResolver()`，注入 `messageSource.fetchSince`（相依方向與 `setJoinedResolver()` 相同，管線 MUST NOT 反向 import）
-- [ ] T030 [US2] 在 `server/services/copilot-analysis.ts` 實作缺口計算：`sentimentGap === true` 時以 **`timeline[0].messageId` 為錨點**呼叫 `resolveHistory()`（⚠️ **不是** `lastCoveredMessageId()`，必讀 5a），缺口 ＝「`timeline[0]` 之後、不在 timeline 的客戶發言」，取前 **18 則**（必讀 5b）；timeline 為空時錨點為 `null`、整批視窗都是缺口（必讀 5）；沿用既有的 `newCustomerMessagesSince()` 去重約定（它對整條 timeline 做差集，正好吃得下 `fetchSince()` 錨點失效時回傳整批的既有約定）
-- [ ] T031 [US2] 在 `server/services/copilot-analysis.ts` 的 `runIncremental()` 內把「新訊息 ∪ 缺口」只交給 `analyzeSentimentBatch()`；`analyzeSummary()` 與 `analyzeSuggestions()` 的輸入**一個字不變**（動工前必讀 #6）
-- [ ] T032 [US2] 在 `server/services/copilot-analysis.ts` 補算完成後更新 `sentimentGap`：已無未涵蓋發言時清為 `false`，仍有剩餘時維持 `true`；**MUST NOT** 自行排下一輪（動工前必讀 #7）
-- [ ] T032a [US2] 在 `server/services/analysis-state.ts`／`copilot-analysis.ts` 補上 `sentimentGap` 生命週期表的**其餘兩條轉移**（data-model.md §3）：**冷啟動成功**與**手動重試成功**時清為 `false`。⚠️ **不需要、也 MUST NOT 為此另判「是否涵蓋到最新」**：`runColdStart()` 與 `retryBlock()` 的輸入都是 `fetchLatest()` 的完整視窗（`retryBlock()` 把整份 `history` 交給 `analyzeSentimentBatch()`，不是只重跑失敗批），成功即必然涵蓋視窗內全部客戶發言，視窗之前的訊息依左界規則本來就不是缺口 —— 「成功即清」，不撈歷史。⚠️ 少了這條，手動重試成功後旗標永遠是 `true`，此後**每一輪客戶發言都多撈一趟歷史**——正是 research.md #9 立這個旗標要避免的成本，而畫面與測試全綠。T024 的零成本測試 MUST 增加「手動重試成功之後」這一組
-- [ ] T033 [US2] 在 `test/contract-guards.test.ts` 新增**兩條**守衛：① `shared/` 底下不得出現 `sentimentGap`（比照既有的 `failedBatches` 契約 1.1，含「守衛本身有效」的自檢）；② `copilot-runtime.ts` 原始碼 MUST 含 `setHistoryResolver(`（比照 `test/contract-guards.test.ts:140` 既有的 `setJoinedResolver(` 守衛）。⚠️ 少了 ②：T028 的預設 resolver 回空陣列＝「視為無缺口」，T029 的注入一旦漏掉，US2 整個靜默失效而單元測試全綠 —— 正是既有守衛為 `setJoinedResolver()` 立的那個理由
+- [x] T027 [US2] 在 `server/services/analysis-state.ts` 掛上 `sentimentGap` 的轉移：情緒批次失敗（`finishBlockError(_, 'sentiment', _)`）時設為 `true`。⚠️ 只改狀態一律走 `updateAnalysisState()`（`stateLocks` 的不變式）
+- [x] T028 [US2] 在 `server/services/copilot-analysis.ts` 新增 `setHistoryResolver()` 與 `resolveHistory()`，形狀完全比照既有的 `setJoinedResolver()`；預設值是安全的無作用值（回空陣列＝視為無缺口）
+- [x] T029 [US2] 在 `server/services/copilot-runtime.ts` 載入時呼叫 `setHistoryResolver()`，注入 `messageSource.fetchSince`（相依方向與 `setJoinedResolver()` 相同，管線 MUST NOT 反向 import）
+- [x] T030 [US2] 在 `server/services/copilot-analysis.ts` 實作缺口計算：`sentimentGap === true` 時以 **`timeline[0].messageId` 為錨點**呼叫 `resolveHistory()`（⚠️ **不是** `lastCoveredMessageId()`，必讀 5a），缺口 ＝「`timeline[0]` 之後、不在 timeline 的客戶發言」，取前 **18 則**（必讀 5b）；timeline 為空時錨點為 `null`、整批視窗都是缺口（必讀 5）；沿用既有的 `newCustomerMessagesSince()` 去重約定（它對整條 timeline 做差集，正好吃得下 `fetchSince()` 錨點失效時回傳整批的既有約定）
+- [x] T031 [US2] 在 `server/services/copilot-analysis.ts` 的 `runIncremental()` 內把「新訊息 ∪ 缺口」只交給 `analyzeSentimentBatch()`；`analyzeSummary()` 與 `analyzeSuggestions()` 的輸入**一個字不變**（動工前必讀 #6）
+- [x] T032 [US2] 在 `server/services/copilot-analysis.ts` 補算完成後更新 `sentimentGap`：已無未涵蓋發言時清為 `false`，仍有剩餘時維持 `true`；**MUST NOT** 自行排下一輪（動工前必讀 #7）
+- [x] T032a [US2] 在 `server/services/analysis-state.ts`／`copilot-analysis.ts` 補上 `sentimentGap` 生命週期表的**其餘兩條轉移**（data-model.md §3）：**冷啟動成功**與**手動重試成功**時清為 `false`。⚠️ **不需要、也 MUST NOT 為此另判「是否涵蓋到最新」**：`runColdStart()` 與 `retryBlock()` 的輸入都是 `fetchLatest()` 的完整視窗（`retryBlock()` 把整份 `history` 交給 `analyzeSentimentBatch()`，不是只重跑失敗批），成功即必然涵蓋視窗內全部客戶發言，視窗之前的訊息依左界規則本來就不是缺口 —— 「成功即清」，不撈歷史。⚠️ 少了這條，手動重試成功後旗標永遠是 `true`，此後**每一輪客戶發言都多撈一趟歷史**——正是 research.md #9 立這個旗標要避免的成本，而畫面與測試全綠。T024 的零成本測試 MUST 增加「手動重試成功之後」這一組
+- [x] T033 [US2] 在 `test/contract-guards.test.ts` 新增**兩條**守衛：① `shared/` 底下不得出現 `sentimentGap`（比照既有的 `failedBatches` 契約 1.1，含「守衛本身有效」的自檢）；② `copilot-runtime.ts` 原始碼 MUST 含 `setHistoryResolver(`（比照 `test/contract-guards.test.ts:140` 既有的 `setJoinedResolver(` 守衛）。⚠️ 少了 ②：T028 的預設 resolver 回空陣列＝「視為無缺口」，T029 的注入一旦漏掉，US2 整個靜默失效而單元測試全綠 —— 正是既有守衛為 `setJoinedResolver()` 立的那個理由
 
 **Checkpoint**: US2 可獨立驗收。此時第三刀拆檔（`blocks/sentiment.ts`）的觸發條件已滿足，但**不在本規格範圍**。
 
