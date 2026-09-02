@@ -407,6 +407,38 @@ describe('004 FR-008：程式主動更新 MUST NOT 碰 Composer 草稿', () => {
   })
 })
 
+// ── specs/005-m2-residual-defects（US2：sentimentGap 與歷史來源的裝配點）──────────
+
+describe('005 US2：sentimentGap 是 server-only 的旗標，歷史來源 MUST 真的被接上', () => {
+  const sharedFiles = filesUnder(resolve(ROOT, 'shared'), ['.ts'])
+
+  /**
+   * 與契約 1.1 的 `failedBatches` 同一個理由：三個分析事件送的是整個 Block，`sentimentGap` 一旦被
+   * 搬進 `SentimentBlock`（或任何 shared/ 的型別）就會隨 SSE 流到瀏覽器，而 typecheck 一聲不吭。
+   * 它的正確位置是 `CopilotAnalysisState` 頂層（server/state/types.ts）。
+   */
+  it('shared/ 底下不存在 sentimentGap 字串', () => {
+    const offenders = sharedFiles.filter(f => stripNonCode(readFileSync(f, 'utf8')).includes('sentimentGap'))
+    expect(offenders.map(f => f.replace(ROOT, '.').replace(/\\/g, '/'))).toEqual([])
+  })
+
+  /**
+   * 比照上方 `setJoinedResolver(` 的守衛：`setHistoryResolver()` 的預設值是「回空陣列＝視為無缺口」。
+   * 裝配那一行被刪掉時缺口永遠補不到、旗標卻被清掉 —— US2 整個靜默失效而單元測試全綠
+   * （單元測試注入的是自己的 resolver，根本不會經過 runtime）。
+   */
+  it('copilot-runtime.ts 仍在載入時呼叫 setHistoryResolver()', () => {
+    const source = stripComments(readFileSync(resolve(ROOT, 'server/services/copilot-runtime.ts'), 'utf8'))
+    expect(source).toContain('setHistoryResolver(')
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 對著含該字串的內容必須抓得出來，且不被註解騙', () => {
+    expect(stripNonCode('interface X { sentimentGap?: boolean }').includes('sentimentGap')).toBe(true)
+    expect(stripNonCode('// 見 sentimentGap 的說明').includes('sentimentGap')).toBe(false)
+    expect(stripComments('// setHistoryResolver(x)\nconst y = 1').includes('setHistoryResolver(')).toBe(false)
+  })
+})
+
 // ── specs/005-m2-residual-defects（US1：FR-006a、SC-002a；research.md #6）────────
 
 describe('005 FR-006a：主動離開 MUST NOT 接到連線計數上', () => {
