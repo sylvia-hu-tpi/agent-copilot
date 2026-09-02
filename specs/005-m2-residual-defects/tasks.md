@@ -225,18 +225,26 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 - [x] T038 [US3] 在 `server/utils/citation-audit.ts` 加入額外落點（JSONL，環境變數開啟、**預設不啟用**）：建目錄／開檔包在 try/catch，失敗降級為只寫標準輸出並在 stderr 留一行。⚠️ 預設值 MUST NOT 是相對路徑（容器的 WORKDIR 屬 root 卻跑非 root，bind mount 會遮蔽 `chown`）
 - [x] T039 [US3] 在 `server/services/blocks/suggestion.ts` 的**三條**落定路徑發出事件：前景兩段式的第二段落定、背景單段落定、「命中已在手」的單段落定。⚠️ **落定包含失敗**：`settleNone()` 的每一個進入點（`hits.length === 0`、`cards.length === 0`、`catch`）都是落定，`failed`／`no-cards` 只會從那裡發出；只在 `publishSuggestionReady()` 發事件會漏掉這兩值。⚠️ 漏掉任一條會讓該路徑的個案永遠查不到（SC-005 對它不成立）
 - [x] T040 [US3] 新增 `scripts/spike/27-citation-quality.ts` 與 `npm run spike:citation-quality`：沿用 `spike:progressive` 的骨架（走生產路徑的 `runColdStart()`），收集稽核事件並聚合出整體杜撰率**與逐對話分布**（分母 ＝ `hitCount > 0` 且 `outcome ∉ { no-cards, failed }`，contracts §5）。⚠️ 口徑固定為 **15 段對話 × 3 輪 ＝ 45 次帶命中的生成**，輪次間輪換對話順序（FR-017）——每段對話固定 3 個樣本，是「逐對話分布」看得出集中性的最小條件
-- [ ] T041 [US3] **取基線**：`npm run spike:agent-prompts` 後執行 `npm run spike:citation-quality`（15 段對話 × 3 輪 ＝ n=45，FR-017；實跑約 21 分鐘），把結果存進 `scripts/spike/out/` 並記下執行時段。⚠️ 這一步 MUST 在 T042 之前完成
+- [x] T041 [US3] **取基線**（2026-09-03 02:08–02:30 完成，prompt 快照無漂移）：`npm run spike:agent-prompts` 後執行 `npm run spike:citation-quality --label baseline`。**杜撰率 9/43 ＝ 21%**（outcome：cited 38、not-cited 4、discarded 1、no-hits 2；最終取得引用 38/45 ＝ 84%）。⚠️ **分母 43 不是 45**：兩個樣本 `hitCount === 0`（一次知識庫檢索逾時 30 秒、一次真的沒命中），依 contracts §5 排除。原始產出 `scripts/spike/out/27-citation-quality-baseline-2026-09-02T18-30-28-340Z.json`（UTC 檔名）
 
-> ⏸ **2026-09-02 `/speckit-implement` 停在 T041**：FR-017 要求固定 15 段對話，而 `.env.local` 的
-> `SPIKE_CONVERSATION_IDS` 是佔位字串、歷次 21 號量測都只用過 4 個命令列標題。基線要等使用者提供
-> 15 段對話清單（`SPIKE_CITATION_CONVERSATION_IDS` 或命令列），且實跑約 21 分鐘的真實環境 AI 呼叫。
-> T042～T044 因「基線在改 prompt 之前」的硬相依一併等待；程式碼（稽核事件、量測腳本）已全部就位。
+> ✅ **2026-09-03 解除**：固定 15 段對話已選定並落在 `.env.local` 的 `SPIKE_CITATION_CONVERSATION_IDS`，
+> 對照表在 `scripts/spike/out/005-fixed-conversations.json`（該檔以 `.gitignore` 的一條否定規則進版控）。
+> ⚠️ **這一組是被環境逼出來的，不是挑出來的**：stable 的該 business unit **總共只有 21 段對話**
+> （`searchConversations()` 的 `total` 欄位），其中**恰好 15 段**在 `fetchLatest()` 視窗內有客戶文字發言，
+> 其餘 6 段一則都沒有、跑了只會產生空樣本。因此原定的兩個候選條件都無法同時滿足 15 段而被放寬：
+> ① 納入 2 段 `mode === 'manual'` 的對話（非 manual 且有客戶發言的只有 13 段）——
+> 27／26 號都是**唯讀**，21 號排除 manual 的理由是 `--join` 會改 mode 介入同事現場，對唯讀路徑不成立；
+> ② 納入 4 段客戶文字發言只有 1～2 則的對話（≥ 3 則的只有 9 段）。
+> 21 號歷史用過的 4 段全部保留（可比較性優先），即使 `TWN#UG1103` 現況為 manual、
+> `TWN#SA8194` 預查 0 命中、`TWN#YD0053` 客戶文字發言只有 2 則。
 
 ### Implementation for User Story 3 —— 第二段：封閉清單（基線之後）
 
-- [ ] T042 [US3] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `buildSuggestionPrompt()` 加入**顯式封閉清單**段落（可用的 sopId 列舉 ＋「只能從清單中選、不得自創」）；空集合時明示「本次沒有可用的 sopId，全部填 null」。既有規則 ② 保留
-- [ ] T043 [US3] 確認 `whitelistFilter()`（`server/services/blocks/suggestion.ts`）**一行未改**，並在該函式加一行註解指向 FR-014（⏸ 註解已於 T037 一併加上、函式本體未動；「一行未改」的最終確認留到 T042 落地後再做一次，本項因此暫不勾）
-- [ ] T044 [US3] **改動後量測**：再跑一次 `npm run spike:citation-quality`（**同一組 15 段對話、同樣 3 輪**，約 21 分鐘），與 T041 的基線並列比較，把兩組數字寫進 `docs/ARCHITECTURE.md`。⚠️ **本項不承諾 004 SC-002 的 80% 會提高**——沒有改善**不代表失敗**，交付物是「答得出為什麼」與「量得出來」
+- [x] T042 [US3] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `buildSuggestionPrompt()` 加入**顯式封閉清單**段落（可用的 sopId 列舉 ＋「只能從清單中選、不得自創」）；空集合時明示「本次沒有可用的 sopId，全部填 null」。既有規則 ② 保留（清單來源 ＝ `knowledgeHits.map(h => h.id)`，與 `whitelistFilter()` 用的是同一組；註解寫明 FR-013／research #13／「基線 MUST 先取」的理由。`npm run typecheck` 綠、`npm test` 43 檔 554 測試全綠）
+- [x] T043 [US3] 確認 `whitelistFilter()`（`server/services/blocks/suggestion.ts`）**一行未改**（2026-09-03：`git diff HEAD -- server/services/blocks/suggestion.ts` 輸出為空，整個檔案未動，函式本體必然未動；指向 FR-014 的註解已於 T037 加在該函式上方）
+- [x] T044 [US3] **改動後量測**（2026-09-03 02:32–02:53，與基線相隔 2 分鐘、同一時段；prompt 快照無漂移）：**杜撰率 9/42 ＝ 21%，與基線 21% 完全相同、零改善**；最終取得引用 84% → 82%。原始產出 `scripts/spike/out/27-citation-quality-after-2026-09-02T18-53-08-310Z.json`。
+      ✅ **但成因查出來了，這才是交付物**：被擋下的字串全是 `TC-XXX-NNN` 這種**有結構的 SOP 編號**，而**知識庫文件的內文裡就寫著它們**（實測逐字對上）；我方交給模型的 `id` 卻是代用碼 `knowledge-fallback-<hex>`（`hashFilename()` 在 `folder_info` 比對不到時產生）。**模型不是憑空造，是在代用碼與文件自己的正式編號之間選了後者** —— 給它一份代用碼的清單並沒有回答它的問題，所以清單加了不會動。完整記載見 `docs/ARCHITECTURE.md` §8.2b「杜撰引用的成因不是『沒看到清單』」，對外說明見 `docs/IMBRACE_QUESTIONS.md` 0-3e／0-3g②。
+      ⚠️ 封閉清單的程式碼**刻意不回退**：零改善但也零代價，而它是「模型看得到清單仍不照著填」這個結論的唯一證據
 
 **Checkpoint**: US3 可獨立驗收。SC-005 由事件名與欄位判定，不需讀程式碼。
 
@@ -263,8 +271,13 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 - [x] T046 [P] [US4] 在 `test/contract-guards.test.ts` 新增守衛：受檢清單**明列**為 `.env.example`、`nuxt.config.ts`、`package.json` 的 scripts 三處，斷言它們**MUST NOT** 出現 `SENTIMENT_CONCURRENCY`（含「守衛本身有效」的自檢）。⚠️ 受檢範圍 MUST NOT 擴大成全 repo 掃描——`scripts/spike/26-*.ts` 正是唯一該設定它的地方，擴大範圍會讓守衛自傷。⚠️ 它一旦被抄進某個環境的設定，症狀是「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤。⚠️ **守衛看不到 gitignored 的 `.env.local`**——那正是最可能被貼進去的地方；T045 的註解與 quickstart MUST 寫明此殘餘風險（本地的 `.env.local` 與 Nuxt 共用，貼了就等於改生產路徑）
 - [x] T047 [US4] 新增 `scripts/spike/26-sentiment-concurrency.ts` 與 `npm run spike:sentiment-concurrency`：對 3／4／5 三個檔位**各開一個子行程**（同一行程內改不了 module-level const），三輪、輪次間輪換檔位順序（3,4,5／4,5,3／5,3,4）、同一時段連續跑完、**序列執行不得並行取樣**
 - [x] T048 [US4] 讓 26 號腳本重用 `spike:progressive` 既有的 `sentimentCalls`（每次呼叫的延遲與成敗）與峰值並發，輸出**總時間分布**與**單次呼叫失敗率**兩列並陳（FR-018）
-- [ ] T049 [US4] ⏸（2026-09-02 停在此：實跑約 1 小時的真實環境 AI 呼叫，且需與 T041 同一組固定對話；腳本已就位、`--dry-run` 驗過輪換計畫）**執行掃描**（實跑約 1 小時，加上 T041／T044 的兩次杜撰率量測，本規格量測總時數約 1 小時 40 分；先跑 `npm run spike:agent-prompts`），把原始產出存進 `scripts/spike/out/`，並記錄執行時段；平台若處於已知降級時段 MUST 明確標註（FR-020）
-- [ ] T050 [US4] 依 FR-019 的判準做決定並寫進 `docs/ARCHITECTURE.md`：總時間改善**且**失敗率未上升才採用；只有總時間改善 **MUST NOT** 作為採用理由，且該結論本身要留在文件裡。⚠️ 15 秒門檻在本規格期間維持不動（FR-020a）。⚠️ 若決定採用新檔位，MUST **一併複查 FR-009 的「每輪 18 則缺口訊息（＝3 批）」上限**並把結論寫進文件——那個數字的理由是「對齊 `SENTIMENT_CONCURRENCY` 的一波並行」，並行度一改，理由就不再自動成立（維持 18 則仍在一波之內，但 MUST 是被複查過的決定，不是被遺忘的常數）
+- [x] T049 [US4] **執行掃描**（2026-09-03 02:56–04:00，UTC 18:56–19:59；先跑過 `spike:agent-prompts`，四個 agent 無漂移）：3／4／5 三檔位 × 三輪 × 15 段 ＝ 9 個子行程序列跑完，**每檔位 n=45，符合 FR-018a**。原始產出 `scripts/spike/out/26-sentiment-concurrency-2026-09-02T19-59-14-437Z.json`（另有 9 份子行程各自的 `21-progressive-citations-*.json`）。時段標註（FR-020）：本機凌晨、無平台降級公告，單次中位 7.1～7.2 秒與 2026-09-02 的 7.31／7.32／7.37 秒吻合，**不是降級樣本**
+- [x] T050 [US4] 依 FR-019 的判準做決定並寫進 `docs/ARCHITECTURE.md`（**證據已寫入 §8.2b「並行度掃描跑完了」與 §18 M2 情緒那條；採用與否待使用者裁決**）。
+      **兩列數據**：檔位 3（現行）總時間 41/45 ＝ 91%、p90 14436ms／單次 n=106 失敗 0（0%）破 15 秒 4（3.8%）；檔位 4 為 38/45 ＝ 84%、p90 25043ms／失敗 2（1.8%）破 15 秒 7（6.4%）；檔位 5 為 37/45 ＝ 82%、p90 23266ms／失敗 1（0.9%）破 15 秒 12（10.6%）。
+      **判準結論**：4 與 5 **連「總時間改善」這第一個條件都沒過**，且失敗率同時上升 → **建議不採用，維持 3**。⚠️ 檔位 4 的**中位**比 3 快（6.6 vs 7.6 秒）——只看中位會得到相反結論，而判準是 p90；「只有總時間改善 MUST NOT 作為理由」這句話本身已寫進文件。
+      ⚠️ 本項**未改動** `SENTIMENT_CONCURRENCY` 的預設值，也**未改動** 15 秒門檻（FR-020a）。
+      ✅ **FR-009 的 18 則已複查**：因為不採用新檔位，18 ÷ `SENTIMENT_CHUNK_SIZE`(6) ＝ 3 批 ＝ `SENTIMENT_CONCURRENCY`(3) 的恰好一波，原始理由原封成立，**維持 18**（是被複查過的決定，不是被遺忘的常數）。
+      ✅ **意外發現並已記入文件**：`withRetry()` 的 `Promise.race` 在逾時後**不會取消**已送出的呼叫，因此實際在飛數 ＝ 設定值 ＋ 尚未落地的放棄呼叫（檔位 3 量到峰值並發 4）。檔位越高破 15 秒率越高 → 放棄的呼叫越多 → 實際負載又更高，是一個**自我增強的負向迴圈**，先前的期望值估算完全沒有計入它
 
 ### Implementation for User Story 4 —— `user_id` 衛生
 
@@ -280,7 +293,7 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 
 - [x] T054 更新 `docs/ARCHITECTURE.md` §18 M2：把本規格關閉的項目（`registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算、`user_id` 衛生、並行度掃描）逐一標記為已關閉並指向 005
 - [x] T055 ⚠️ **執行 `CLAUDE.md` 第一級警告的 grep**（2026-09-02：`雙分頁` 六處皆已帶關閉註記；`未修的缺陷` 只剩節名與一處指向節名的引用（該節仍有未關閉的排序項，節名保留）；`user_id` 的「尚未做」改為已做、發現段落改成過去式；風險表兩列改寫；`三者` 措辭已無殘留）：`grep -rn "雙分頁" docs/`、`grep -rn "未修的缺陷" docs/`、`grep -rn "user_id" docs/`、`grep -rn "並行度" docs/`——同一個結論散落在決策摘要、詳細章節、里程碑驗收、風險表**甚至另一份正典文件**，改完「主要」那份時最危險
-- [x] T056 [P] 檢查 `docs/IMBRACE_QUESTIONS.md` 的 0-3e（2026-09-02：改寫為「稽核紀錄與可重複量測已完成、封閉清單進行中、量測後更新 44%／80%」；數字本身待 T044 才能更新）：US3 的封閉清單結果會影響該題的敘述（該題引用了「44% 的呼叫至少產生一張杜撰的知識庫來源編號」）。有新數字就更新，**自行解決的部分要明確撤回並附上解法**，不是默默刪掉
+- [x] T056 [P] 檢查 `docs/IMBRACE_QUESTIONS.md` 的 0-3e（2026-09-02：改寫為「稽核紀錄與可重複量測已完成、封閉清單進行中、量測後更新 44%／80%」；**2026-09-03 T044 跑完後已填上實際數字 21%／82%，並把封閉清單由「進行中」改為「已完成且已驗證無效」——自行解決的部分明確撤回並附上解法，同時把成因與 0-3g ② 的 SOP 編號制度接起來**）：US3 的封閉清單結果會影響該題的敘述（該題引用了「44% 的呼叫至少產生一張杜撰的知識庫來源編號」）。有新數字就更新，**自行解決的部分要明確撤回並附上解法**，不是默默刪掉
 - [x] T057 [P] 在 `docs/ARCHITECTURE.md` §18 M2「分析管線拆檔」註記第三刀的觸發條件（「005 的情緒改動落地之後」）**已滿足**，但**不在本規格執行**
 - [ ] T058 依 [quickstart.md](./quickstart.md) 逐項執行手動驗收，特別是 US1 的真實雙分頁情境與「斷網而非關分頁」的存活兜底驗證
 - [x] T059（2026-09-02：typecheck 綠、42 檔 552 測試全綠、build 綠、`smoke:flow`（含新加的 beat 四項）與 `smoke:realtime` 全過；`session.opened` 的 `reason` 經 grep 確認仍無前端消費者，T016 的語意變更不影響畫面）執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認 001～004 的既有驗收全部維持通過（SC-008），與 T002 的基線對照。⚠️ 回歸清單 MUST 點名 T016 的行為變更（`isResume` 語意改變、同一客服的第二個分頁由 `join` 變 `resume`）：它在 spec 沒有對應的 FR／SC，只記在 data-model §2，是最容易在回歸時被忽略的一項
@@ -377,11 +390,26 @@ Task: "I-7／I-8 夾擊（LEAVE 對全部連線 vs 關線只影響自己）"
 `previousSummary`、`invalidSopIds` 從 `whitelistFilter()` 結果反推、歷史解析器找不到 owner 改拋錯、
 TTL > 2×心跳的不變式測試、26 號改用 21 號的 `budgetStats()`、風險表兩列、死掉的 re-export）。
 
+**2026-09-03 第二輪（量測）已完成**：T041～T044、T049、T050 全數執行完畢，
+三段量測連續跑在 02:08–04:00 的同一個時段，每一段開跑前都跑過 `npm run spike:agent-prompts`
+（三次皆回報四個 agent 的 system prompt 與模型與快照逐字元相同，**無漂移**）。
+全程唯讀：未 JOIN、未 LEAVE、未送訊息、未切換任何對話的 `mode`。
+
 **下次續跑**：
-1. **T041 → T042 → T043 → T044**：需要你提供固定 15 段對話標題（或填 `.env.local` 的
-   `SPIKE_CITATION_CONVERSATION_IDS`），基線約 21 分鐘、改動後再 21 分鐘，先 `npm run spike:agent-prompts`。
-2. **T049 → T050**：並行度掃描約 1 小時，同一組對話；決定寫進 `docs/ARCHITECTURE.md`，並複查 FR-009 的 18 則。
-3. **T058** 手動驗收（quickstart 的 US1 雙分頁、斷網兜底、背景分頁節流）。
+1. **T058** 手動驗收（quickstart 的 US1 雙分頁、斷網兜底、背景分頁節流）—— **本規格唯一剩下的任務**。
+2. **待你裁決**：並行度是否維持 `SENTIMENT_CONCURRENCY = 3`。證據與依 FR-019 判準的建議
+   （**建議維持 3**）已寫進 `docs/ARCHITECTURE.md` §8.2b，程式碼與門檻都沒有動。
+3. **待你裁決**：§18 M2 的情緒 15 秒門檻那條要不要翻案 —— 本次檔位 3 量到 41/45 ＝ 91%（通過），
+   但 2026-09-02 的同口徑量測是 78%。刻意**不改判**，要翻案 MUST 再取一次獨立時段的 n=45。
+4. **另立任務的候選**（005 範圍外，由 T044 的成因分析帶出）：讓 `sopId` 帶知識庫文件自己的
+   正式 SOP 編號，而不是 `hashFilename()` 產生的代用碼 —— 前提是 `IMBRACE_QUESTIONS.md` 0-3g ②
+   有答案；或先查清楚 `folder_info` 為什麼經常比對不到檔案而落到代用碼。
+
+**⚠️ 量測產出的落點**：`scripts/spike/out/` 整個目錄在 `.gitignore` 內（原始產出可能含 PII），
+27／26／21 號跑出來的原始 JSON 因此**只留在本機**，未進版控 —— 這是既有政策，本次沒有改它。
+唯一的例外是固定 15 段對話的索引 `scripts/spike/out/005-fixed-conversations.json`，
+由 `.gitignore` 的一條**只放行這一個檔名**的否定規則進版控（沒有它，「基線與改動後跑的是
+同一組對話」在別台機器上無從查證）。該檔內的個人名稱型標題已遮蔽，且不含任何訊息內容。
 
 **code review 尚未處置、需要決策的項目**（都不是本次的回歸，屬設計層或既有行為）：
 - `runBlockDeduped()` 三次以上併發時中間那次觸發的訊息會被最新的覆蓋而永久漏掉（旗標不會設，
