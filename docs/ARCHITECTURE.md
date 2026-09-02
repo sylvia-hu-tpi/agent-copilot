@@ -1113,16 +1113,20 @@ max-of-N 取的是分佈上緣，受這個抬高的影響比中位數更大。**
 
 **⚠️ 每次 AI 呼叫其實是兩個 HTTP 請求**（2026-08-28 由本機代理的日誌發現）：SDK 的
 `streamChat()` 在 `body.user_id` 缺席時會先 `POST /ai-agent/chat-client/auth/user` 取 id，
-而 `ImbraceAgentProvider.callAgent()` 沒有傳 `user_id` —— 於是每一次摘要、每一次情緒批次、
-每一次建議卡都多付一趟往返去查同一個固定值。該 id 對同一組憑證而言不變，可查一次快取。
+而 `ImbraceAgentProvider.callAgent()` **當時**沒有傳 `user_id` —— 於是每一次摘要、每一次情緒批次、
+每一次建議卡都多付一趟往返去查同一個固定值。該 id 對同一組憑證而言不變，可查一次快取
+（已於 2026-09-02 補上，見下方 ✅）。
 
 **2026-08-29 實測**（`npm run spike:userid`，隔離量測該趟呼叫 20 次）：中位數 **54ms**、
 p90 64ms、**20/20 皆同一個 id**（可快取）、傳入 `user_id` 後輸出照常 **5/5**。
 
 ⛔ **它是衛生問題，不是效能解方** —— 54ms 補不上任何延遲門檻的缺口。
-⏳ **但仍應該做，且尚未做**（`callAgent()` 至今未傳 `user_id`）：省一趟往返、id 可快取、
-傳入不破壞輸出，且 `streamChat()` 的型別本來就宣告了 `user_id`（不需繞道）。
-**2026-09-02 已歸屬 `specs/005-m2-residual-defects` US4 / FR-021**，不再是無主的欠帳。
+✅ **已做（2026-09-02，`specs/005-m2-residual-defects` US4 / FR-021）**：`callAgent()` 帶上 `user_id`，
+id 由防腐層 `server/services/imbrace.ts` 的 `resolveAiClientUserId()` 取一次並以 process-local 快取
+（取得失敗不快取、退回「不帶、讓 SDK 自己查」的舊路徑，行為不變只是沒省到）。
+⚠️ **它是 AI 服務的 client user id，與客服身分無關** —— provider 拿不到 `operatorId` 是刻意的；
+填錯不會報錯，只會讓 AI 服務端的用量統計掛到錯的人身上。`test/ai-user-id.test.ts` 對假 client
+斷言請求 payload **只多了這一個欄位**。
 
 ⚠️ **量測方法**：MUST 隔離量該趟呼叫，MUST NOT 用「傳 vs 不傳」比端到端 —— 第一段的
 σ ≈ 849ms，要偵測約 300ms 的差異，n=15 兩組的差異標準誤就有 310ms（＝待測量級本身），
@@ -2439,9 +2443,16 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [x] 建議卡的 `sopId` 不在白名單即整卡丟棄（2026-08-29 實測：10 次帶命中的第二段生成中
       2 次整批捨棄、2 次部分捨棄）。⚠️ 「通過」指**防線有效**，不是模型不會杜撰——
       44% 的呼叫至少含一張杜撰引用，該品質問題**已歸屬 `specs/005-m2-residual-defects` US3**
-      （004 spec SC-002）。⚠️ 005 承諾的是「答得出為什麼沒有引用」（未命中／未引用／
-      引用被捨棄三者可分辨）與強化我方組出的封閉命中清單，**不承諾把 80% 拉到 90%** ——
-      最強的槓桿是建議卡 agent 的 system prompt 與選型，兩者都在 iMBrace 後台、不在本 repo
+      （004 spec SC-002）。⚠️ 005 承諾的是「答得出為什麼沒有引用」與強化我方組出的封閉命中清單，
+      **不承諾把 80% 拉到 90%** —— 最強的槓桿是建議卡 agent 的 system prompt 與選型，
+      兩者都在 iMBrace 後台、不在本 repo。
+      ✅ **「答得出為什麼」已於 2026-09-02 落地**：每一次引用落定（含第二段失敗）在生產路徑發
+      `suggestion.citation.audited`（`server/utils/citation-audit.ts`，一行 NDJSON 到標準輸出），
+      六值 `outcome` 分辨未命中／未引用／被白名單捨棄／模型未回卡／第二段失敗，被擋下的 `sopId`
+      字串本身保留（> 64 字元改記雜湊）；`npm run spike:citation-quality` 直接讀這些事件算
+      杜撰率與逐對話分布（口徑 15 段 × 3 輪）。
+      ⏳ **封閉清單的效果待量**：改 prompt 前 MUST 先取基線（需固定 15 段對話），再改、再量。
+      在那之前 44%／80% 仍是唯一的數字，MUST NOT 寫成「已改善」
 - [x] `confidence` 無真實分數來源時留空，不得以模型自評頂替（§11.6②）
       （`forceNullConfidence()` 在 Zod 之後強制覆寫；`test/suggestion-whitelist.test.ts`）
 - [x] Copilot 面板可見性依 003 FR-016～FR-017b：未 JOIN 時整欄不呈現、JOIN 時展開可收合、
@@ -2478,20 +2489,36 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       刻意背離畫布之處（字級、WCAG AA 的等效混色等）記於 `DESIGN_FEEDBACK.md`
 
 **未修的缺陷與未歸屬項目**（皆不報錯、皆不阻塞 004。前三條為真實環境挖出的缺陷，
-**已於 2026-09-02 開立 `specs/005-m2-residual-defects` 認領**（US1 收前兩條、US2 收第三條）；
+**已於 2026-09-02 由 `specs/005-m2-residual-defects` 關閉**（US1 收前兩條、US2 收第三條）；
 後兩條是 M2 期間發現、但**還沒有里程碑認領**的項目）
 
-- [ ] **`registerCredential()` 雙分頁**：以 `(orgId, operatorId)` 為鍵，取消登記時無條件
-      `byOperator.delete(operatorId)`。同一客服開兩分頁、關掉其一，會把仍開著那條的憑證一併移除
+- [x] **`registerCredential()` 雙分頁**（005 US1，2026-09-02 關閉）：原以 `(orgId, operatorId)` 為鍵，
+      取消登記時無條件刪掉整個 operator。同一客服開兩分頁、關掉其一，仍開著那條的憑證一併消失
       → `borrowCredential()` 回 null → 兩層輪詢拉回空陣列 → **那個分頁從此收不到新訊息**。
-      `PollingMessageSource.subscribe()` 早已記載同一個坑並改用 `Symbol` 當鍵，修法比照
-- [ ] **`session.watchers` 雙分頁**（同一失敗家族第三處）：`watchers` 是去重的 operatorId 陣列，
+      現在以 `stream.get.ts` 現場產生的 server 端 `connectionId` 為鍵、每條連線一筆
+      （**不是** `clientId`：複製分頁會共用 `sessionStorage`）；配套 FR-005a 的存活兜底 ——
+      登記帶 `lastSeenAt`、45 秒 TTL 惰性剔除、前端每 20 秒打 `POST /api/connection/beat`
+      （**upsert**：背景分頁的計時器被瀏覽器節流到每分鐘一拍，登記被剔除而 SSE 沒斷、不會重連，
+      心跳寫成 no-op 就是兜底自己重現缺陷）。守衛：`test/connection-counting.test.ts` I-1～I-3、I-7／I-8
+- [x] **`session.watchers` 雙分頁**（005 US1，2026-09-02 關閉）：原是去重的 operatorId 陣列，
       移除時無條件 filter，同一客服關掉一個分頁即歸零 → `deleteCopilotSession()` 被呼叫。
       ⚠️ 同一函式裡的 `pipeline.refs` **有** refcount 且正確——同一件事兩個計數器給出不同答案，
-      這個不變式破裂本身就是 bug 的形狀。症狀較輕：錨點不再前推，自己送出的訊息會被當新訊息再 fan-out
-- [ ] **自動恢復不補算先前失敗的批次**：故障排除後由新發言觸發的恢復走 `runIncremental()`，
-      只拿到新訊息，先前失敗那批的情緒點永久缺席（除非重新 JOIN 走冷啟動）。
-      `SENTIMENT_CHUNK_SIZE` 的註解只承諾了手動 `retryBlock()` 會全部重算，未涵蓋這條路徑
+      這個不變式破裂本身就是 bug 的形狀。現在兩邊都以 `connectionId` 為單位，計數核心抽成
+      `server/services/session-registry.ts`（`session-manager.ts` 經 `copilot-runtime` 用到 Nitro auto-import，
+      vitest／tsc 碰不得），FR-004 的等式 `watchers.length === pipeline.refs` 由測試逐情境驗（單副本）。
+      📌 連帶行為變更：`session.opened` 的 `reason` 在同一客服第二個分頁由 `join` 變 `resume`（無前端消費者）
+- [x] **自動恢復不補算先前失敗的批次**（005 US2，2026-09-02 關閉）：情緒批次失敗時在
+      `CopilotAnalysisState` 頂層立 `sentimentGap`（server-only，位置比照 `failedBatches`），旗標為 true 的
+      那幾輪以 `timeline[0]` 為錨點撈歷史、補「時間軸起點之後、不在時間軸上」的客戶發言，每輪最多 18 則，
+      剩下的留給下一次自然觸發（不自行續排，003 SC-001 優先）。⚠️ 錨點 MUST 是 `timeline[0]` 不是
+      `lastCoveredMessageId()`（高水位會被後續成功批次推過中段缺口）；左界是 `timeline[0]` 不是對話第一則
+      （冷啟動只吃最近 50 則）。守衛：`test/sentiment-backfill.test.ts`
+- [x] **同區塊併發合併時 rerun 重跑的是第一次的閉包**（005 T026b 挖出，2026-09-02 修正）：
+      `runBlockDeduped()` 的註解寫「再跑一次最新的」，實作卻只存一個布林、rerun 第一次觸發的 fn ——
+      第一批還在飛時客戶又說了第二批，第二批被丟掉、第一批原封再送一次；同一則進 AI 兩次，
+      第二批**從此消失**在情緒時間軸上，不報錯。現改存最新那次的 fn。
+      📌 已知限制：三次以上併發時中間那些觸發仍會被最新的覆蓋（合併語意的本意；debounce 已先把
+      1 秒內的爆量聚成一批，這裡只處理「AI 呼叫比 debounce 長」的重疊）
 - [ ] **平台清單的預設排序：已量到方向，但仍證明不了分頁邊界的安全性**（2026-09-01 首次執行
       `npm run spike:list-order`，n=18，`out/22-*.json`）：§9.3.1 第一層只取前 `LIST_PAGE_SIZE`
       （100）筆而不分頁、側欄的 `BACKGROUND_COVERAGE` 也鎖在同一個 100，兩者的安全性**完全
@@ -2546,13 +2573,19 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 > 要知道現在幾行就跑 `wc -l`，不要讀這張表。**擁有的狀態那一欄才是有守衛的**
 > （`test/contract-guards.test.ts`），那一欄錯了測試會紅。
 
-- [ ] **第三刀：`blocks/sentiment.ts`（約 350 行）—— 等 005 收尾後才動。**
-      移出 `SENTIMENT_CHUNK_SIZE`／`SENTIMENT_CONCURRENCY`／`chunk()`／`mapWithConcurrency()`／
-      `sortByAt()`／`computeStats()`／`mergeMarkersOnly()`／`finishSentimentSuccess()`／
-      `narrateSentimentTrend()`／`analyzeSentimentBatch()`。
+- [ ] **第三刀：`blocks/sentiment.ts`（約 350 行）—— 觸發條件已於 2026-09-02 滿足，尚未動。**
+      移出 `SENTIMENT_CHUNK_SIZE`／`SENTIMENT_CONCURRENCY`／`resolveSentimentConcurrency()`／`chunk()`／
+      `mapWithConcurrency()`／`sortByAt()`／`computeStats()`／`mergeMarkersOnly()`／`finishSentimentSuccess()`／
+      `narrateSentimentTrend()`／`resolveSentimentInput()`／`analyzeSentimentBatch()`／
+      `setHistoryResolver()`／`SENTIMENT_BACKFILL_MAX_MESSAGES`。
       ⚠️ **延後的理由是 `specs/005-m2-residual-defects` US2**（恢復後補算失敗批次）
       正好要改情緒的批次邏輯 —— 重構與 feature 撞在同一個 diff 裡兩邊都不可讀，
-      而「行為零變更」也就無從斷言。**MUST 等 005 的情緒改動落地後再切。**
+      而「行為零變更」也就無從斷言。**005 的情緒改動已於 2026-09-02 落地（US2 全綠），
+      這一刀從此可以切，但刻意不在 005 內執行**（005 plan「與拆檔第三刀的先後關係」）——
+      它仍然是沒有任何東西會提醒你回來做的那一種欠帳。
+      ⚠️ 切的時候 `setHistoryResolver()` 的裝配守衛（`test/contract-guards.test.ts` 掃 `copilot-runtime.ts`）
+      與 `sentimentGap` 的 `shared/` 守衛都不受影響；但 `OWNERSHIP` 表要不要新增一格取決於新檔
+      有沒有自己的模組層 `Map`／`Set`（目前情緒沒有；`resolveHistory` 是函式變數，不是 Map）。
       ⚠️ **`blocks/summary.ts` 刻意不切**：摘要沒有自己的執行期狀態，單獨成檔換不到任何
       不變式，只多一層檔案。第三刀切完後 barrel 只剩摘要 ＋ 對外入口 ＋ debounce，
       那就是這條管線的終點形狀，不必再往下拆
@@ -2726,8 +2759,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 待拍板（M3 開工前） | 憲法 5.3 的待修憲事項（與上一項**同進同出**） | `CONSTITUTION.md` 5.3 |
 | 驗收未定 | 摘要 10 秒、建議卡第一段 20 秒、情緒 15 秒 —— 三項皆未達 90%，但**單輪 n=15 判不動**（相隔 30 分鐘的兩輪結論相反）。門檻一律**不放寬** | §18 M2、§8.2b |
 | 量測規程 | 兩輪之間 MUST 留 ≥30 分鐘冷卻且跨時段；隔離單次量測 MUST NOT 用來預測驗收 | §8.2b |
-| 未修的缺陷 | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次。**2026-09-02 已開立 `specs/005-m2-residual-defects` 認領**（US1／US2） | §18 M2 |
-| 重構欠帳（非缺陷） | 分析管線拆檔的第三刀 `blocks/sentiment.ts`。**觸發條件是「005 的情緒改動落地之後」**，不是時程 —— 沒有任何測試或型別檢查會提醒該回來做 | §18 M2 |
+| 已關閉的缺陷（留作對照） | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次，**皆於 2026-09-02 由 `specs/005-m2-residual-defects` 關閉**（US1／US2）；順帶修掉 `runBlockDeduped()` rerun 重跑第一次閉包的既有缺陷。剩下的 005 待辦是三段真實環境量測（杜撰率基線／改動後、並行度掃描）與封閉清單的 prompt 改動 | §18 M2 |
+| 重構欠帳（非缺陷） | 分析管線拆檔的第三刀 `blocks/sentiment.ts`。**觸發條件「005 的情緒改動落地之後」已於 2026-09-02 滿足**，刻意不在 005 內執行 —— 沒有任何測試或型別檢查會提醒該回來做 | §18 M2 |
 | M4 前必須處置 | 分析管線的八份執行期狀態皆為 process-local，**不在 `StateStore` 裡**，換 Redis 涵蓋不到 | §18 M2、§8.3 |
 | 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力 | §18 M2、§18 M4（**一起關閉**） |
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |

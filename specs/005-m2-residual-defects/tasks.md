@@ -227,6 +227,11 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 - [x] T040 [US3] 新增 `scripts/spike/27-citation-quality.ts` 與 `npm run spike:citation-quality`：沿用 `spike:progressive` 的骨架（走生產路徑的 `runColdStart()`），收集稽核事件並聚合出整體杜撰率**與逐對話分布**（分母 ＝ `hitCount > 0` 且 `outcome ∉ { no-cards, failed }`，contracts §5）。⚠️ 口徑固定為 **15 段對話 × 3 輪 ＝ 45 次帶命中的生成**，輪次間輪換對話順序（FR-017）——每段對話固定 3 個樣本，是「逐對話分布」看得出集中性的最小條件
 - [ ] T041 [US3] **取基線**：`npm run spike:agent-prompts` 後執行 `npm run spike:citation-quality`（15 段對話 × 3 輪 ＝ n=45，FR-017；實跑約 21 分鐘），把結果存進 `scripts/spike/out/` 並記下執行時段。⚠️ 這一步 MUST 在 T042 之前完成
 
+> ⏸ **2026-09-02 `/speckit-implement` 停在 T041**：FR-017 要求固定 15 段對話，而 `.env.local` 的
+> `SPIKE_CONVERSATION_IDS` 是佔位字串、歷次 21 號量測都只用過 4 個命令列標題。基線要等使用者提供
+> 15 段對話清單（`SPIKE_CITATION_CONVERSATION_IDS` 或命令列），且實跑約 21 分鐘的真實環境 AI 呼叫。
+> T042～T044 因「基線在改 prompt 之前」的硬相依一併等待；程式碼（稽核事件、量測腳本）已全部就位。
+
 ### Implementation for User Story 3 —— 第二段：封閉清單（基線之後）
 
 - [ ] T042 [US3] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `buildSuggestionPrompt()` 加入**顯式封閉清單**段落（可用的 sopId 列舉 ＋「只能從清單中選、不得自創」）；空集合時明示「本次沒有可用的 sopId，全部填 null」。既有規則 ② 保留
@@ -258,14 +263,14 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 - [x] T046 [P] [US4] 在 `test/contract-guards.test.ts` 新增守衛：受檢清單**明列**為 `.env.example`、`nuxt.config.ts`、`package.json` 的 scripts 三處，斷言它們**MUST NOT** 出現 `SENTIMENT_CONCURRENCY`（含「守衛本身有效」的自檢）。⚠️ 受檢範圍 MUST NOT 擴大成全 repo 掃描——`scripts/spike/26-*.ts` 正是唯一該設定它的地方，擴大範圍會讓守衛自傷。⚠️ 它一旦被抄進某個環境的設定，症狀是「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤。⚠️ **守衛看不到 gitignored 的 `.env.local`**——那正是最可能被貼進去的地方；T045 的註解與 quickstart MUST 寫明此殘餘風險（本地的 `.env.local` 與 Nuxt 共用，貼了就等於改生產路徑）
 - [x] T047 [US4] 新增 `scripts/spike/26-sentiment-concurrency.ts` 與 `npm run spike:sentiment-concurrency`：對 3／4／5 三個檔位**各開一個子行程**（同一行程內改不了 module-level const），三輪、輪次間輪換檔位順序（3,4,5／4,5,3／5,3,4）、同一時段連續跑完、**序列執行不得並行取樣**
 - [x] T048 [US4] 讓 26 號腳本重用 `spike:progressive` 既有的 `sentimentCalls`（每次呼叫的延遲與成敗）與峰值並發，輸出**總時間分布**與**單次呼叫失敗率**兩列並陳（FR-018）
-- [ ] T049 [US4] **執行掃描**（實跑約 1 小時，加上 T041／T044 的兩次杜撰率量測，本規格量測總時數約 1 小時 40 分；先跑 `npm run spike:agent-prompts`），把原始產出存進 `scripts/spike/out/`，並記錄執行時段；平台若處於已知降級時段 MUST 明確標註（FR-020）
+- [ ] T049 [US4] ⏸（2026-09-02 停在此：實跑約 1 小時的真實環境 AI 呼叫，且需與 T041 同一組固定對話；腳本已就位、`--dry-run` 驗過輪換計畫）**執行掃描**（實跑約 1 小時，加上 T041／T044 的兩次杜撰率量測，本規格量測總時數約 1 小時 40 分；先跑 `npm run spike:agent-prompts`），把原始產出存進 `scripts/spike/out/`，並記錄執行時段；平台若處於已知降級時段 MUST 明確標註（FR-020）
 - [ ] T050 [US4] 依 FR-019 的判準做決定並寫進 `docs/ARCHITECTURE.md`：總時間改善**且**失敗率未上升才採用；只有總時間改善 **MUST NOT** 作為採用理由，且該結論本身要留在文件裡。⚠️ 15 秒門檻在本規格期間維持不動（FR-020a）。⚠️ 若決定採用新檔位，MUST **一併複查 FR-009 的「每輪 18 則缺口訊息（＝3 批）」上限**並把結論寫進文件——那個數字的理由是「對齊 `SENTIMENT_CONCURRENCY` 的一波並行」，並行度一改，理由就不再自動成立（維持 18 則仍在一波之內，但 MUST 是被複查過的決定，不是被遺忘的常數）
 
 ### Implementation for User Story 4 —— `user_id` 衛生
 
 - [x] T051 [P] [US4] 在 `server/services/imbrace.ts`（防腐層）新增 AI 服務 client user id 的取得與 process-local 快取。⚠️ 註解 MUST 寫明它**與客服身分無關**，填成 `operatorId` 會讓 AI 服務端的用量統計掛到錯的人身上而不報錯
 - [x] T052 [US4] 在 `server/services/ai/imbrace-agent-provider.ts` 的 `callAgent()` 帶上 `user_id`，省去 SDK 每次呼叫先 await 一次 auth 的往返（實測 54ms）
-- [ ] T053 [US4] 執行 `npm run spike:userid` 驗證：帶上 `user_id` 不會 400、輸出照常、多次取得的 id 一致；並確認既有分析行為完全不變（FR-021）
+- [x] T053 [US4] 執行 `npm run spike:userid` 驗證（2026-09-02 實跑：auth 往返 n=20 中位 55ms／p90 70ms，20 次皆同一個 id；帶 `user_id` 5/5 輸出正常；既有分析行為由 `test/ai-user-id.test.ts` 對假 client 斷言 payload 只多一個欄位）：帶上 `user_id` 不會 400、輸出照常、多次取得的 id 一致；並確認既有分析行為完全不變（FR-021）
 
 **Checkpoint**: 四則 user story 全部可獨立驗收。
 
@@ -273,12 +278,12 @@ $env:SPECIFY_FEATURE_DIRECTORY = 'specs/005-m2-residual-defects'
 
 ## Phase 7: Polish & 跨切面
 
-- [ ] T054 更新 `docs/ARCHITECTURE.md` §18 M2：把本規格關閉的項目（`registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算、`user_id` 衛生、並行度掃描）逐一標記為已關閉並指向 005
-- [ ] T055 ⚠️ **執行 `CLAUDE.md` 第一級警告的 grep**：`grep -rn "雙分頁" docs/`、`grep -rn "未修的缺陷" docs/`、`grep -rn "user_id" docs/`、`grep -rn "並行度" docs/`——同一個結論散落在決策摘要、詳細章節、里程碑驗收、風險表**甚至另一份正典文件**，改完「主要」那份時最危險
-- [ ] T056 [P] 檢查 `docs/IMBRACE_QUESTIONS.md` 的 0-3e：US3 的封閉清單結果會影響該題的敘述（該題引用了「44% 的呼叫至少產生一張杜撰的知識庫來源編號」）。有新數字就更新，**自行解決的部分要明確撤回並附上解法**，不是默默刪掉
-- [ ] T057 [P] 在 `docs/ARCHITECTURE.md` §18 M2「分析管線拆檔」註記第三刀的觸發條件（「005 的情緒改動落地之後」）**已滿足**，但**不在本規格執行**
+- [x] T054 更新 `docs/ARCHITECTURE.md` §18 M2：把本規格關閉的項目（`registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算、`user_id` 衛生、並行度掃描）逐一標記為已關閉並指向 005
+- [x] T055 ⚠️ **執行 `CLAUDE.md` 第一級警告的 grep**（2026-09-02：`雙分頁` 六處皆已帶關閉註記；`未修的缺陷` 只剩節名與一處指向節名的引用（該節仍有未關閉的排序項，節名保留）；`user_id` 的「尚未做」改為已做、發現段落改成過去式；風險表兩列改寫；`三者` 措辭已無殘留）：`grep -rn "雙分頁" docs/`、`grep -rn "未修的缺陷" docs/`、`grep -rn "user_id" docs/`、`grep -rn "並行度" docs/`——同一個結論散落在決策摘要、詳細章節、里程碑驗收、風險表**甚至另一份正典文件**，改完「主要」那份時最危險
+- [x] T056 [P] 檢查 `docs/IMBRACE_QUESTIONS.md` 的 0-3e（2026-09-02：改寫為「稽核紀錄與可重複量測已完成、封閉清單進行中、量測後更新 44%／80%」；數字本身待 T044 才能更新）：US3 的封閉清單結果會影響該題的敘述（該題引用了「44% 的呼叫至少產生一張杜撰的知識庫來源編號」）。有新數字就更新，**自行解決的部分要明確撤回並附上解法**，不是默默刪掉
+- [x] T057 [P] 在 `docs/ARCHITECTURE.md` §18 M2「分析管線拆檔」註記第三刀的觸發條件（「005 的情緒改動落地之後」）**已滿足**，但**不在本規格執行**
 - [ ] T058 依 [quickstart.md](./quickstart.md) 逐項執行手動驗收，特別是 US1 的真實雙分頁情境與「斷網而非關分頁」的存活兜底驗證
-- [ ] T059 執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認 001～004 的既有驗收全部維持通過（SC-008），與 T002 的基線對照。⚠️ 回歸清單 MUST 點名 T016 的行為變更（`isResume` 語意改變、同一客服的第二個分頁由 `join` 變 `resume`）：它在 spec 沒有對應的 FR／SC，只記在 data-model §2，是最容易在回歸時被忽略的一項
+- [x] T059（2026-09-02：typecheck 綠、42 檔 552 測試全綠、build 綠、`smoke:flow`（含新加的 beat 四項）與 `smoke:realtime` 全過；`session.opened` 的 `reason` 經 grep 確認仍無前端消費者，T016 的語意變更不影響畫面）執行 `npm run typecheck && npm test && npm run build && npm run smoke`，確認 001～004 的既有驗收全部維持通過（SC-008），與 T002 的基線對照。⚠️ 回歸清單 MUST 點名 T016 的行為變更（`isResume` 語意改變、同一客服的第二個分頁由 `join` 變 `resume`）：它在 spec 沒有對應的 FR／SC，只記在 data-model §2，是最容易在回歸時被忽略的一項
 
 ---
 
