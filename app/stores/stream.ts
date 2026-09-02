@@ -19,6 +19,7 @@
 
 import { defineStore } from 'pinia'
 import type { CopilotEvent } from '#shared/types/events'
+import { CONNECTION_HEARTBEAT_MS } from '#shared/types/events'
 
 export type StreamStatus = 'idle' | 'connecting' | 'open' | 'reconnecting'
 
@@ -76,6 +77,18 @@ export const useStreamStore = defineStore('stream', () => {
 
   let source: EventSource | null = null
   let retryTimer: ReturnType<typeof setTimeout> | undefined
+  /**
+   * 連線層級的存活心跳（specs/005-m2-residual-defects FR-005a）。
+   *
+   * ⚠️ **刻意掛在這裡、不掛在 `useConversationView.ts`**：那支的 presence 心跳以「進入某個對話」
+   *    為前提（body 必填 `conversationId`），分頁開著但還沒點進任何對話時完全不送 ——
+   *    而那正是「憑證登記已存在、卻沒有任何心跳」的狀態。連線心跳必須與有沒有進入對話無關。
+   *    兩支心跳回答的是不同問題，MUST NOT 合併。
+   * ⚠️ 少了它，server 端的登記會在 45 秒後被 TTL 回收（FR-005a 的兜底），這個分頁就再也
+   *    收不到新訊息而畫面一切正常 —— 正是 US1 要修的那個症狀。心跳失敗一律靜默：
+   *    server 端的 upsert 會在下一拍把被剔除的登記重建回來。
+   */
+  let beatTimer: ReturnType<typeof setInterval> | undefined
   /** ⚠️ 已經連過至少一次 —— 用來區分「首次連線」與「重連」，只有後者要對帳 */
   let hasConnectedBefore = false
   /** 這一輪斷線已經探測過 session，不必每次重試都打一次 /api/auth/me */
@@ -106,6 +119,7 @@ export const useStreamStore = defineStore('stream', () => {
     es.onopen = () => {
       status.value = 'open'
       failures.value = 0
+      startBeat()
       // ⚠️ 首次連線不對帳：此時還沒有任何對話被開啟，也沒有 lastMessageId 可比對。
       //    對帳只在「曾經連上、斷掉、又接回來」時才有意義。
       if (hasConnectedBefore) {
@@ -180,7 +194,26 @@ export const useStreamStore = defineStore('stream', () => {
     retryTimer = setTimeout(connect, delay)
   }
 
+  /** 每 `CONNECTION_HEARTBEAT_MS` 告訴 server「這條連線還在」—— 見 `beatTimer` 的說明 */
+  function startBeat(): void {
+    stopBeat()
+    beatTimer = setInterval(() => {
+      void $fetch('/api/connection/beat', {
+        method: 'POST',
+        body: { clientId: clientId.value },
+      }).catch(() => {
+        // 心跳失敗只代表這一拍沒送到；下一拍的 upsert 會把登記補回來。不打擾使用者。
+      })
+    }, CONNECTION_HEARTBEAT_MS)
+  }
+
+  function stopBeat(): void {
+    if (beatTimer) clearInterval(beatTimer)
+    beatTimer = undefined
+  }
+
   function teardownSource(): void {
+    stopBeat()
     if (!source) return
     source.onopen = null
     source.onmessage = null

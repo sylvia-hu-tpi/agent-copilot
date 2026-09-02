@@ -49,6 +49,17 @@ export default defineEventHandler(async (event) => {
   const clientId = String(getQuery(event).clientId ?? '')
   if (!clientId) throw createError({ statusCode: 400, message: '缺少 clientId' })
 
+  /**
+   * 這條連線的 server 端識別 —— 憑證登記與 `session.watchers` 的鍵
+   * （specs/005-m2-residual-defects research.md #1，contracts/connection-lifecycle.md §1）。
+   *
+   * ⚠️ **MUST 由 server 產生、MUST NOT 用 `clientId`**：後者存在 `sessionStorage`，瀏覽器的
+   *    「複製分頁」會連同它一起複製，兩條連線帶同一個 `clientId` 就會共用一筆登記，
+   *    關掉其中一個把另一個一併刪掉 —— 正是本規格要修的缺陷換個觸發條件重現。
+   * ⚠️ 它永不離開 server：不進任何回應、不進日誌。
+   */
+  const connectionId = crypto.randomUUID()
+
   const bus = useEventBus()
   const store = useStateStore()
   const runtime = useCopilotRuntime(session.orgId)
@@ -81,8 +92,12 @@ export default defineEventHandler(async (event) => {
    */
   const watchers = createWatchRegistry(attach)
 
-  // ── ③ 借憑證給背景輪詢（唯讀）─────────────────────────────────
+  // ── ③ 借憑證給背景輪詢（唯讀）—— 每條連線一筆，關線只移除自己這一筆（FR-001／FR-002）──
+  //    ⚠️ 關閉事件沒觸發時由 FR-005a 的存活兜底回收：前端每 20 秒打 `POST /api/connection/beat`，
+  //       登記 45 秒沒收到心跳即在讀取點被惰性剔除（`services/credentials.ts` 檔頭）。
   cleanups.push(registerCredential({
+    connectionId,
+    clientId,
     operatorId: session.operatorId,
     orgId: session.orgId,
     accessToken: session.accessToken,
@@ -132,6 +147,7 @@ export default defineEventHandler(async (event) => {
       conversationId,
       orgId: session.orgId,
       operator: { id: session.operatorId, name: session.operatorName },
+      connectionId,
       priority,
       joined,
     })

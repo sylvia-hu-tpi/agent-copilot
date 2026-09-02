@@ -100,3 +100,17 @@ export interface CopilotEventEnvelope {
  * 真相一律回源頭取，不依賴傳輸層的可靠性假設。
  */
 export const STREAM_HEARTBEAT_MS = 25_000
+
+/**
+ * 前端**連線層級**存活心跳的間隔 —— `POST /api/connection/beat`
+ * （specs/005-m2-residual-defects FR-005a、contracts/connection-lifecycle.md §4）。
+ *
+ * ⚠️ 與上面的 `STREAM_HEARTBEAT_MS` 是**方向相反的兩件事**：那個是 server → client，
+ *    證明的是「server 還認為連線在」，在半開連線下恆真，MUST NOT 拿來當存活訊號；
+ *    這個是 client → server，才是憑證登記 TTL（server 端 45 秒）真正的續命來源。
+ * ⚠️ 也與 presence 心跳（`useConversationView.ts` 的 20 秒）是兩支獨立的心跳：
+ *    presence 以「進入某個對話」為前提、body 必填 `conversationId`；
+ *    連線心跳與有沒有進入對話無關（分頁開著但還沒點進任何對話時仍須送達）。MUST NOT 合併。
+ * 數字與 presence 相同（20 秒 vs 45 秒 TTL，容忍漏一拍）。
+ */
+export const CONNECTION_HEARTBEAT_MS = 20_000

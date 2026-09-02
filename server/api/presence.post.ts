@@ -51,7 +51,9 @@ export default defineEventHandler(async (event) => {
   const store = useStateStore()
   const bus = useEventBus()
 
-  setCredentialActivity(session.orgId, session.operatorId, visible ? 'foreground' : 'background')
+  // ⚠️ 帶 `clientId` 定址、更新該分頁**全部**命中的登記（specs/005-m2-residual-defects research.md #2）——
+  //    舊簽章以客服身分整筆覆寫：兩個分頁一前景一背景時後送者贏，第一層清單輪詢在 3 秒與 30 秒之間跳。
+  setCredentialActivity(session.orgId, session.operatorId, clientId, visible ? 'foreground' : 'background')
 
   if (state === 'away') {
     await clearViewing(store, convId, session.operatorId)

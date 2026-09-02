@@ -94,10 +94,29 @@ export type Session = PendingOrgSession | ActiveSession
  * 透過 `StateStore.getAnalysisState`／`setAnalysisState`（sliding TTL，不受 watcher 數影響），
  * 不會、也不應該再擴充這個介面。
  */
+/**
+ * 正在檢視此對話的**一條連線**（specs/005-m2-residual-defects data-model.md §2）。
+ *
+ * ⚠️ **每條連線一筆，不以客服身分去重。** 2026-09-02 之前這裡是去重的 `operatorId[]`：
+ *    同一位客服開兩個分頁，關掉其中一個就把整個 session 刪掉、錨點不再前推，
+ *    自己送出的訊息被當成新訊息再 fan-out 一次 —— 而 `pipeline.refs` 在同一條路徑上
+ *    **有**正確的 refcount。同一件事由兩個計數器回答、答案不同，就是那個缺陷的形狀。
+ *    `connectionId` 是 `stream.get.ts` 在連線建立時以 `crypto.randomUUID()` 產生的
+ *    server 端識別（research.md #1：MUST NOT 用前端的 `clientId` —— 複製分頁會共用它）。
+ */
+export interface SessionWatcher {
+  operatorId: string
+  connectionId: string
+}
+
 export interface CopilotSession {
   conversationId: string
-  /** 正在檢視此對話的客服 id —— 歸零即可回收 session 與停止輪詢 */
-  watchers: string[]
+  /**
+   * 正在檢視此對話的連線 —— 歸零即可回收 session 與停止輪詢。
+   * ⚠️ 不變式 I-4（FR-004）：`watchers.length === pipeline.refs` 在每次 attach／release 完成後成立
+   *    （單副本；`pipeline.refs` 是 process-local，見 `server/services/session-registry.ts`）。
+   */
+  watchers: SessionWatcher[]
   /**
    * `advanceAnchor()` 會寫入，但目前沒有讀者（docs/ARCHITECTURE.md §18）——
    * 不是撞單檢查的版本錨點，也不是 §9.3 輪詢去重的比對基準，兩者另有各自的欄位。
@@ -136,6 +155,24 @@ export interface CopilotAnalysisState {
    * 生命週期跟隨本狀態的 2 小時 sliding TTL，**不另訂保存期限**（FR-011）。
    */
   failedBatches?: Partial<Record<AnalysisBlock, FailedBatch>>
+  /**
+   * 「情緒時間軸已知有未涵蓋的客戶發言待補」（specs/005-m2-residual-defects data-model.md §3）。
+   *
+   * ⚠️ **MUST 留在頂層、MUST NOT 併入 `SentimentBlock`、MUST NOT 出現在 `shared/`** ——
+   *    理由與 `failedBatches` 完全相同：三個分析事件送的是整個 Block，塞進去就會隨 SSE 流到
+   *    瀏覽器而 typecheck 不會響（`test/contract-guards.test.ts` 有對應守衛）。
+   *
+   * 生命週期（研究 #9）：情緒批次失敗 → `true`；補算後已無未涵蓋發言 → `false`；
+   * 仍有剩餘（超過每輪 18 則上限）→ 維持 `true`；冷啟動成功／手動重試成功 → `false`
+   * （兩者的輸入都是 `fetchLatest()` 的完整視窗，成功即必然涵蓋，不需另判）。
+   * 未設定（`undefined`）與 `false` 同義 —— 只有 `=== true` 的那幾輪才去撈歷史算缺口，
+   * 讓無缺口的正常路徑零額外往返（FR-012）。
+   *
+   * ⚠️ 這**不是** spec Assumptions 排除的「這個區塊分析到第幾批」那種進度狀態：
+   *    它記的是「有沒有缺口」（布林），與 analyzing／retrying／error 三態正交 ——
+   *    `ready` 且 `sentimentGap === true` 是合法且常見的組合（自癒成功但還沒補完）。
+   */
+  sentimentGap?: boolean
 }
 
 /**
