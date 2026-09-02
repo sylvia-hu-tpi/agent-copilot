@@ -900,6 +900,37 @@ export async function checkSuggestionsSuperseded(conversationId: string, message
  */
 const SUGGESTION_STAGE2_CALL_TIMEOUT_MS = 20_000
 
+/**
+ * 第一段（不帶命中、先出無引用版本）的單次呼叫逾時。
+ *
+ * ✅ **2026-09-02 新增，比照第二段的先例改用獨立常數**——同樣**不動** 001 FR-014 的
+ * 共用 15 秒，因此摘要／情緒的失敗偵測完全不受影響。
+ *
+ * 為什麼需要它：沿用共用的 15 秒時，**002 SC-001 的 20 秒門檻在重試路徑上數學上不可能滿足**
+ * ——第一次呼叫撞 15 秒逾時後，15 ＋ 1（退避）＋ 下一次呼叫（實測中位 9.7 秒）必然破 20 秒。
+ * 也就是門檻寫 20 秒、實際判準卻是 15 秒。2026-09-01 三輪端到端實測：**14/14 個破 20 秒的
+ * 樣本，事件序列裡都有 `retrying`，0 例外；沒重試的樣本最慢只有 14.5 秒。**
+ *
+ * 為什麼是 20 秒：**這個數字直接取自判準本身（SC-001 的 20 秒），不是從量測湊出來的。**
+ * 語意是「超過預算才完成的呼叫，即使等到了也已經未達，繼續等沒有收益」。
+ * 2026-09-02 原始單次量測（`spike:agent-latency -- suggestion 20`，不經 withRetry）
+ * 佐證這個選擇：中位 9.7 秒、**最慢 18.4 秒、20/20 全部落在 20 秒內**，
+ * 但其中 2 次超過 15 秒 —— 那 2 次在舊設定下會被砍掉重來、變成約 26 秒而未達。
+ *
+ * ⚠️ 與 `SUGGESTION_STAGE2_CALL_TIMEOUT_MS` **數值相同純屬巧合，MUST NOT 合併成一個常數**：
+ *    第二段的 20 秒來自「實測最慢 13.0 秒 ＋ 平台漂移餘裕」，第一段的 20 秒來自「SC-001 的預算」。
+ *    合併會讓其中一個決策的理由在下次調整時靜默消失。
+ *
+ * ⚠️ 代價（**刻意接受**）：第一段連續失敗到底的偵測時間由最壞約 50 秒變約 65 秒
+ *    （20＋1＋20＋4＋20）。期間客服看到的是「重試中」而非空白，故不是靜默劣化。
+ *    FR-014 的 40 秒退避預算**不需要跟著改** —— 該預算自第一次失敗起算，
+ *    第二次失敗時 elapsed 約 21 秒 < 40 秒，整條重試鏈仍走得完，沒有被截斷。
+ *
+ * ⚠️ **這個槓桿只在平台的正常時段有效。** 降級時段（2026-09-01 曾量到摘要單次中位 52 秒）
+ *    原始呼叫本身就遠超 20 秒，放寬逾時救不回來 —— 那不是我方的參數問題（§8.2b）。
+ */
+const SUGGESTION_STAGE1_CALL_TIMEOUT_MS = 20_000
+
 /** 第一段的落定結果 —— 尾巴在落定 `citation` 之前 MUST 先等它（FR-003a ①） */
 type Stage1Result =
   | { kind: 'landed' } // 已發布 ready/pending（cards 可能為空）
@@ -1200,6 +1231,8 @@ async function runProgressive(
 
   try {
     const { cards, retryAttempt } = await generateSuggestionCards(input, [], {
+      // ⚠️ 獨立常數，不是 FR-014 的共用 15 秒（理由見該常數的說明）
+      callTimeoutMs: SUGGESTION_STAGE1_CALL_TIMEOUT_MS,
       onRetry: (info) => {
         tail.stage1RetryAttempt = info.attempt
         return publishRetrying(conversationId, 'suggestions', info)

@@ -94,12 +94,25 @@ const STAGE2_BUDGET_MS = 50_000
 /** 004 SC-002：知識庫有內容時 ≥ 90% 最終取得引用 */
 const SC002_CITED_RATIO = 0.9
 /**
- * 001 SC-005：摘要與情緒的實質內容 p90 ≤ 10 秒（`docs/ARCHITECTURE.md` §18 M2 驗收第 2 項）。
+ * 001 SC-005 的**摘要**門檻：10 秒（`docs/ARCHITECTURE.md` §18 M2 驗收第 3 項）。
  *
- * ⚠️ **MUST NOT 因為量出來過不了就把這個數字改掉。** 002 SC-001 由 10 秒改為 20 秒是
- *    經過裁決的（§8.2b），本項尚未經過任何裁決；工具擅自放寬等於把判準改成「一定會通過」。
+ * ⚠️ **MUST NOT 因為量出來過不了就把這個數字改掉。** 放寬一律要先經過裁決並寫回 §18 M2；
+ *    工具擅自放寬等於把判準改成「一定會通過」。
  */
-const SC005_BUDGET_MS = 10_000
+const SC005_SUMMARY_BUDGET_MS = 10_000
+
+/**
+ * 001 SC-005 的**情緒**門檻：15 秒（§18 M2 驗收第 2 項）。
+ *
+ * ⚠️ **兩個區塊的門檻不同，先前本腳本兩者共用 10 秒是錯的**（2026-09-02 修正）：
+ *    情緒已於 2026-09-01 經裁決由 10 秒改為 15 秒 —— 而且是**連程式一起改**
+ *    （`SENTIMENT_CONCURRENCY = 3`），不是單純放寬。腳本沒跟上，於是 2026-09-02 的量測
+ *    把情緒判成 ❌ 未達，判的卻是一個已經被取代的門檻。
+ *
+ * ⚠️ 15 秒**不是對所有長度成立**：§18 M2 已載明 50 則客戶發言（9 批＝3 波）約 20 秒會破。
+ *    判讀本列時 MUST 一併看 `sentimentChunks`。
+ */
+const SC005_SENTIMENT_BUDGET_MS = 15_000
 
 /** JOIN 的模式：與官方介面、與我方 `join.post.ts` 的預設一致（§10.5） */
 const JOIN_MODE = 'manual' as const
@@ -127,7 +140,19 @@ interface Sample {
   fetchMs: number
   messageCount: number
   customerMessageCount: number
-  /** 第一段落地（`citation: 'pending'`）距起點的毫秒數；沒有 pending 時為 null */
+  /**
+   * **客服看到第一批可用建議卡**的毫秒數 → 002 SC-001 的判準本身。
+   *
+   * ⚠️ **這才是 SC-001，`pendingMs` 不是。** 兩者在多數樣本上相等，因此很容易誤用；
+   *    但有一整類樣本兩者不等，而那類樣本恰好全部是慢的：
+   *    檢索先回且有命中時，FR-006a 會 `stage1Abort.abort()` 掉第一段**尚未送出**的重試，
+   *    第一段從此不再發布 —— `pendingMs` 永遠是 null，客服實際看到的第一批卡是第二段
+   *    在 27～35 秒給的那批。用 `pendingMs` 統計等於把這些樣本整筆丟掉，
+   *    量出來的 SC-001 會**系統性偏樂觀**（2026-09-01 的三輪：報表 83%／86%／71%，
+   *    實際 67%／40%／33%）。
+   */
+  firstCardsMs: number | null
+  /** 第一段落地（`citation: 'pending'`）距起點的毫秒數；沒有 pending 時為 null。⚠️ 診斷用，判 SC-001 請用 `firstCardsMs` */
   pendingMs: number | null
   /** 第二段落定（cited／none）的毫秒數 */
   settledMs: number | null
@@ -317,25 +342,56 @@ function percentile(sorted: number[], p: number): number {
   return sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)]!
 }
 
-/** 逐筆列印時直接標出有沒有超過 SC-005 的 10 秒 —— 只看彙總的 p90 會漏掉「哪一段慢」 */
-function fmtBudget(ms: number | null): string {
-  if (ms === null) return '—（未落地）'
-  return `${ms}ms${ms > SC005_BUDGET_MS ? ' ⚠️超' : ''}`
+/** `p90Ms` 為 null＝第 90 百分位的樣本根本沒落地（見 budgetStats），比任何門檻都糟 */
+function fmtP90(ms: number | null): string {
+  return ms === null ? '未落地（比門檻更糟）' : `${ms}ms`
 }
 
-/** 一組延遲樣本對某個 p90 門檻的判定 —— SC-005 的摘要與情緒兩列共用同一份算法 */
+/** 通過率的百分比文字 —— 判準是比率，先前的報表只印 p90，看不出分母被抽掉 */
+function pctText(st: { withinBudget: number, total: number }): string {
+  return st.total > 0 ? `${(st.withinBudget / st.total * 100).toFixed(0)}%` : '—'
+}
+
+/**
+ * 逐筆列印時直接標出有沒有超過**該區塊**的 SC-005 門檻 —— 只看彙總的 p90 會漏掉「哪一段慢」。
+ * ⚠️ `budgetMs` MUST 由呼叫端傳入：摘要 10 秒、情緒 15 秒，兩者不同。
+ */
+function fmtBudget(ms: number | null, budgetMs: number): string {
+  if (ms === null) return '—（未落地）'
+  return `${ms}ms${ms > budgetMs ? ' ⚠️超' : ''}`
+}
+
+/**
+ * 一組延遲樣本對某個 p90 門檻的判定 —— SC-001／SC-005 三列共用同一份算法。
+ *
+ * ⚠️ **未落地的樣本（轉 error、被 abort、從未出現）算「未達」，MUST NOT 排除。**
+ *    2026-09-02 修正：舊版的 `pass` 只對已落地的值取 p90，等於把「客服根本沒看到內容」
+ *    這個**最壞**的結果從分母裡拿掉——失敗率越高，分數反而越好看。
+ *    2026-09-01 三輪的 SC-001 因此被報成 83%／86%／71%，實際是 67%／40%／33%。
+ *
+ *    正確定義：門檻是「≥ 90% 的樣本在預算內」。已落地的值由小到大排，未落地的一律排在
+ *    最後面（視為 +∞），第 90 百分位落在未落地那一段時 `p90Ms` 為 `null`。
+ *
+ * @param n 分母＝**可用樣本總數**，不是 `values.length`
+ */
 function budgetStats(values: number[], budgetMs: number, n: number) {
   const sorted = [...values].sort((a, b) => a - b)
+  const withinBudget = sorted.filter(v => v <= budgetMs).length
+  // 第 90 百分位在「已落地值 ++ 未落地(+∞)」這個長度 n 的序列上的索引
+  const p90Index = Math.ceil(0.9 * n) - 1
   return {
     n: sorted.length,
-    /** 沒落地的樣本數：轉 error 或未完成。⚠️ 它們不進 p90，判讀時 MUST 一起看 */
+    /** 沒落地的樣本數：轉 error 或未完成。⚠️ 它們算未達，並且**進**分母 */
     missing: n - sorted.length,
     medianMs: percentile(sorted, 0.5),
-    p90Ms: percentile(sorted, 0.9),
+    /** `null` = 第 90 百分位的那個樣本根本沒落地（比任何門檻都糟） */
+    p90Ms: p90Index < sorted.length ? sorted[p90Index]! : null,
     maxMs: sorted[sorted.length - 1] ?? 0,
-    withinBudget: sorted.filter(v => v <= budgetMs).length,
+    withinBudget,
+    /** 分母是可用樣本總數 —— 這一欄就是 `missing` 為什麼不能被排除的地方 */
+    total: n,
     budgetMs,
-    pass: sorted.length > 0 && percentile(sorted, 0.9) <= budgetMs,
+    pass: n > 0 && withinBudget / n >= 0.9,
   }
 }
 
@@ -412,6 +468,7 @@ async function resolveTargets(client: ImbraceClient, inputs: string[]): Promise<
  */
 function watchAnalysis(conversationId: string, startedAt: () => number) {
   const sequence: string[] = []
+  let firstCardsMs: number | null = null
   let pendingMs: number | null = null
   let settledMs: number | null = null
   let summaryReadyMs: number | null = null
@@ -436,21 +493,24 @@ function watchAnalysis(conversationId: string, startedAt: () => number) {
     const block = evt.suggestion
     sequence.push(`${block.status}/${block.citation}`)
     if (block.status !== 'ready') return
+    // ⚠️ 判準問的是「第一批**可用的卡**何時出現」，不問它由哪一段產生（見 Sample.firstCardsMs）
+    if (firstCardsMs === null) firstCardsMs = Date.now() - startedAt()
     if (block.citation === 'pending' && pendingMs === null) pendingMs = Date.now() - startedAt()
     if (block.citation !== 'pending' && settledMs === null) settledMs = Date.now() - startedAt()
   })
 
-  return { off, sequence, read: () => ({ pendingMs, settledMs, summaryReadyMs, sentimentReadyMs }) }
+  return { off, sequence, read: () => ({ firstCardsMs, pendingMs, settledMs, summaryReadyMs, sentimentReadyMs }) }
 }
 
 type SampleBase = Omit<
   Sample,
-  'pendingMs' | 'settledMs' | 'summaryReadyMs' | 'sentimentReadyMs' | 'sentimentChunks'
+  'firstCardsMs' | 'pendingMs' | 'settledMs' | 'summaryReadyMs' | 'sentimentReadyMs' | 'sentimentChunks'
   | 'finalCitation' | 'finalStatus' | 'hitCount' | 'cardCount' | 'provenance' | 'sequence'
 >
 
 /** 三個時序欄位都取不到時的填充值 —— 早退路徑共用，避免每加一個欄位就要改好幾處 */
 const EMPTY_TIMINGS = {
+  firstCardsMs: null,
   pendingMs: null,
   settledMs: null,
   summaryReadyMs: null,
@@ -471,7 +531,7 @@ async function finishSample(
   sentimentChunks: number | null,
   probes?: ReturnType<typeof instrumentProviders>,
 ): Promise<Sample> {
-  const { pendingMs, settledMs, summaryReadyMs, sentimentReadyMs } = watcher.read()
+  const { firstCardsMs, pendingMs, settledMs, summaryReadyMs, sentimentReadyMs } = watcher.read()
   const block = (await useStateStore().getAnalysisState(stateKey))?.suggestionBlock ?? null
   const traces = probes?.read()
   return {
@@ -480,6 +540,7 @@ async function finishSample(
     stage2: traces?.stage2,
     sentimentCalls: traces?.sentimentCalls,
     sentimentPeakInFlight: traces?.sentimentPeakInFlight,
+    firstCardsMs,
     pendingMs,
     settledMs,
     summaryReadyMs,
@@ -698,10 +759,11 @@ async function main(): Promise<void> {
       else {
         console.log(
           `${sample.finalCitation === 'cited' ? '✅ cited' : `🟡 ${sample.finalCitation}`}`
+          + `｜首批卡 ${sample.firstCardsMs ?? '—（從未出現）'}ms`
           + `｜第一段 ${sample.pendingMs ?? '—'}ms｜落定 ${sample.settledMs ?? '—'}ms`
           + `｜命中 ${sample.hitCount}｜卡 ${sample.cardCount} 張`
           + (sample.modeAfter !== undefined ? `｜mode ${sample.modeBefore ?? 'null'} → ${sample.modeAfter ?? 'null'}` : '')
-          + `\n        摘要 ${fmtBudget(sample.summaryReadyMs)}｜情緒 ${fmtBudget(sample.sentimentReadyMs)}`
+          + `\n        摘要 ${fmtBudget(sample.summaryReadyMs, SC005_SUMMARY_BUDGET_MS)}｜情緒 ${fmtBudget(sample.sentimentReadyMs, SC005_SENTIMENT_BUDGET_MS)}`
           + `（${sample.sentimentChunks ?? '—'} 批 / ${sample.customerMessageCount} 則客戶發言）  ← 001 SC-005`
           + (sample.sentimentCalls?.length
             ? `\n        情緒單次：${sample.sentimentCalls.map(c =>
@@ -734,6 +796,7 @@ async function main(): Promise<void> {
         fetchMs: 0,
         messageCount: 0,
         customerMessageCount: 0,
+        firstCardsMs: null,
         pendingMs: null,
         settledMs: null,
         summaryReadyMs: null,
@@ -752,6 +815,8 @@ async function main(): Promise<void> {
 
   // ── 彙總 ────────────────────────────────────────────────────
   const usable = samples.filter(s => !s.error)
+  // 002 SC-001 的判準：第一批**可用的卡**何時出現，不問由哪一段產生（見 Sample.firstCardsMs）
+  const firstCards = usable.map(s => s.firstCardsMs).filter((v): v is number => v !== null)
   const pendings = usable.map(s => s.pendingMs).filter((v): v is number => v !== null).sort((a, b) => a - b)
   const settles = usable.map(s => s.settledMs).filter((v): v is number => v !== null).sort((a, b) => a - b)
   // ⚠️ SC-002 的分母只算「知識庫真的有命中」的那些：0 命中時落成 'none' 是正確行為，
@@ -787,22 +852,38 @@ async function main(): Promise<void> {
     targets: targets.length,
     sampleCount: samples.length,
     usable: usable.length,
+    /**
+     * 002 SC-001（＝`ARCHITECTURE.md` §18 M2 驗收第 4 項）：首批建議卡 p90 ≤ 20 秒。
+     * **這一欄才是驗收判準**，`stage1` 只是診斷（2026-09-02 起，理由見 Sample.firstCardsMs）。
+     */
+    sc001: budgetStats(firstCards, SC001_BUDGET_MS, usable.length),
+    /**
+     * 第一段**自己**發布的時點 —— 診斷用，**MUST NOT 拿來判 SC-001**。
+     *
+     * ⚠️ 2026-09-02 起**刻意不再有 `pass` 欄位**：它先前存在，而且判的是別的東西
+     *    （分母只含「第一段真的發布過」的樣本）。同一個鍵在新舊檔裡代表不同的意思，
+     *    是最難察覺的一種資料錯誤——所以拿掉，讓舊讀法直接壞掉而不是靜默給出樂觀值。
+     */
     stage1: {
       n: pendings.length,
+      /** 第一段沒發布的樣本數：被 FR-006a abort、或整塊轉 error */
+      notPublished: usable.length - pendings.length,
       medianMs: percentile(pendings, 0.5),
       p90Ms: percentile(pendings, 0.9),
       maxMs: pendings[pendings.length - 1] ?? 0,
       withinBudget: pendings.filter(v => v <= SC001_BUDGET_MS).length,
       budgetMs: SC001_BUDGET_MS,
-      pass: pendings.length > 0 && percentile(pendings, 0.9) <= SC001_BUDGET_MS,
     },
     stage2: {
       n: settles.length,
+      /** ⚠️ 未落定的樣本算未達（同 budgetStats 的理由），因此進 `pass` */
+      missing: usable.length - settles.length,
       medianMs: percentile(settles, 0.5),
       p90Ms: percentile(settles, 0.9),
       maxMs: settles[settles.length - 1] ?? 0,
       budgetMs: STAGE2_BUDGET_MS,
-      pass: settles.length > 0 && (settles[settles.length - 1] ?? 0) <= STAGE2_BUDGET_MS,
+      pass: settles.length === usable.length && usable.length > 0
+        && (settles[settles.length - 1] ?? 0) <= STAGE2_BUDGET_MS,
     },
     /**
      * 001 SC-005（＝`ARCHITECTURE.md` §18 M2 驗收第 2 項）：摘要與情緒各自的實質內容 p90 ≤ 10 秒。
@@ -818,10 +899,10 @@ async function main(): Promise<void> {
      */
     sentimentCalls: sentimentCallStats,
     sc005: {
-      summary: budgetStats(summaryReady, SC005_BUDGET_MS, usable.length),
-      sentiment: budgetStats(sentimentReady, SC005_BUDGET_MS, usable.length),
-      pass: budgetStats(summaryReady, SC005_BUDGET_MS, usable.length).pass
-        && budgetStats(sentimentReady, SC005_BUDGET_MS, usable.length).pass,
+      summary: budgetStats(summaryReady, SC005_SUMMARY_BUDGET_MS, usable.length),
+      sentiment: budgetStats(sentimentReady, SC005_SENTIMENT_BUDGET_MS, usable.length),
+      pass: budgetStats(summaryReady, SC005_SUMMARY_BUDGET_MS, usable.length).pass
+        && budgetStats(sentimentReady, SC005_SENTIMENT_BUDGET_MS, usable.length).pass,
     },
     sc002: {
       withHits: withHits.length,
@@ -843,17 +924,23 @@ async function main(): Promise<void> {
   writeFileSync(stampFile, payload, 'utf8')
 
   console.log(`\n── 彙總 ${'─'.repeat(45)}`)
-  console.log(`  第一段（SC-001，p90 ≤ ${SC001_BUDGET_MS / 1000} 秒）：`
-    + `n=${summary.stage1.n} 中位 ${summary.stage1.medianMs}ms p90 ${summary.stage1.p90Ms}ms 最慢 ${summary.stage1.maxMs}ms`
-    + ` → ${summary.stage1.pass ? '✅ 通過' : '❌ 未達'}`)
-  console.log(`  第二段落定（契約 §2，≤ ${STAGE2_BUDGET_MS / 1000} 秒）：`
-    + `n=${summary.stage2.n} 中位 ${summary.stage2.medianMs}ms p90 ${summary.stage2.p90Ms}ms 最慢 ${summary.stage2.maxMs}ms`
+  console.log(`  首批建議卡（002 SC-001，≥90% 在 ${SC001_BUDGET_MS / 1000} 秒內）：`
+    + `${summary.sc001.withinBudget}/${summary.sc001.total} = ${pctText(summary.sc001)}`
+    + `${summary.sc001.missing > 0 ? `（其中 ${summary.sc001.missing} 個從未出現任何卡）` : ''} `
+    + `中位 ${summary.sc001.medianMs}ms p90 ${fmtP90(summary.sc001.p90Ms)} 最慢 ${summary.sc001.maxMs}ms`
+    + ` → ${summary.sc001.pass ? '✅ 通過' : '❌ 未達'}`)
+  console.log(`    └ 第一段自身（診斷，非判準）：n=${summary.stage1.n}`
+    + `（另有 ${summary.stage1.notPublished} 個樣本第一段未發布：被 FR-006a abort 或整塊轉 error）`
+    + ` 中位 ${summary.stage1.medianMs}ms p90 ${summary.stage1.p90Ms}ms`)
+  console.log(`  第二段落定（契約 §2，≤ ${STAGE2_BUDGET_MS / 1000} 秒且無未落定）：`
+    + `n=${summary.stage2.n}${summary.stage2.missing > 0 ? `（另有 ${summary.stage2.missing} 個未落定）` : ''} `
+    + `中位 ${summary.stage2.medianMs}ms p90 ${summary.stage2.p90Ms}ms 最慢 ${summary.stage2.maxMs}ms`
     + ` → ${summary.stage2.pass ? '✅ 通過' : '❌ 未達'}`)
   for (const [label, st] of [['摘要', summary.sc005.summary], ['情緒', summary.sc005.sentiment]] as const) {
-    console.log(`  ${label}區塊（001 SC-005，p90 ≤ ${SC005_BUDGET_MS / 1000} 秒）：`
-      + `n=${st.n}${st.missing > 0 ? `（另有 ${st.missing} 個樣本未落地，未計入）` : ''} `
-      + `中位 ${st.medianMs}ms p90 ${st.p90Ms}ms 最慢 ${st.maxMs}ms `
-      + `${st.withinBudget}/${st.n} 在門檻內`
+    console.log(`  ${label}區塊（001 SC-005，≥90% 在 ${st.budgetMs / 1000} 秒內）：`
+      + `${st.withinBudget}/${st.total} = ${pctText(st)}`
+      + `${st.missing > 0 ? `（其中 ${st.missing} 個未落地，計為未達）` : ''} `
+      + `中位 ${st.medianMs}ms p90 ${fmtP90(st.p90Ms)} 最慢 ${st.maxMs}ms`
       + ` → ${st.pass ? '✅ 通過' : '❌ 未達'}`)
   }
   console.log(`  情緒單次呼叫（含重試的每次嘗試，峰值並發 ${summary.sentimentCalls.peakInFlight}）：`
