@@ -43,7 +43,8 @@
     "spike:progressive": "tsx scripts/spike/21-progressive-citations.ts",
     "spike:list-order": "tsx scripts/spike/22-list-order.ts",
     "spike:join-visibility": "tsx scripts/spike/23-list-join-visibility.ts",
-    "spike:sentiment-dispersion": "tsx scripts/spike/24-sentiment-dispersion.ts"
+    "spike:sentiment-dispersion": "tsx scripts/spike/24-sentiment-dispersion.ts",
+    "spike:agent-prompts": "tsx scripts/spike/25-agent-prompt-drift.ts"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",
