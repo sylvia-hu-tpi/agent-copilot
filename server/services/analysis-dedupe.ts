@@ -15,15 +15,23 @@ import type { AnalysisBlock } from './analysis-state.js'
 
 /** 鍵：`${conversationId}:${block}` */
 const analysisInFlight = new Map<string, Promise<void>>()
-/** 同鍵。標記「這次跑完後還要再跑一次」——旗標而非佇列 */
-const analysisRerunPending = new Set<string>()
+/** 同鍵。「這次跑完後還要再跑一次」—— 存的是**最新那次觸發的 fn**，一格而非佇列 */
+const analysisRerunPending = new Map<string, () => Promise<void>>()
 
 /**
  * 同一個 (對話, 區塊) 同時只跑一份分析；進行中又被觸發時**合併**成「跑完後再跑一次」
  * （FR-009），MUST NOT 直接丟棄。
  *
- * **為何是旗標而非佇列**：合併語意是「至少再跑一次最新的」。累積 N 次觸發就跑 N 次
+ * **為何是一格而非佇列**：合併語意是「至少再跑一次最新的」。累積 N 次觸發就跑 N 次
  * 沒有意義 —— 分析的輸入是當下的狀態，不是被合併掉的那些事件。
+ *
+ * ⚠️ **rerun 執行的是「最新那次觸發」的 `fn`，不是第一次的**（2026-09-02，specs/005 T026b）。
+ *    原實作只存一個布林旗標、rerun 時重跑**第一次**的閉包：第一批還在飛時客戶又說了第二批，
+ *    第二批的 `fn` 被丟掉、第一批被原封再送一次 —— 同一則發言進 AI 兩次，而第二批**從此消失**
+ *    在情緒時間軸上（不報錯、不影響型別；spec 005 Edge Case「補算與新發言同時發生」）。
+ *    註解寫的一直是「再跑一次最新的」，實作只是沒有照做。
+ *    ⚠️ 三次以上併發時中間那些觸發的 `fn` 仍然會被最新的覆蓋 —— 那是合併語意的本意
+ *    （debounce 已先把 1 秒內的爆量聚成一批，這裡只處理「AI 呼叫比 debounce 長」的重疊）。
  *
  * ⚠️ rerun 的那一次 **MUST 重新過一次失敗批次記憶檢查**（`fn` 自己會查，見各分析入口）。
  *    否則「失敗 → 期間又被觸發 → rerun 無視記憶再跑一次」會在錯誤狀態上多出一輪呼叫，
@@ -38,7 +46,7 @@ export async function runBlockDeduped(
 
   const inFlight = analysisInFlight.get(key)
   if (inFlight) {
-    analysisRerunPending.add(key)
+    analysisRerunPending.set(key, fn)
     return
   }
 
@@ -53,5 +61,9 @@ export async function runBlockDeduped(
   analysisInFlight.set(key, task)
   await task
 
-  if (analysisRerunPending.delete(key)) await runBlockDeduped(conversationId, block, fn)
+  const rerun = analysisRerunPending.get(key)
+  if (rerun) {
+    analysisRerunPending.delete(key)
+    await runBlockDeduped(conversationId, block, rerun)
+  }
 }
