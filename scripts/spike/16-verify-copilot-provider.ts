@@ -16,6 +16,7 @@ import { runProbe, isMain, type Finding } from './lib/harness.js'
 import { clientForApiKey } from '../../server/services/imbrace.js'
 import { ImbraceAgentProvider } from '../../server/services/ai/imbrace-agent-provider.js'
 import { parseConversationSummary, parseSentimentPoints } from '../../server/services/ai/schemas.js'
+import { AIOutputValidationError } from '../../server/services/ai/retry-policy.js'
 import type { Message } from '../../shared/types/conversation.js'
 import { env, requireEnv, SkipProbe } from './lib/harness.js'
 
@@ -44,6 +45,27 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
 
   let summaryOk = 0
   let sentimentOk = 0
+
+  /**
+   * ⚠️ **失敗必須分成「格式」與「傳輸」兩類，不能只數成功幾次。**
+   *
+   * 2026-09-01 那一趟的教訓：3 次裡有 1 次是 SDK 端 30 秒逾時（見 out/16-provider-runs.json
+   * 的 run 2），本腳本卻把它跟「JSON 解不開」記成同一種失敗，於是 findings 的 impact 寫著
+   * 「回頭檢查 extractLeadingJson() 是否還有沒堵到的模型輸出樣式」—— 一個根本不存在的缺陷，
+   * 而且是會讓人真的動手去改解析邏輯的那種假線索。同一趟 `narrative`／`topics` 也被連坐
+   * 算成 2/3，又讓人懷疑後台 prompt 沒生效；實際上兩次真的回來的摘要都帶著這兩個欄位。
+   *
+   * §11.5 記的是「量測工具與正式路徑要共用程式碼」，這裡是同一個病的另一面：
+   * 程式碼共用了，但**歸因**錯了，一樣會憑空製造出不存在的缺陷。
+   */
+  let summaryFormatFail = 0
+  let summaryTransportFail = 0
+  let sentimentFormatFail = 0
+  let sentimentTransportFail = 0
+
+  /** `AIOutputValidationError` 涵蓋 JSON 抽取失敗與 Zod 驗證失敗；其餘（逾時、HTTP）一律算傳輸層 */
+  const isFormatFailure = (e: unknown): boolean => e instanceof AIOutputValidationError
+
   /**
    * `narrative`／`topics` 有幾次真的回來了（2026-09-01 新增）。
    *
@@ -78,8 +100,11 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
       })
     }
     catch (e) {
-      console.log(`  第 ${run} 次 summarize() ❌ ${e instanceof Error ? e.message : String(e)}`)
-      results.push({ run, task: 'summarize', ok: false, error: e instanceof Error ? e.message : String(e) })
+      const kind = isFormatFailure(e) ? 'format' : 'transport'
+      if (kind === 'format') summaryFormatFail++
+      else summaryTransportFail++
+      console.log(`  第 ${run} 次 summarize() ❌ [${kind}] ${e instanceof Error ? e.message : String(e)}`)
+      results.push({ run, task: 'summarize', ok: false, failure: kind, error: e instanceof Error ? e.message : String(e) })
     }
 
     try {
@@ -91,8 +116,11 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
       results.push({ run, task: 'analyzeSentiment', ok: true, labels: validated.map(v => v.label) })
     }
     catch (e) {
-      console.log(`  第 ${run} 次 analyzeSentiment() ❌ ${e instanceof Error ? e.message : String(e)}`)
-      results.push({ run, task: 'analyzeSentiment', ok: false, error: e instanceof Error ? e.message : String(e) })
+      const kind = isFormatFailure(e) ? 'format' : 'transport'
+      if (kind === 'format') sentimentFormatFail++
+      else sentimentTransportFail++
+      console.log(`  第 ${run} 次 analyzeSentiment() ❌ [${kind}] ${e instanceof Error ? e.message : String(e)}`)
+      results.push({ run, task: 'analyzeSentiment', ok: false, failure: kind, error: e instanceof Error ? e.message : String(e) })
     }
   }
 
@@ -109,21 +137,38 @@ export const probe16 = () => runProbe('16', 'ImbraceAgentProvider 端到端驗�
     verdict: narrativeOk === RUNS && topicsOk === RUNS
       ? 'yes'
       : (narrativeOk > 0 || topicsOk > 0) ? 'partial' : 'no',
-    evidence: `narrative ${narrativeOk}/${RUNS}、topics ${topicsOk}/${RUNS}`,
-    impact: narrativeOk === RUNS && topicsOk === RUNS
-      ? undefined
-      : '⚠️ 缺席時 UI 會退回以 `intent` 當正文、不顯示主題標籤 —— **畫面不會報錯**，'
-        + '只是安靜地少一段內容。請確認後台 system prompt 是否已更新（見 ARCHITECTURE §11.5）',
+    /*
+      ⚠️ 分母是 `summaryOk`（真的回來的次數）而不是 `RUNS`。沒回來的那幾次**無從得知**
+         後台有沒有生成這兩個欄位，把它算成「缺席」等於拿一個傳輸問題去指控 prompt 設定。
+    */
+    evidence: summaryOk === 0
+      ? `無法判定：${RUNS} 次 summarize() 全部沒有回傳（傳輸 ${summaryTransportFail} 次、格式 ${summaryFormatFail} 次）`
+      : `narrative ${narrativeOk}/${summaryOk}、topics ${topicsOk}/${summaryOk}`
+        + `（分母為實際回傳的次數，另有 ${RUNS - summaryOk} 次未回傳不計入）`,
+    impact: summaryOk === 0
+      ? '本趟無法判定 —— 先排除傳輸失敗再重跑，MUST NOT 據此去調整後台 prompt。'
+      : narrativeOk === summaryOk && topicsOk === summaryOk
+        ? undefined
+        : '⚠️ 缺席時 UI 會退回以 `intent` 當正文、不顯示主題標籤 —— **畫面不會報錯**，'
+          + '只是安靜地少一段內容。請確認後台 system prompt 是否已更新（見 ARCHITECTURE §11.5）',
   })
+
+  const formatFail = summaryFormatFail + sentimentFormatFail
+  const transportFail = summaryTransportFail + sentimentTransportFail
 
   p.record({
     question: 'copilot-provider-e2e',
     claim: 'ImbraceAgentProvider（含 JSON 抽取與欄位組裝）能否穩定產出通過正式 Zod schema 的結果',
     verdict: summaryOk === RUNS && sentimentOk === RUNS ? 'yes' : (summaryOk > 0 || sentimentOk > 0) ? 'partial' : 'no',
-    evidence: `summarize() ${summaryOk}/${RUNS}、analyzeSentiment() ${sentimentOk}/${RUNS}`,
+    evidence: `summarize() ${summaryOk}/${RUNS}、analyzeSentiment() ${sentimentOk}/${RUNS}`
+      + (formatFail + transportFail > 0 ? `（失敗分類：格式 ${formatFail} 次、傳輸 ${transportFail} 次）` : ''),
     impact: summaryOk === RUNS && sentimentOk === RUNS
       ? '可以正式取代 MockAIProvider。'
-      : '需要回頭檢查 extractLeadingJson() 是否還有沒堵到的模型輸出樣式，重跑本 probe 直到穩定。',
+      : formatFail > 0
+        ? `有 ${formatFail} 次是格式失敗（JSON 抽取或 Zod 驗證）—— 回頭檢查 extractLeadingJson() `
+          + '是否還有沒堵到的模型輸出樣式，並把新樣式補進 test/ai-json-extraction.test.ts 釘住。'
+        : `失敗 ${transportFail} 次全部在傳輸層（逾時／HTTP），與解析邏輯無關 —— 重跑即可，`
+          + '**MUST NOT 據此去改 extractLeadingJson()**（那正是 2026-09-01 差點發生的事）。',
   })
 })
 
