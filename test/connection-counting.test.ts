@@ -290,6 +290,15 @@ describe('存活兜底：TTL ＋ 連線心跳（FR-005a）', () => {
     vi.useFakeTimers()
   })
 
+  /**
+   * ⚠️ 45 秒與 20 秒是兩個各自宣告的數字，「容忍漏一拍」這個不變式沒有寫在型別裡。
+   *    有人把心跳拉長到 30 秒（對背景分頁節流很自然的反應）而沒動 TTL，漏一拍就被剔除、
+   *    輪詢在兩拍之間停掉 —— typecheck 與其他測試都不會響。這條就是那個不變式的機械式版本。
+   */
+  it('不變式：TTL 嚴格大於兩拍心跳（容忍漏一拍）', () => {
+    expect(CREDENTIAL_TTL_MS).toBeGreaterThan(CREDENTIAL_HEARTBEAT_MS * 2)
+  })
+
   it('沒有心跳 → 45 秒後被回收（異常中斷時關閉事件沒觸發的保險）', () => {
     register(ALICE, 'conn-a', 'client-a')
     vi.advanceTimersByTime(CREDENTIAL_TTL_MS + 1)
