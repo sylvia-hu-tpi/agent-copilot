@@ -33,6 +33,9 @@ import { RetryAbortedError, RetryExhaustedError, withRetry } from '../ai/retry-p
 import { parseSuggestionCards } from '../ai/schemas.js'
 import { KNOWLEDGE_SEARCH_TIMEOUT_MS } from '../knowledge/agent-knowledge-provider.js'
 import { useKnowledgeProvider } from '../knowledge/index.js'
+// ⚠️ 稽核事件刻意住在管線**外**（`server/utils/`）：管線內部檔 import 管線外的工具是允許的方向，
+//    反過來放進管線，FR-017 的量測腳本就 import 不到它（specs/005 research.md #15）
+import { emitCitationAudit } from '../../utils/citation-audit.js'
 import { runBlockDeduped } from '../analysis-dedupe.js'
 import {
   batchAnchor,
@@ -53,6 +56,10 @@ import {
 /**
  * FR-003、憲法 4.3：`sopId` 非 null 時必須存在於呼叫當下 `knowledgeHits` 的 `id` 集合，
  * 否則**整卡捨棄**（不只清空 `sopId`）——那是模型杜撰引用，不是格式問題（research.md #6）。
+ *
+ * ⚠️ specs/005-m2-residual-defects FR-014：本函式**一行不改**。005 只改「送進去的東西」
+ *    （`buildSuggestionPrompt()` 的封閉清單）與「留下什麼證據」（`emitCitationAudit()`），
+ *    不改「擋下來的規則」。被捨棄的 `sopId` 字串另由稽核事件記錄，這裡仍只負責過濾。
  */
 export function whitelistFilter(cards: SuggestionCard[], hits: KnowledgeHit[]): SuggestionCard[] {
   const validIds = new Set(hits.map(h => h.id))
@@ -381,7 +388,7 @@ async function generateSuggestionCards(
     onRetry?: WithRetryOptions['onRetry']
     signal?: AbortSignal
   },
-): Promise<{ cards: SuggestionCard[], retryAttempt: number }> {
+): Promise<GeneratedCards> {
   const outcome = await withRetry(
     async () => parseSuggestionCards(await useAIProvider().suggest({
       history: input.history,
@@ -397,8 +404,54 @@ async function generateSuggestionCards(
     },
   )
 
+  // 005 FR-015：被白名單擋下的識別碼字串本身是稽核證據（也是 FR-017 歸因的原料），在這裡順手收下；
+  // 白名單本身一行不改（FR-014），這一行只是「看」，不是「擋」
+  const validIds = new Set(hits.map(h => h.id))
+  const invalidSopIds = outcome.value
+    .map(c => c.sopId)
+    .filter((v): v is string => v !== null && !validIds.has(v))
+
   const whitelisted = whitelistFilter(outcome.value, hits)
-  return { cards: forceNullConfidence(whitelisted, hits), retryAttempt: outcome.retryAttempt }
+  return {
+    cards: forceNullConfidence(whitelisted, hits),
+    retryAttempt: outcome.retryAttempt,
+    audit: { cardsReturned: outcome.value.length, invalidSopIds },
+  }
+}
+
+interface GeneratedCards {
+  cards: SuggestionCard[]
+  retryAttempt: number
+  /** 給 `suggestion.citation.audited` 用的兩個數字（specs/005 contracts/citation-audit-event.md §1） */
+  audit: { cardsReturned: number, invalidSopIds: string[] }
+}
+
+/**
+ * 引用結果**落定**時發稽核事件（specs/005-m2-residual-defects FR-015、SC-005）。
+ *
+ * ⚠️ 三條落定路徑都要（前景兩段式的第二段、背景單段、命中已在手的單段），**含失敗**：
+ *    第二段呼叫失敗、模型回 0 張、整批未過 Zod 都經 `settleNone()` 落成 `'none'`，那也是落定 ——
+ *    漏掉任一條，該路徑的個案永遠查不到成因，SC-005 對它不成立。
+ * ⚠️ 只記數字與識別碼，不記訊息全文與知識庫標題（憲法 1.5；事件型別上把那些欄位標成 never）。
+ */
+function auditSettlement(
+  conversationId: string,
+  anchor: string | null,
+  stage: 1 | 2,
+  hitCount: number,
+  generated: GeneratedCards | null,
+): void {
+  emitCitationAudit({
+    conversationId,
+    anchor,
+    stage,
+    hitCount,
+    cardsReturned: generated?.audit.cardsReturned ?? 0,
+    cardsKept: generated?.cards.length ?? 0,
+    citedKept: generated?.cards.filter(c => c.sopId !== null).length ?? 0,
+    invalidSopIds: generated?.audit.invalidSopIds ?? [],
+    failed: generated === null,
+  })
 }
 
 /** 落地一批卡並推播。`clearFailedBatch()` 一併做掉——這批有結果了，失敗記憶沒有存在意義 */
@@ -593,6 +646,8 @@ async function runSuggestionTail(
     tail.lastRetrieval = { anchor: ctx.anchor, hits, at: nowIso() }
 
     if (hits.length === 0) {
+      // 落定 ①：知識庫本次未命中 —— 沒有第二段可跑，模型回卡數記 0
+      auditSettlement(conversationId, ctx.anchor, 2, 0, { cards: [], retryAttempt: 0, audit: { cardsReturned: 0, invalidSopIds: [] } })
       await settleNone(conversationId, tail, { anchor: ctx.anchor, hitCount: 0 })
       return
     }
@@ -605,23 +660,28 @@ async function runSuggestionTail(
     //    第二段一個字都不該送出去 —— 沒有人 JOIN 的對話不該再花這筆錢。
     if (tail.tailAbort.signal.aborted) return
 
-    let cards: SuggestionCard[]
+    let generated: GeneratedCards
     try {
       // ⚠️ `maxRetries: 0`（FR-014：每批最壞 4 次呼叫）、**MUST NOT 傳 `onRetry`**——
       //    第二段失敗依 FR-003 是靜默的，閃出「重試中」等於對客服說謊。
-      const outcome = await generateSuggestionCards(input, hits, {
+      generated = await generateSuggestionCards(input, hits, {
         maxRetries: 0,
         callTimeoutMs: SUGGESTION_STAGE2_CALL_TIMEOUT_MS,
         signal: tail.tailAbort.signal,
       })
-      cards = outcome.cards
     }
     catch (err) {
-      if (err instanceof RetryAbortedError) return // LEAVE／新世代：靜默丟棄
+      if (err instanceof RetryAbortedError) return // LEAVE／新世代：靜默丟棄，不是落定
       logFailure(conversationId, 'suggestions', err instanceof RetryExhaustedError ? err.kind : 'permanent', err)
+      // 落定 ⑤：第二段失敗（FR-016 的靜默 none）—— 畫面上與「未命中」一模一樣，只有事件分得出來
+      if (isCurrentGeneration(conversationId, tail)) auditSettlement(conversationId, ctx.anchor, 2, hits.length, null)
       await settleNone(conversationId, tail, { anchor: ctx.anchor, hitCount: hits.length, cause: err })
       return
     }
+    const cards = generated.cards
+
+    // 落定 ②③④：命中了但未引用／被白名單捨棄／模型未回卡 —— 由數字推導 outcome
+    if (isCurrentGeneration(conversationId, tail)) auditSettlement(conversationId, ctx.anchor, 2, hits.length, generated)
 
     // 全數遭白名單捨棄（模型杜撰引用）——第一段的卡維持不動，標示落定為「未引用」。
     // `hitCount` 記真實命中數，讓「有命中卻沒引用」在事後稽核時分辨得出來（data-model.md §3）。
@@ -753,12 +813,14 @@ async function runSingleStage(
   const knowledgeSearch = { ran: true, hitCount: knowledgeHits.length }
 
   try {
-    const { cards } = await generateSuggestionCards(input, knowledgeHits, {
+    const generated = await generateSuggestionCards(input, knowledgeHits, {
       onRetry: info => publishRetrying(conversationId, 'suggestions', info),
     })
+    // 落定（單段：背景、命中已在手）—— 契約把單段記為 stage 1
+    auditSettlement(conversationId, ctx.anchor, 1, knowledgeHits.length, generated)
 
     await publishSuggestionReady(conversationId, {
-      cards,
+      cards: generated.cards,
       knowledgeSearch,
       citation: knowledgeHits.length > 0 ? 'cited' : 'none',
       basedOnMessageId: ctx.anchor,
@@ -767,6 +829,8 @@ async function runSingleStage(
     })
   }
   catch (err) {
+    // 單段失敗會轉 error（有重試按鈕），但它同樣是一次落定 —— 個案排查要查得到
+    auditSettlement(conversationId, ctx.anchor, 1, knowledgeHits.length, null)
     await finishBlockError(conversationId, 'suggestions', err, ctx.anchor)
   }
 }
