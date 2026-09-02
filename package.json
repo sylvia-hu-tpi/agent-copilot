@@ -46,6 +46,7 @@
     "spike:join-visibility": "tsx scripts/spike/23-list-join-visibility.ts",
     "spike:sentiment-dispersion": "tsx scripts/spike/24-sentiment-dispersion.ts",
     "spike:agent-prompts": "tsx scripts/spike/25-agent-prompt-drift.ts",
+    "spike:sentiment-concurrency": "tsx scripts/spike/26-sentiment-concurrency.ts",
     "spike:citation-quality": "tsx scripts/spike/27-citation-quality.ts"
   },
   "dependencies": {
