@@ -303,9 +303,15 @@ grep -rn "自動重試" docs/ARCHITECTURE.md               # §15 的降級行�
 
 檢核清單：
 
-- [ ] `docs/ARCHITECTURE.md` §11.1 觸發策略表 —— 補上「presence 心跳不觸發分析」與「失敗批次不自動重跑」
-- [ ] `docs/ARCHITECTURE.md` §15 降級行為 —— 修正後實作才真正符合其敘述，確認兩者一致
-- [ ] `docs/ARCHITECTURE.md` §18 M2 驗收清單 —— 是否需納入 SC-001／SC-002
-- [ ] `docs/CONSTITUTION.md` 6.2 —— **不需修訂**（本規格是在其上加門檻，不是取代），但需確認未牴觸
-- [ ] `docs/IMBRACE_QUESTIONS.md` G-2（rate limit 書面規格）—— 本規格大幅降低呼叫量，該題的**急迫性**下降但問題仍在，**MUST NOT** 撤回
-- [ ] `docs/DESIGN_TOKENS.md` —— 面板收合態與兩個離開出口是否需要新 token
+- [x] `docs/ARCHITECTURE.md` §11.1 觸發策略表 —— 補上「presence 心跳不觸發分析」與「失敗批次不自動重跑」
+      （已成為該表的「不觸發」三列，並附上三處成因的說明框）
+- [x] `docs/ARCHITECTURE.md` §15 降級行為 —— 修正後實作才真正符合其敘述，確認兩者一致
+      （§15.3 已補「重試用盡後 MUST 停在 error 等人按，不得被下一輪整輪重跑覆蓋」）
+- [x] `docs/ARCHITECTURE.md` §18 M2 驗收清單 —— 已納入，SC-001／SC-002 各自成為一條驗收項
+- [x] `docs/CONSTITUTION.md` 6.2 —— 已確認未牴觸，維持不修訂（本規格是在其上加觸發門檻，不是取代）
+- [x] `docs/IMBRACE_QUESTIONS.md` G-2（rate limit 書面規格）—— 已確認仍在（未撤回）；
+      §15.2 的 429 那列同步寫明「M2 現況：直接轉錯誤狀態，全域佇列列入 M3」
+- [x] `docs/DESIGN_TOKENS.md` —— 已確認**不需新 token**：收合態改渲染窄直條、寬度由元件自己決定
+      （右欄 44px），兩個離開出口沿用既有的 primary／次要按鈕樣式
+
+> 2026-09-02 M2 收尾時逐項回查，六項全數已落地，一併勾選。

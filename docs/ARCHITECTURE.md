@@ -317,8 +317,7 @@ AgentCopilot/
 │       ├── copilot.ts               # AI 輸出契約（前後端共用）
 │       ├── conversation.ts
 │       └── events.ts                # SSE 事件型別
-├── config/                          # ⚠️ 三個檔案皆尚未建立，隨對應功能一起產生
-│   ├── sop.yaml                     # StaticSopProvider 資料（M2）
+├── config/                          # ⚠️ 兩個檔案皆尚未建立，隨對應功能一起產生
 │   ├── categories.yaml              # 結案分類受控詞彙（M3）
 │   └── supervisors.yaml             # 主管 email 白名單（隨主管接管功能）
 └── docs/
@@ -600,7 +599,8 @@ export interface KnowledgeProvider {
 | 1 | `AgentKnowledgeProvider` | ✅ **M2 採用** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。可取得引用來源（檔名＋chunk 原文），但 `score` 恆為 `null` |
 | 備援 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作——若 #19 RAG 品質調不動，換上此實作即可取得真實 `score`，介面不用改 |
 | 備案 | `BoardsSearchProvider` | 🟡 未採用——`boards.search()` 為 Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
-| 開發期 | `StaticSopProvider` | ✅ 讀 `config/sop.yaml`（尚未建立，M2），開發期與離線 fallback |
+| 開發期 | `MockKnowledgeProvider` | ✅ **M2 採用** —— 缺 `IMBRACE_API_KEY`／`IMBRACE_ORGANIZATION_ID`／`IMBRACE_KNOWLEDGE_AGENT_ID` 任一時由 `useKnowledgeProvider()` 自動退回並印警告。**僅供本機開發**，正式環境出現該行警告即為設定錯誤 |
+| — | ~~`StaticSopProvider`~~（讀 `config/sop.yaml`） | ❌ **已撤銷**（2026-08-28，`specs/002-suggestion-knowledge-search` plan.md「二、外部依賴的抽象邊界」）—— `MockKnowledgeProvider` 已完整承擔離線 fallback，多一條讀 yaml 的路徑不增加任何能力，只多一處要維護。`config/sop.yaml` 因此不會建立 |
 | — | ~~`BoardsRagProvider`~~／~~`LocalVectorProvider`~~ | ❌ 已撤銷——`processEmbedding()` 之後無檢索 API；`ai.embed()` 回 404 |
 
 > 無論最終選哪一條，`KnowledgeProvider` 介面本身不變——這正是抽象層的目的：外部能力邊界未定時，開發不必停下來等。
@@ -1874,7 +1874,8 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 | 掛 Knowledge Hub 給 AI Agent 再問它 | ✅ **M2 採用** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub。可取得引用來源，但取不到分數（§0-3c 仍待 iMBrace 回覆） |
 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。若 #19 RAG 品質調不動，換上此實作即可 |
 | `boards.search(boardId, {q, filter, limit})` | 🟡 備案，未採用 | Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
-| `StaticSopProvider` | ✅ 開發期 | 讀 `config/sop.yaml`（尚未建立，M2），離線 fallback |
+| `MockKnowledgeProvider` | ✅ 開發期 | 缺憑證／agent id 時自動退回並印警告，僅供本機開發（`server/services/knowledge/index.ts`） |
+| ~~`StaticSopProvider`~~ | ❌ 已撤銷 | 原規劃讀 `config/sop.yaml`；2026-08-28 由 002 決定不做，離線 fallback 由 `MockKnowledgeProvider` 承擔 |
 | ~~自建向量檢索~~ | ❌ 已排除 | 依賴的 `ai.embed()` 回 404 |
 
 無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源不可省**（2026-08-27 訂正：此處指的是「來源真實存在、可白名單核對」，不是要顯示一套正式編號——iMBrace 平台本身沒有 SOP 編號制度，介面僅顯示來源標題，見 §8.2 訂正說明），否則憲法 4.3（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
@@ -2280,7 +2281,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 | 環境 | 用途 |
 |---|---|
-| local | 開發，可用 `StaticSopProvider` + mock AI |
+| local | 開發，缺憑證時自動退回 `MockKnowledgeProvider` + mock AI |
 | staging | 對接 iMBrace 測試環境 |
 | production | `env: 'stable'` |
 
@@ -2513,9 +2514,17 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 **外部依賴**：無
 
-> ⏳ **押 tag 的注意事項（`m2-004-done` 尚未建立）**：002／003／004 共押這一個，中間不各自押（刻意）。
-> annotation MUST 反映「US2 曾經完全不可用、2026-08-27 才修好」——002 曾押的 `m2-002-done`
+> ✅ **`m2-004-done` 已於 2026-09-02 建立**：002／003／004 共押這一個，中間不各自押（刻意）。
+> annotation 反映「US2 曾經完全不可用、2026-08-27 才修好」——002 曾押的 `m2-002-done`
 > 已依決定刪除（未曾 push），那段歷史沒有別的落點。tag 一旦建立就不移動。
+>
+> ⚠️ **這個 tag 押的是「002／003／004 的實作與文件收尾完成」，不是「M2 全部驗收通過」**
+> （2026-09-02 使用者裁定）。上面三條時效門檻（情緒 78%／摘要 73%／建議卡 87%）在押 tag 當下
+> 仍未達 90%，**刻意不阻擋** —— 三者的成因都在 iMBrace 平台側的模型延遲，不是本 repo 的實作缺陷，
+> 且 repo 內的槓桿（情緒並行度、第一段獨立逾時常數）都已經用過一輪。
+> 押 tag 前已跑 `npm run spike:agent-prompts` 確認四個 agent 的 prompt 與 model 皆未漂移，
+> 因此這些數字可歸因到平台而非 prompt 被改（§11 的直接證據優先於間接證據）。
+> **M2 里程碑本身的 `m2-done` 因此尚未建立**，待三條門檻與下方未關閉項目有結論後再議。
 
 ---
 
@@ -2641,7 +2650,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
 | 設計張力（非缺陷） | 正式路徑每 6 則切一批，落在分數帶界線上的句子會因批次組成而在 `frustrated`／`angry` 之間移動，示警圖示跟著在 ⚠️ 與 🔥 之間變。這是 prompt 規則 4「參考同批前後文」的必然代價，不是迴歸；24-A 已證實**固定批次下**是穩的 | §8.2b、附錄 C-3 |
 | 未做（衛生） | `callAgent()` 未傳 `user_id`，每次呼叫多一趟往返（值 54ms） | §8.2b |
-| 未建立 | `config/sop.yaml`（M2）、`categories.yaml`（M3）、`supervisors.yaml`（隨主管接管） | §5 目錄結構 |
+| 未建立 | `config/categories.yaml`（M3）、`supervisors.yaml`（隨主管接管）。⚠️ `sop.yaml` 不在此列 —— 該路徑已於 2026-08-28 撤銷，不是待辦 | §5 目錄結構 |
 | 未押 | tag `m2-004-done` | §18 M2 |
 | 文案先於行為 | `conversation.exitHint` 已對客服承諾「結案＝產生摘要供確認後寫入」，M2 尚未實作 | §18 M3 |
 | UI 缺口 | Composer 的夾帶檔案按鈕（卡在 H-6c，**刻意不放 disabled 佔位鈕**） | §18 M2 |

@@ -402,7 +402,10 @@ export async function catchUpSummaryIfStale(conversationId: string): Promise<voi
 
 ## 待補文件同步清單（本次 plan 隨附完成，非留待實作階段）
 
-- [ ] `docs/ARCHITECTURE.md` §18 M2/M3 內容與 M2 驗收清單（決策 12）
-- [ ] `docs/ARCHITECTURE.md` 新增 §12.4「知識庫快查已知限制」（決策 3）
-- [ ] `docs/IMBRACE_QUESTIONS.md` 新增一題：知識庫檔案的最後修改時間中繼資料、正式 SOP 編號制度
-  是否存在（決策 2）
+- [x] `docs/ARCHITECTURE.md` §18 M2/M3 內容與 M2 驗收清單（決策 12）
+- [x] `docs/ARCHITECTURE.md` 新增 §12.4「知識庫快查已知限制」（決策 3）
+- [x] `docs/IMBRACE_QUESTIONS.md` 新增一題：知識庫檔案的最後修改時間中繼資料、正式 SOP 編號制度
+  是否存在（決策 2）—— 已落地為 0-3g
+
+> 2026-09-02 M2 收尾時逐項回查：§12.4 在 `ARCHITECTURE.md`、0-3g 在 `IMBRACE_QUESTIONS.md`
+> 皆已存在，三項一併勾選。
