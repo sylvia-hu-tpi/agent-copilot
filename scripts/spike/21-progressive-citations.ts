@@ -117,7 +117,8 @@ const SC005_SENTIMENT_BUDGET_MS = 15_000
 /** JOIN 的模式：與官方介面、與我方 `join.post.ts` 的預設一致（§10.5） */
 const JOIN_MODE = 'manual' as const
 
-interface Target {
+/** ⚠️ 匯出給 26／27 號腳本共用（specs/005）：目標解析（標題 → id、補 tcu_）只維護這一份 */
+export interface Target {
   /** 使用者給的原始字串（標題或 id），用於報告 */
   input: string
   conversationId: string
@@ -443,7 +444,7 @@ async function enrich(client: ImbraceClient, target: Target): Promise<Target> {
   }
 }
 
-async function resolveTargets(client: ImbraceClient, inputs: string[]): Promise<Target[]> {
+export async function resolveTargets(client: ImbraceClient, inputs: string[]): Promise<Target[]> {
   const buId = await businessUnitId(client)
   const out: Target[] = []
   for (const input of inputs) {
@@ -693,7 +694,8 @@ function parseArgs(argv: string[]): { mode: 'inspect' | 'readonly' | 'join', inp
   return { mode, inputs, repeat }
 }
 
-function fallbackInputs(): string[] {
+/** ⚠️ 匯出給 26 號腳本共用：目標清單的退路（`.env.local`）只維護這一份 */
+export function fallbackInputs(): string[] {
   const raw = env('SPIKE_CONVERSATION_IDS') || env('SPIKE_CONVERSATION_ID')
   if (!raw) {
     throw new SkipProbe(
