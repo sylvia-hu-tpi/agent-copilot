@@ -12,9 +12,9 @@ import type { OrganizationChoice } from '../../shared/types/auth.js'
 import type { PresenceEntry } from '../../shared/types/conversation.js'
 import type { SentimentBlock, SuggestionBlock, SummaryBlock } from '../../shared/types/copilot.js'
 // ⚠️ 純型別匯入（執行期被抹除，不產生模組相依）——`AnalysisBlock` 的正典定義在
-//    server/services/copilot-analysis.ts，這裡刻意不重寫一份同值的 union，
+//    server/services/analysis-state.ts，這裡刻意不重寫一份同值的 union，
 //    否則日後新增／更名區塊時會有兩個地方要改，而漏改的那一份不會報錯。
-import type { AnalysisBlock } from '../services/copilot-analysis.js'
+import type { AnalysisBlock } from '../services/analysis-state.js'
 
 // ── BFF Session（§7.1 / §7.2）──────────────────────────────────────────
 
@@ -129,7 +129,7 @@ export interface CopilotAnalysisState {
    *
    * ⚠️ **MUST 留在頂層，MUST NOT 併入任一 Block。**
    *    `summary.updated`／`sentiment.updated`／`suggestion.updated` 三個 SSE 事件送的是
-   *    **整個 Block**（`publishBlock()`）——放進 Block 就等於把它送到瀏覽器，
+   *    **整個 Block**（`publishBlock()`，`server/services/analysis-state.ts`）——放進 Block 就等於把它送到瀏覽器，
    *    也就等於默默改了對外契約，而型別檢查抓不到這個違反
    *    （contracts/analysis-trigger-contract.md 1.1，驗法：`grep -n "failedBatches" shared/` 必須零結果）。
    *
@@ -163,7 +163,7 @@ export interface FailedBatch {
    *    與它自己的定義互相矛盾。放行旗標讓兩個要求同時成立，代價是一個布林。
    *
    * ⚠️ 這裡 MUST 是**狀態**而非呼叫端的參數：分析入口有同區塊併發去重
-   *    （`runBlockDeduped()`），手動重試很可能被合併進一次進行中的分析，
+   *    （`runBlockDeduped()`，`server/services/analysis-dedupe.ts`），手動重試很可能被合併進一次進行中的分析，
    *    屆時真正執行的是**先前那個**閉包 —— 用參數傳「這次要略過門檻」會在合併路徑上遺失，
    *    症狀是「剛好有分析在跑的時候按重試，按了沒反應」。
    */
