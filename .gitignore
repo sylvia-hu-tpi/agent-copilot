@@ -9,7 +9,16 @@ node_modules/
 .env.*.local
 
 # Spike 產出（含真實對話樣本，可能有 PII）
-scripts/spike/out/
+# ⚠️ 寫成 `out/*` 而不是 `out/` 是**故意的**：git 對「被排除的目錄」不會遞迴進去，
+#    因此 `out/` 這種寫法會讓下方的否定規則**靜默失效**（不報錯、檔案就是加不進去）。
+scripts/spike/out/*
+
+# 唯一的例外：005 FR-017／FR-018 那組固定 15 段對話的索引。
+# 它是**人工整理**的清單（id、平台代號、mode、則數、挑選理由），不是量測的原始產出，
+# 也不含任何訊息內容；個人名稱型的標題已在檔內遮蔽。
+# 它必須進版控，否則「基線與改動後跑的是同一組對話」這件事在別台機器上無從查證。
+# ⚠️ 這條否定規則只放行這一個檔名，MUST NOT 擴大成 `!scripts/spike/out/005-*`。
+!scripts/spike/out/005-fixed-conversations.json
 
 # codegraph
 .codegraph/
