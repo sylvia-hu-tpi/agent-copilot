@@ -10,6 +10,7 @@
     "dev": "nuxt dev",
     "build": "npm run typecheck && nuxt build",
     "preview": "node .output/server/index.mjs",
+    "pretest": "nuxt prepare",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke": "tsx test/smoke-http.ts && tsx test/realtime-http.ts",
