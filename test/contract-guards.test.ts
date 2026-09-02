@@ -439,6 +439,47 @@ describe('005 US2：sentimentGap 是 server-only 的旗標，歷史來源 MUST �
   })
 })
 
+// ── specs/005-m2-residual-defects（US4：SENTIMENT_CONCURRENCY 只為量測而開的門）──────
+
+describe('005 US4：生產設定 MUST NOT 設定 SENTIMENT_CONCURRENCY', () => {
+  /**
+   * 受檢清單**明列**為這三處，MUST NOT 擴大成全 repo 掃描 —— `scripts/spike/26-sentiment-concurrency.ts`
+   * 正是唯一該設定它的地方，擴大範圍會讓守衛自傷。
+   * ⚠️ 守衛看不到 gitignored 的 `.env.local`，那正是最可能被貼進去的地方；症狀是
+   *    「那個環境的情緒延遲莫名其妙不一樣」，沒有任何錯誤（copilot-analysis.ts 的常數說明有記）。
+   */
+  const NAME = /\bSENTIMENT_CONCURRENCY\b/
+  const ENV_ASSIGNMENT = /^\s*SENTIMENT_CONCURRENCY\s*=/m
+  const SPIKE = 'scripts/spike/26-sentiment-concurrency.ts'
+
+  it('.env.example 沒有 SENTIMENT_CONCURRENCY= 這一行（連範本都不該教人設它）', () => {
+    expect(ENV_ASSIGNMENT.test(readFileSync(resolve(ROOT, '.env.example'), 'utf8'))).toBe(false)
+  })
+
+  it('nuxt.config.ts 不橋接、不宣告它', () => {
+    expect(NAME.test(stripNonCode(readFileSync(resolve(ROOT, 'nuxt.config.ts'), 'utf8')))).toBe(false)
+  })
+
+  it('package.json 的 scripts 沒有任何一條設定它（含 dev／build／test／smoke）', () => {
+    const pkg = JSON.parse(readFileSync(resolve(ROOT, 'package.json'), 'utf8')) as { scripts?: Record<string, string> }
+    const offenders = Object.entries(pkg.scripts ?? {}).filter(([, cmd]) => NAME.test(cmd)).map(([name]) => name)
+    expect(offenders).toEqual([])
+  })
+
+  it('唯一該設定它的地方（26 號掃描腳本）確實在設 —— 否則這道門開了也沒人走', () => {
+    expect(NAME.test(stripNonCode(readFileSync(resolve(ROOT, SPIKE), 'utf8')))).toBe(true)
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 三種形狀都抓得到，且不被註解騙', () => {
+    expect(ENV_ASSIGNMENT.test('# 說明\nSENTIMENT_CONCURRENCY=4\n')).toBe(true)
+    expect(ENV_ASSIGNMENT.test('# SENTIMENT_CONCURRENCY=4 只是註解\n')).toBe(false)
+    expect(NAME.test(stripNonCode("process.env.SENTIMENT_CONCURRENCY = '4'"))).toBe(true)
+    expect(NAME.test(stripNonCode('// 不要設 SENTIMENT_CONCURRENCY'))).toBe(false)
+    expect(NAME.test('SENTIMENT_CONCURRENCY=4 tsx scripts/spike/21-progressive-citations.ts')).toBe(true)
+    expect(NAME.test('tsx scripts/spike/26-sentiment-concurrency.ts')).toBe(false) // 檔名不是變數名
+  })
+})
+
 // ── specs/005-m2-residual-defects（US1：FR-006a、SC-002a；research.md #6）────────
 
 describe('005 FR-006a：主動離開 MUST NOT 接到連線計數上', () => {
