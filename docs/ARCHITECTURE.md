@@ -2669,7 +2669,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       （需要對話數 > 100 的組織），**MUST 一起關閉，不要只關其中一條**。
       ⚠️ 這裡打勾代表「歸屬已定」，**不代表分頁已實作** —— 實作與驗收在 M4 那份清單裡
 
-**分析管線拆檔：兩刀已切，第三刀等 005 收尾**（2026-09-02）
+**分析管線拆檔：三刀全部切完**（第一、二刀 2026-09-02；第三刀 2026-09-03）
 
 ⚠️ **這不是缺陷，是刻意分兩批做的重構欠帳。** 記在這裡的唯一理由是：**第二批沒有任何東西
 會提醒你回來做** —— 測試全綠、型別全過、行為完全正確，只有那個檔案繼續大下去。
@@ -2685,15 +2685,17 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 可執行的驗收是 `test/contract-guards.test.ts` 的「每一份執行期狀態只由擁有它的檔案碰」，
 八份 `Map` 逐一掃描（比對前 MUST 剝掉註解與字串，否則 barrel 檔頭那張說明表會被誤判為違規）。
 
-已切（純搬移；對外 24 個 export 逐一比對無差異、呼叫端一行未改；
-`typecheck`／全套 vitest／`smoke:flow`／`smoke:realtime` 全數通過）：
+已切（純搬移；對外 export 逐一比對無差異、呼叫端一行未改；
+`typecheck`／全套 vitest／`smoke:flow`／`smoke:realtime` 全數通過）。
+第一、二刀對外 24 個 export；第三刀切完為 **29 個**（比對腳本前後皆 29、沒有少也沒有多）：
 
-| 檔案 | 擁有的執行期狀態 | 行數（2026-09-02 快照） |
+| 檔案 | 擁有的執行期狀態 | 行數（2026-09-03 快照） |
 |---|---|---|
-| `analysis-state.ts` | `stateLocks` | 約 360 |
-| `analysis-dedupe.ts` | `analysisInFlight`／`analysisRerunPending` | 約 55 |
-| `blocks/suggestion.ts` | `suggestionTails`／`suggestionTailDone` | 約 770 |
-| `copilot-analysis.ts`（保留為 barrel） | `coldStartRecoveries`／`backgroundInFlight`／`debounceTimers` | 約 750 |
+| `analysis-state.ts` | `stateLocks` | 約 370 |
+| `analysis-dedupe.ts` | `analysisInFlight`／`analysisRerunPending` | 約 75 |
+| `blocks/suggestion.ts` | `suggestionTails`／`suggestionTailDone` | 約 840 |
+| `blocks/sentiment.ts` | **無** —— `resolveHistory` 是裝配點（函式變數），不是狀態容器 | 約 530 |
+| `copilot-analysis.ts`（保留為 barrel） | `coldStartRecoveries`／`backgroundInFlight`／`debounceTimers` | 約 490 |
 
 > ⚠️ **行數是快照，取整數，MUST NOT 當成維護中的事實。** 這一欄的用途只有一個：
 > 顯示拆完之後的相對形狀。沒有任何機制維護它，而**這個專案已經在同一件事上錯過兩次** ——
@@ -2701,28 +2703,32 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 > 要知道現在幾行就跑 `wc -l`，不要讀這張表。**擁有的狀態那一欄才是有守衛的**
 > （`test/contract-guards.test.ts`），那一欄錯了測試會紅。
 
-- [ ] **第三刀：`blocks/sentiment.ts`（約 350 行）—— 觸發條件已於 2026-09-02 滿足，尚未動。**
-      移出 `SENTIMENT_CHUNK_SIZE`／`SENTIMENT_CONCURRENCY`／`resolveSentimentConcurrency()`／`chunk()`／
-      `mapWithConcurrency()`／`sortByAt()`／`computeStats()`／`mergeMarkersOnly()`／`finishSentimentSuccess()`／
-      `narrateSentimentTrend()`／`resolveSentimentInput()`／`analyzeSentimentBatch()`／
-      `setHistoryResolver()`／`SENTIMENT_BACKFILL_MAX_MESSAGES`。
-      ⚠️ **延後的理由是 `specs/005-m2-residual-defects` US2**（恢復後補算失敗批次）
-      正好要改情緒的批次邏輯 —— 重構與 feature 撞在同一個 diff 裡兩邊都不可讀，
-      而「行為零變更」也就無從斷言。**005 的情緒改動已於 2026-09-02 落地（US2 全綠），
-      這一刀從此可以切，但刻意不在 005 內執行**（005 plan「與拆檔第三刀的先後關係」）——
-      它仍然是沒有任何東西會提醒你回來做的那一種欠帳。
-      ⚠️ 切的時候 `setHistoryResolver()` 的裝配守衛（`test/contract-guards.test.ts` 掃 `copilot-runtime.ts`）
-      與 `sentimentGap` 的 `shared/` 守衛都不受影響；但 `OWNERSHIP` 表要不要新增一格取決於新檔
-      有沒有自己的模組層 `Map`／`Set`（目前情緒沒有；`resolveHistory` 是函式變數，不是 Map）。
-      ⚠️ **`blocks/summary.ts` 刻意不切**：摘要沒有自己的執行期狀態，單獨成檔換不到任何
-      不變式，只多一層檔案。第三刀切完後 barrel 只剩摘要 ＋ 對外入口 ＋ debounce，
-      那就是這條管線的終點形狀，不必再往下拆
-      ⚠️ **新檔的檔頭 MUST 加上 `@analysis-pipeline` 標記**（比照現有四個檔）。
+- [x] **第三刀：`blocks/sentiment.ts`（實際 530 行）—— 2026-09-03 切完。**
+      移出 `SENTIMENT_CHUNK_SIZE`／`DEFAULT_SENTIMENT_CONCURRENCY`／`SENTIMENT_CONCURRENCY`／
+      `resolveSentimentConcurrency()`／`chunk()`／`mapWithConcurrency()`／`sortByAt()`／`computeStats()`／
+      `mergeMarkersOnly()`／`finishSentimentSuccess()`／`narrateSentimentTrend()`／`resolveSentimentInput()`／
+      `analyzeSentimentBatch()`／`setHistoryResolver()`／`SENTIMENT_BACKFILL_MAX_MESSAGES`。
+      ⚠️ **實際切的時候比清單多搬了兩支：`lastCoveredMessageId()` 與 `newCustomerMessagesSince()`。**
+      原清單沒列它們，但 `resolveSentimentInput()` 會呼叫 `newCustomerMessagesSince()` ——
+      留在 barrel 就會形成「barrel → sentiment → barrel」的循環 import。兩支都是**純函式、
+      只讀 `sentimentBlock.timeline`**，依切線依據本來就屬情緒；搬過去後由 barrel re-export，
+      `server/api/stream.get.ts` 與四支測試的 import 一行未改。
+      ✅ **驗收**：對外 export 前後皆 **29 個**（比對腳本逐一比對，沒有少也沒有多）、
+      呼叫端一行未改（`git status` 只有 barrel、新檔、`contract-guards.test.ts` 三個檔案）、
+      `typecheck`／43 檔 555 測試／`build`／`smoke:flow`／`smoke:realtime` 全數通過。
+      測試**總數與搬移前完全相同**（555 → 555），這是「純搬移」最直接的證據。
+      ✅ `OWNERSHIP` 表**不需要新增一格**（切之前就預判到）：情緒沒有自己的模組層 `Map`／`Set`，
+      唯一的模組層可變值 `resolveHistory` 是函式變數（裝配點）。那張表推導自模組層 `Map`／`Set`，
+      因此自動維持八份、沒有變動。
+      ✅ 預告會紅的兩條斷言如期變紅，**照規定把新檔名加進清單，沒有改成只比長度**：
+      「掛著標記的管線成員就是現有這五個」與「內部檔清單確實推導自管線成員」。
+
+      以下三條是**切完之後仍然有效的常設約束**，不是待辦：
+
+      ⚠️ **新增管線檔的檔頭 MUST 加上 `@analysis-pipeline` 標記**（現有五個檔都有）。
       `test/contract-guards.test.ts` 靠它認定管線成員，決定「不得 import `copilot-runtime.ts`」
       與「不得被管線外值 import」兩條守衛的涵蓋範圍。忘了加不會靜靜溜過去 ——
       新檔自己的 `import ... analysis-state.js` 會立刻被判成「管線外值 import」而紅。
-      ⚠️ 那支「掛著標記的管線成員就是現有這四個」的斷言切完會紅，**那是刻意的提醒**：
-      把新檔名加進去即可，不要把斷言改成只比長度。
       ⚠️ **MUST NOT 改回用檔名 regex 判定成員。** 2026-09-02 第一版就是那樣寫的
       （`analysis-[a-z-]+\.ts`），當天被實測打穿：`analysis-stage2.ts`（帶數字）與
       `analysisSentiment.ts` 帶著違規 import **完全逃出兩條守衛且零訊號**，
@@ -2731,7 +2737,16 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       ⚠️ **搬移的真實成本是註解的交叉引用，不是邏輯。** 這條管線的註解超過三分之一，且大量使用
       「上方／下方／本檔／本函式」這類**位置相對**的指路詞，搬家後會指向空氣，而型別檢查與
       測試都抓不到。搬完 MUST `grep -n "上方\|下方\|上面\|下面\|本檔" <新檔>` 逐條改成明確的
-      檔名或符號名，**且與搬移放同一個 commit**（分開做一定會漏）
+      檔名或符號名，**且與搬移放同一個 commit**（分開做一定會漏）。
+      📌 **第三刀實際踩到一個**：`setHistoryResolver()` 的註解原本寫「管線 MUST NOT import
+      `copilot-runtime.ts`（**理由見上**）」，而那段理由留在 `copilot-analysis.ts` 的
+      `JoinedResolver` 區塊 —— 搬完之後「上」是空氣。已改成明確指向該檔該符號。
+      另外**日誌前綴刻意維持 `[copilot-analysis]`、MUST NOT 改成 `[sentiment]`**：
+      日誌字串是可觀測行為的一部分，改它就不再是「行為一個字都沒變」的搬家。
+
+- [x] **`blocks/summary.ts` 確定不切**（2026-09-03 收工時複查）：摘要沒有自己的執行期狀態，
+      單獨成檔換不到任何不變式，只多一層檔案。第三刀切完後 barrel 只剩摘要 ＋ 對外入口 ＋ debounce
+      （490 行），**那就是這條管線的終點形狀，不必再往下拆。**
 
 > 📌 **拆檔的附帶收穫（M4 要回頭處理）**：那八份 `Map`／`Set` 全部是 process-local 的，
 > 不像 `copilot-runtime.ts` 用 `Symbol.for` 掛 `globalThis`，也不在 `StateStore` 裡 ——
@@ -2891,7 +2906,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 驗收未定 | 摘要 10 秒、建議卡第一段 20 秒、情緒 15 秒 —— 三項皆未達 90%，但**單輪 n=15 判不動**（相隔 30 分鐘的兩輪結論相反）。門檻一律**不放寬**。⚠️ 情緒那條 2026-09-03 量到 41/45＝91%（通過），**經裁決不改判** —— 要翻案須第二次獨立時段的 n=45 也通過 | §18 M2、§8.2b |
 | 量測規程 | 兩輪之間 MUST 留 ≥30 分鐘冷卻且跨時段；隔離單次量測 MUST NOT 用來預測驗收 | §8.2b |
 | 已關閉的缺陷（留作對照） | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次，**皆於 2026-09-02 由 `specs/005-m2-residual-defects` 關閉**（US1／US2）；順帶修掉 `runBlockDeduped()` rerun 重跑第一次閉包的既有缺陷。**三段真實環境量測與封閉清單的 prompt 改動已於 2026-09-03 全部完成**（杜撰率 21% → 21% 零改善但查出成因；並行度 4／5 兩列同時變差）。**兩項裁決已於 2026-09-03 由使用者拍板：並行度維持 3、情緒 15 秒門檻不改判**；**T058 手動驗收同日全數通過，005 已 65/65 完成** | §18 M2、§8.2b |
-| 重構欠帳（非缺陷） | 分析管線拆檔的第三刀 `blocks/sentiment.ts`。**觸發條件「005 的情緒改動落地之後」已於 2026-09-02 滿足**，刻意不在 005 內執行 —— 沒有任何測試或型別檢查會提醒該回來做 | §18 M2 |
+| ~~重構欠帳（非缺陷）~~ **已結清** | 分析管線拆檔的第三刀 `blocks/sentiment.ts` **已於 2026-09-03 切完**（純搬移，對外 export 前後皆 29 個、呼叫端一行未改、555 測試數量不變）。管線由四檔變五檔；`blocks/summary.ts` 確定不切，barrel 的終點形狀就是「摘要 ＋ 對外入口 ＋ debounce」 | §18 M2 |
 | M4 前必須處置 | 分析管線的八份執行期狀態皆為 process-local，**不在 `StateStore` 裡**，換 Redis 涵蓋不到 | §18 M2、§8.3 |
 | 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力 | §18 M2、§18 M4（**一起關閉**） |
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
