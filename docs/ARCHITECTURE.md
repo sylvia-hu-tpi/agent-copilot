@@ -318,7 +318,7 @@ AgentCopilot/
 │       ├── conversation.ts
 │       └── events.ts                # SSE 事件型別
 ├── config/                          # ⚠️ 兩個檔案皆尚未建立，隨對應功能一起產生
-│   ├── categories.yaml              # 結案分類受控詞彙（M3）
+│   ├── categories.ts                # 結案分類受控詞彙（specs/006，已建立）
 │   └── supervisors.yaml             # 主管 email 白名單（隨主管接管功能）
 └── docs/
     ├── ARCHITECTURE.md              # 本文件
@@ -1882,7 +1882,7 @@ export interface ClosureSummary {
   closedAt: string              // 對應 Board 的 closed_at
   summary: string
   intent: string
-  category: string              // 受控詞彙，見 config/categories.yaml（尚未建立，M3）
+  category: string              // 受控詞彙，見 config/categories.ts
 
   // ── 以下三項對應介面上的三個標籤（意圖／處理結果／情緒結果）──
   resolution: 'resolved' | 'workaround' | 'escalated' | 'unresolved' | 'customer_abandoned'
@@ -1925,7 +1925,7 @@ export interface ClosureSummary {
 
 - 全部使用 **structured output / tool use**，**絕不解析自由文字**
 - 所有輸出以 **Zod schema 驗證**後才進入系統
-- `category` 使用**受控詞彙**（`config/categories.yaml`，尚未建立，M3），不得由模型自由生成
+- `category` 使用**受控詞彙**（`config/categories.ts`），不得由模型自由生成
 - 輸出語言為繁體中文，語氣須符合客服規範
 - 溫度設低（建議 0.2–0.3）
 
@@ -3024,7 +3024,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
 | 設計張力（非缺陷） | 正式路徑每 6 則切一批，落在分數帶界線上的句子會因批次組成而在 `frustrated`／`angry` 之間移動，示警圖示跟著在 ⚠️ 與 🔥 之間變。這是 prompt 規則 4「參考同批前後文」的必然代價，不是迴歸；24-A 已證實**固定批次下**是穩的 | §8.2b、附錄 C-3 |
 | 已做（衛生，留作對照） | `callAgent()` 已於 2026-09-02 帶上 `user_id`（`specs/005-m2-residual-defects` US4 / FR-021），省下每次呼叫的一趟往返（值 54ms）；取不到 id 時退回舊路徑並只警告一行 —— 那條退路是靜默的，`spike:userid` 與 `test/ai-user-id.test.ts` 是它唯一的觀測點 | §8.2b |
-| 未建立 | `config/categories.yaml`（M3）、`supervisors.yaml`（隨主管接管）。⚠️ `sop.yaml` 不在此列 —— 該路徑已於 2026-08-28 撤銷，不是待辦 | §5 目錄結構 |
+| 未建立 | `supervisors.yaml`（隨主管接管）。⚠️ `config/categories.ts` 已於 2026-09-03 隨 `specs/006` 建立（副檔名由 `.yaml` 改為 `.ts`，理由見該規格 research #19）；`sop.yaml` 不在此列 —— 該路徑已於 2026-08-28 撤銷，不是待辦 | §5 目錄結構 |
 | 已押（留作對照） | tag `m2-004-done`（2026-09-02）、**`m2-done`（2026-09-03，M2 正式結束）**。⚠️ `m2-done` 押在三條時效門檻仍為【未達標·已安置】的狀態上，那是刻意的，理由與重新判定條件見 §18 M2 收尾段 | §18 M2 |
 | 文案先於行為 | `conversation.exitHint` 已對客服承諾「結案＝產生摘要供確認後寫入」，M2 尚未實作 | §18 M3 |
 | UI 缺口 | Composer 的夾帶檔案按鈕（卡在 H-6c，**刻意不放 disabled 佔位鈕**） | §18 M2 |

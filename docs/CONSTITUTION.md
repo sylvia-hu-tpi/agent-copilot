@@ -2,7 +2,7 @@
 
 > **本文件定義不可違反的架構約束。** 所有實作（含 AI agent 產生的程式碼）都必須遵守。
 >
-> 版本 **v4.0.0** ｜ 批准 2026-08-24 ｜ 最後修訂 2026-09-03 ｜ 修憲流程與版本紀錄見附錄 B、C
+> 版本 **v4.0.1** ｜ 批准 2026-08-24 ｜ 最後修訂 2026-09-03 ｜ 修憲流程與版本紀錄見附錄 B、C
 
 ## 這份文件是什麼、不是什麼
 
@@ -173,7 +173,13 @@ UI 依此欄位是否為 `null` 決定顯示或留空 —— 來源從 iMBrace �
 
 ### 4.6 受控詞彙 MUST NOT 由模型自由生成
 
-`category`、`resolution`、`actions_taken` 等統計用欄位必須取自設定檔（`config/categories.yaml`，尚未建立，M3），否則寫入 Data Board 後無法製作報表。
+`category`、`resolution`、`actions_taken` 等統計用欄位必須取自設定檔（`config/categories.ts`），否則寫入 Data Board 後無法製作報表。
+
+> ⚠️ v4.0.1 前本條寫的是 `config/categories.yaml`（尚未建立，M3）。該檔已於 2026-09-03 隨
+> `specs/006-closure-handoff-summary` 建立，**副檔名改為 `.ts`** —— 因為 `resolution` 與
+> `sentimentOutcome` 的值域同時存在於設定檔與 `ClosureSummary` 的字面聯集型別，
+> 用 `.ts` 讓型別**由設定檔推導**，兩處分岔在編譯期就不可能發生（`.yaml` 換不到這個保證，
+> 還要多一個相依）。**規則本身未變**，改的只是條文括號內的檔案指標。
 
 ---
 
@@ -450,6 +456,26 @@ docs/CONSTITUTION.md  ──複製──▶  .specify/memory/constitution.md
 ---
 
 ## 附錄 C：版本紀錄
+
+### v4.0.1 — 2026-09-03（PATCH）
+
+**變更**：4.6 條文括號內的設定檔指標由 `config/categories.yaml`（尚未建立，M3）
+改為 `config/categories.ts`。**規則的實質內容未變** —— 仍是「受控詞彙必須取自設定檔」，
+依 B.2 屬 PATCH（澄清措辭與章節指標）。
+
+**理由**：該檔已於 `specs/006-closure-handoff-summary` 建立。改用 `.ts` 而非 `.yaml`，
+是因為 `resolution` 與 `sentimentOutcome` 的值域**同時**存在於設定檔與 `ClosureSummary`
+的字面聯集型別（`ARCHITECTURE.md` §11.5），兩處分岔是遲早的事。
+用 `.ts` 讓型別由設定檔推導，分岔在 typecheck 就不可能發生 ——
+`.yaml` 要換到同等保證得多一個相依、多一份執行期解析，還得靠一條可能被漏寫的測試。
+
+**B.3 掃描結果**：`grep -rn "categories.yaml" docs/` 的命中已全數為**本則版本紀錄與 4.6 的訂正說明本身**，
+無任何一處仍在指示讀者去用那個檔名。
+連帶訂正 `ARCHITECTURE.md` 的四處（§5 目錄樹、§11.5 `ClosureSummary.category` 註解、
+§11.7 約束條列、§19.3 未完成索引 —— 後者原本把它列為「未建立」，現已建立）。
+`specs/003` 內的三處命中是**當時的歷史紀錄**（該規格逐字記載「依賴尚未建立的
+`config/categories.yaml`」這個當時為真的判斷），依慣例保留不改。
+`.specify/memory/constitution.md` 已同步（B.4）。
 
 ### v4.0.0 — 2026-09-03
 
