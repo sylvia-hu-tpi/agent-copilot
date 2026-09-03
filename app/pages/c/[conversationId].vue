@@ -156,7 +156,7 @@ async function switchMode(mode: ConversationMode): Promise<void> {
   await view.setMode(mode)
 }
 
-// ── 接手／離開／結案（FR-020、FR-022，對照 docs/wireframe/03-workspace_assignment02.png）──
+// ── 接手／離開／結案（FR-020、FR-022，對照畫布 artboard 1c 的「未接手 × 下拉展開」狀態）──
 
 /**
  * 未 JOIN 時的「接手對話」下拉。⚠️ 憲法 8.1：兩個選項的差別 MUST 由**文案的後果**讀得出來
@@ -623,7 +623,7 @@ const presenceShort = computed(() => {
         @keydown="copilotPane.onKeydown"
       />
 
-      <!-- 收合態：窄直條（對照 docs/wireframe/03-workspace_toggleCopilot.png） -->
+      <!-- 收合態：窄直條（對照畫布 artboard 1c 的「Copilot 面板收合」狀態） -->
       <div
         v-if="panel.collapsed.value"
         class="flex w-11 shrink-0 flex-col items-center gap-3 border-l py-2.5"

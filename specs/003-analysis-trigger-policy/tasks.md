@@ -127,8 +127,8 @@ description: "分析管線的觸發與失敗政策 —— 實作任務清單"
 - [x] T028 [US2] 在 `server/api/stream.get.ts` 的 `forward()` 加入分析事件過濾：以 T009 的 `watchers.isJoined(conversationId)` 判斷，未 JOIN 時丟棄三個分析事件、其餘一律照送（FR-016a）。⚠️ 過濾 `stream.heartbeat` 會直接斷線 —— 清單以契約不變式 C 的表格為準
 - [x] T029 [P] [US2] 新增 `app/composables/useCopilotPanel.ts`：暴露 `visible`（= `viewerJoined`）與 `collapsed`（讀寫 `localStorage` 的 `ac.copilotCollapsed.${conversationId}`，per 對話、預設展開），並在對話切換時重讀（FR-016、FR-017、FR-017a）
 - [x] T030 [P] [US2] 新增 `app/components/copilot/PanelHeader.vue`：COPILOT 標題列 ＋ 收合按鈕（須可鍵盤操作，憲法 8.2）；「全部重試」的位置一併預留給 US4，本任務先不接行為
-- [x] T031 [US2] 在 `app/pages/c/[conversationId].vue` 以 `v-if` 讓整欄面板在未 JOIN 時**不渲染**（含分隔拖曳把手），中欄延伸至可用寬度；收合態改渲染窄直條（對照 `docs/wireframe/03-workspace_toggleCopilot.png`）。⚠️ MUST NOT 用變灰／空狀態／骨架代替（FR-016）。**同檔順手修正**：`copilotWidth` 預設值由 `ref(380)` 改為 `ref(420)` —— 畫布已於 2026-08-28 統一為 420px（`docs/DESIGN_TOKENS.md` §7.1），拖曳範圍 320–520 不變，僅影響首次開啟的預設寬度
-- [x] T032 [US2] 在 `app/pages/c/[conversationId].vue` 與 `app/composables/useConversationView.ts` 把單一的「加入對話／離開」toggle 改為設計稿的兩態：未 JOIN → 「接手對話」＋下拉（`manual`／`hybrid` 兩選項，文案寫出後果而非模式名稱）；已 JOIN → 「離開對話」（次要）＋「結案」（primary）＋輔助說明（FR-020、SC-007，對照 `docs/wireframe/03-workspace_assignment02.png` 與 `03-workspace_lightTheme.png`）。⚠️ 憲法 8.1：兩者的差別 MUST 由**文案**讀得出來，MUST NOT 只靠主／次按鈕的視覺層級表達 —— 視覺層級是強化，不是資訊本身
+- [x] T031 [US2] 在 `app/pages/c/[conversationId].vue` 以 `v-if` 讓整欄面板在未 JOIN 時**不渲染**（含分隔拖曳把手），中欄延伸至可用寬度；收合態改渲染窄直條（對照畫布 artboard 1c 的「Copilot 面板收合」狀態）。⚠️ MUST NOT 用變灰／空狀態／骨架代替（FR-016）。**同檔順手修正**：`copilotWidth` 預設值由 `ref(380)` 改為 `ref(420)` —— 畫布已於 2026-08-28 統一為 420px（`docs/DESIGN_TOKENS.md` §7.1），拖曳範圍 320–520 不變，僅影響首次開啟的預設寬度
+- [x] T032 [US2] 在 `app/pages/c/[conversationId].vue` 與 `app/composables/useConversationView.ts` 把單一的「加入對話／離開」toggle 改為設計稿的兩態：未 JOIN → 「接手對話」＋下拉（`manual`／`hybrid` 兩選項，文案寫出後果而非模式名稱）；已 JOIN → 「離開對話」（次要）＋「結案」（primary）＋輔助說明（FR-020、SC-007，對照畫布 artboard 1c 的「未接手 × 下拉展開」與「已接手」兩個狀態）。⚠️ 憲法 8.1：兩者的差別 MUST 由**文案**讀得出來，MUST NOT 只靠主／次按鈕的視覺層級表達 —— 視覺層級是強化，不是資訊本身
 - [x] T032a [US2] 在 `app/composables/useConversationView.ts` 的 `handle()` 收到 `control.updated` 時**重讀一次對話詳情**，讓 `viewerJoined` 跟著翻轉。⚠️ 這是「同一位客服開兩個分頁、在其中一個按下離開」唯一會生效的路徑：`leave` 只廣播 `control.updated`（服務模式），不帶「你已退出」的資訊，另一個分頁的 `viewerJoined` 因此永遠停在 `true`，它的心跳會持續回報「仍在 JOIN」→ 聚合判定永遠為真 → **分析根本不會停、面板也不會消失**，SC-002 與 SC-006 在此情境下失效（spec.md Edge Cases）。MUST NOT 為此新增推播事件欄位（Assumptions「不改對外契約」）
 - [x] T033 [US2] 讓「結案」暫時等同「離開對話」＋停止分析＋隱藏面板，但 MUST 實作為**獨立的程式碼路徑**（自己的 handler，不是 `leave()` 的別名或參數值，FR-022a）。在該處寫下 M3 銜接註解，內容須涵蓋：① 結案流程屬 M3，插入點在「停止分析」與「隱藏面板」之間；② MUST NOT 直接串上自動寫入（憲法 5.1）；③ M3 落地後結案期間分析**照常執行**（FR-023），現在的「停止分析」是階段性行為，不是要保留的語意
 - [x] T034 [US2] 在 `test/copilot-panel-collapse.test.ts` 補上憲法 8.4 的斷言：LEAVE → 面板消失 → Composer 草稿仍在。若面板隱藏連帶重建了頁面元件而清掉草稿，改為只卸載面板子樹。⚠️ MUST 是自動化斷言而非人工目視 —— 草稿遺失只在特定卸載路徑下發生，人工驗一次不代表下次改版還成立
@@ -215,9 +215,8 @@ description: "分析管線的觸發與失敗政策 —— 實作任務清單"
 > 3. M3 落地後結案期間分析**照常執行**（FR-023）—— 003 的「停止分析」是階段性行為，不是要保留的語意。
 >
 > **視覺依據**（索引與判讀重點見 `docs/DESIGN_TOKENS.md`「1c 的狀態變體」）：
-> `docs/wireframe/03-workspace_close.png`（結案中）、`_close_abstractExpired.png`（摘要過期）、
-> `_close_writing.png`（寫入中）、`_close_colleaguePerspective.png`（同事視角）、
-> `_close_logoutFailed.png`（寫入成功但 LEAVE 失敗）。
+> 畫布 artboard **1c** 的「結案中」「同事視角」「摘要已寫入但離開失敗」三個狀態，
+> 以及 artboard **2b**（結案摘要區塊的狀態矩陣，含摘要過期與寫入中）。
 
 ---
 

@@ -238,7 +238,7 @@ button:disabled {
   /*
    * Eyebrow 徽章：AGENTCOPILOT / 選擇組織。
    *
-   * ⚠️ 2026-08-26 修正：畫布截圖（docs/wireframe/01-login_*.png、02-organization_*.png）
+   * ⚠️ 2026-08-26 修正：畫布 artboard 1a／1b
    *    是藍底白字的實心徽章，先前這裡只抄到字級，漏了背景色 —— DESIGN_TOKENS.md §2 的
    *    表格同樣只列字級，一併補正。
    */

@@ -226,7 +226,7 @@ JOIN／LEAVE 當下即時翻轉）。**不需要任何新的資料形狀**，也
 
 ⚠️ **MUST NOT 用「三個 Block 是否為 empty」當作可見性條件**。JOIN 之後、首次分析完成之前，
 三個 Block 都是 `empty`，但那時面板 MUST 已經在（客服要看到「分析中」的骨架，
-`05-copilot-panel_4status_01.png` 第三態）。用內容判斷可見性會讓面板在 JOIN 後晚一拍才出現。
+畫布 artboard 2a 的第三態）。用內容判斷可見性會讓面板在 JOIN 後晚一拍才出現。
 
 ### 5.2 伺服器端的推播過濾（FR-016a）
 
