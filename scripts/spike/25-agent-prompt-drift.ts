@@ -1,11 +1,11 @@
 /**
- * 25 — 四個 iMBrace agent 的 system prompt 快照與漂移偵測。
+ * 25 — 五個 iMBrace agent 的 system prompt 快照與漂移偵測。
  *
  * ⚠️ **這支不是 probe，是守門員。** 其他 spike 問的是「平台會怎樣」，這支問的是
  *    「後台的設定被人改了嗎」——它沒有 findings，只有「一致」或「不一致」。
  *
  * ── 為什麼需要它 ──────────────────────────────────────────────
- * 四個 agent 的 `personality_role`／`core_task`／`model_id` 都在 iMBrace 後台，
+ * 每個 agent 的 `personality_role`／`core_task`／`model_id` 都在 iMBrace 後台，
  * **不在版本控制裡**。被改掉不會有任何 commit 看得出來，也不會有型別錯誤，
  * 只會安靜地改變摘要的形狀、情緒的刻度、建議卡的引用規則。
  *
@@ -39,14 +39,20 @@ import { clientForApiKey } from '../../server/services/imbrace.js'
 const SNAPSHOT = resolve(ROOT, 'docs/AGENT_PROMPTS.md')
 
 /**
- * 四個 agent 的固定順序 —— 順序寫死是為了讓 render 結果穩定，
+ * agent 的固定順序 —— 順序寫死是為了讓 render 結果穩定，
  * 否則平台清單順序一變，整份檔案就會出現與內容無關的假 diff。
+ *
+ * ⚠️ **新增 agent 時 MUST 加進這份清單。** 漏加不會有任何錯誤 ——
+ *    那個 agent 的 prompt 會變成唯一一個沒有快照保護的，被改掉時只能靠
+ *    量測數字反推（`CLAUDE.md` 第四顆地雷記錄過那次的代價：三分鐘重跑 spike，
+ *    還把錯誤推測寫進了正典文件）。
  */
 const AGENTS = [
   { key: 'summary', envKey: 'IMBRACE_SUMMARY_AGENT_ID', use: '對話摘要（`summarize()`）' },
   { key: 'sentiment', envKey: 'IMBRACE_SENTIMENT_AGENT_ID', use: '情緒評分與走勢摘要（`analyzeSentiment()`／`narrateSentiment()`，兩者共用同一個 agent）' },
   { key: 'suggestion', envKey: 'IMBRACE_SUGGESTION_AGENT_ID', use: '建議回覆卡（`suggest()`）' },
   { key: 'knowledge', envKey: 'IMBRACE_KNOWLEDGE_AGENT_ID', use: '知識庫檢索（`AgentKnowledgeProvider`）' },
+  { key: 'closure', envKey: 'IMBRACE_CLOSURE_AGENT_ID', use: '結案摘要（`summarizeClosure()`，specs/006-closure-handoff-summary）' },
 ] as const
 
 interface AgentSnapshot {
@@ -70,7 +76,7 @@ function render(snaps: AgentSnapshot[]): string {
     '# Agent system prompt 快照',
     '',
     '> ⚠️ **本檔是生成物，不是設定檔 —— 改它不會改變任何 agent 的行為。**',
-    '> 四個 agent 的真正設定在 iMBrace 後台，那裡才是唯一能寫入的地方。',
+    `> ${snaps.length} 個 agent 的真正設定在 iMBrace 後台，那裡才是唯一能寫入的地方。`,
     '> 這份快照存在的唯一理由是：後台的改動不會產生任何 commit，',
     '> 有了它才能用 `git diff` 看出「prompt 被動過」與「模型本來就這樣」的差別。',
     '>',
@@ -193,7 +199,7 @@ async function main(): Promise<void> {
 
   const actual = readFileSync(SNAPSHOT, 'utf8')
   if (actual === expected) {
-    console.log('✅ 四個 agent 的 system prompt 與 model 都與快照一致')
+    console.log(`✅ ${snaps.length} 個 agent 的 system prompt 與 model 都與快照一致`)
     snaps.forEach(s => console.log(`   • ${s.key} — ${s.name}（${s.modelId}）`))
     return
   }
