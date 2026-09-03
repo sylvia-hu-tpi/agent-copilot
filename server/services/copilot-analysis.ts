@@ -148,6 +148,14 @@ export const SENTIMENT_CHUNK_SIZE = 6
 /**
  * `SENTIMENT_CONCURRENCY` 的預設值 —— 2026-09-01 使用者裁定的 3；`test/sentiment-concurrency.test.ts`
  * 斷言未設 env 時就是它。⚠️ MUST 宣告在下面的 `SENTIMENT_CONCURRENCY` 之前（模組載入時就會用到）。
+ *
+ * ⚠️ **2026-09-03 由 FR-018 的正式掃描複核後維持 3（使用者裁決）** —— 3／4／5 每檔位 n=45：
+ * 檔位 4 與 5 在**總時間與單次失敗率兩列上同時比 3 差**（總時間 91% → 84%／82%，
+ * 破 15 秒率 3.8% → 6.4%／10.6%），連 FR-019 的第一個條件都沒過。
+ * 成因之一是 `withRetry()` 逾時不取消已送出的呼叫（`ai/retry-policy.ts`），
+ * 實際負載 ＝ 設定值 ＋ 尚未落地的放棄呼叫，於是檔位越高越自我增強。
+ * **這是被量過並經裁決的數字，不是沒人動過的預設值；要調高 MUST 先跑同口徑掃描**
+ * （`npm run spike:sentiment-concurrency`，數據見 `docs/ARCHITECTURE.md` §8.2b）。
  */
 export const DEFAULT_SENTIMENT_CONCURRENCY = 3
 

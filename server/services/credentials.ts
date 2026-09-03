@@ -287,7 +287,15 @@ export function setCredentialActivity(
 }
 
 /**
- * 借一份憑證來做唯讀輪詢。沒有任何人連線時回 null —— 呼叫端應停止輪詢。
+ * 借一份憑證來做唯讀輪詢。沒有任何人連線時回 null。
+ *
+ * ⚠️ **回 null 不會讓輪詢「停止」，只會讓它空轉**（2026-09-03 訂正，原註解寫「呼叫端應停止輪詢」
+ *    與實作不符）：`fetchConversationList()`／`fetchMessagesFor()` 取不到憑證是
+ *    `return []` 提前返回（`copilot-runtime.ts`），`ConversationListPoller` 的迴圈照常每一拍跑，
+ *    只是不打任何 iMBrace API。這是刻意的 —— `copilot-runtime.ts` 檔頭寫著
+ *    「迴圈空轉的成本遠低於『忘記重新啟動』的風險」。`stop()` 只有 `dispose()` 會呼叫。
+ *    ⚠️ 這條路徑**完全沒有 log**（本檔零個 `console`，`evictExpired()` 算了 `evicted` 卻沒人用），
+ *    因此「登記全空」在執行時是不可觀察的 —— 守它的是 `test/connection-counting.test.ts`。
  *
  * ⚠️ 先剔除逾期登記（I-2：逾期者 MUST NOT 被回傳），再取**最近登記**的那一份：
  *    越晚登記的 session 剩餘壽命越長，比較不會在輪詢途中過期。
