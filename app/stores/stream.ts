@@ -45,6 +45,21 @@ const RECONNECT_MAX_MS = 30_000
 const SESSION_PROBE_AFTER_FAILURES = 2
 
 /**
+ * 探測**沒有得到確定答案**時，要再累積幾次失敗才重問一次。
+ *
+ * ⚠️ **2026-09-03 修**：原本是「一輪斷線只探測一次」的一次性旗標，而旗標在**發動探測之前**
+ *    就鎖上了。於是斷線當下若 server 正在重啟，探測拿到的是網路錯誤而非 401 →
+ *    `probeSession()` 直接返回 → 閂永遠鎖著。等 server 起來、`/api/stream` 因 session
+ *    已被清而回 401 時，`onerror` 雖然繼續累加失敗，**卻再也不會探測第二次** ——
+ *    分頁無限重試（退避上限 30 秒）卻**永遠不會導去登入頁**，只能手動重新整理才脫困。
+ *    2026-09-03 的 T058 手動驗收實際踩到：兩個分頁一起卡在「連線中斷，重新連線中…」。
+ * ⚠️ 但「不要每次重試都打一發 `/api/auth/me`」是刻意的約束（`test/nuxt/stream-store.test.ts`
+ *    有斷言），所以不是把閂拿掉，而是**改成會重新武裝的門檻**：問過一次而沒有定論，
+ *    就往後推這麼多次失敗再問。退避上限 30 秒，因此穩定狀態下約每 90 秒才探測一次。
+ */
+export const SESSION_PROBE_RETRY_EVERY_FAILURES = 3
+
+/**
  * 這個分頁的識別碼。
  *
  * ⚠️ 存在 `sessionStorage` 而非 `localStorage`：後者會讓同一個瀏覽器的
@@ -91,8 +106,14 @@ export const useStreamStore = defineStore('stream', () => {
   let beatTimer: ReturnType<typeof setInterval> | undefined
   /** ⚠️ 已經連過至少一次 —— 用來區分「首次連線」與「重連」，只有後者要對帳 */
   let hasConnectedBefore = false
-  /** 這一輪斷線已經探測過 session，不必每次重試都打一次 /api/auth/me */
-  let sessionProbed = false
+  /**
+   * 下一次探測 session 的失敗次數門檻 —— 不必每次重試都打一次 `/api/auth/me`。
+   * ⚠️ 探測沒有定論時會**往後推**（而不是從此不再問），見
+   * `SESSION_PROBE_RETRY_EVERY_FAILURES` 的說明。
+   */
+  let nextProbeAtFailures = SESSION_PROBE_AFTER_FAILURES
+  /** 探測進行中 —— 避免同一輪重試把探測疊著送 */
+  let probeInFlight = false
 
   /** 即時更新是否可信。false 時 UI 必須明說畫面可能不是最新的（憲法 3.2） */
   const degraded = computed(() => status.value === 'reconnecting' && failures.value >= 2)
@@ -126,7 +147,7 @@ export const useStreamStore = defineStore('stream', () => {
         for (const h of [...reconnectedHandlers]) h()
       }
       hasConnectedBefore = true
-      sessionProbed = false
+      nextProbeAtFailures = SESSION_PROBE_AFTER_FAILURES
     }
 
     es.onmessage = (raw: MessageEvent<string>) => {
@@ -156,9 +177,8 @@ export const useStreamStore = defineStore('stream', () => {
       failures.value++
       status.value = 'reconnecting'
 
-      // 斷線原因可能是 session 過期，而 onerror 分辨不出來 —— 主動確認一次
-      if (failures.value >= SESSION_PROBE_AFTER_FAILURES && !sessionProbed) {
-        sessionProbed = true
+      // 斷線原因可能是 session 過期，而 onerror 分辨不出來 —— 主動確認
+      if (failures.value >= nextProbeAtFailures && !probeInFlight) {
         void probeSession()
       }
 
@@ -172,19 +192,32 @@ export const useStreamStore = defineStore('stream', () => {
    *
    * ⚠️ 不可把「探測失敗」當成「已登出」：網路斷掉時這支請求本來就會失敗，
    *    那樣會把單純的網路抖動變成把客服踢出去，草稿與工作脈絡一起消失。
+   * ⚠️ **但也不可因為問不出結果就從此不再問**（2026-09-03 修）：沒有定論時
+   *    MUST 把門檻往後推、之後重問，否則「探測撞上 server 重啟」會讓分頁
+   *    永久卡在重連中而永遠發現不了 401。見 `SESSION_PROBE_RETRY_EVERY_FAILURES`。
    */
   async function probeSession(): Promise<void> {
+    probeInFlight = true
     try {
       await $fetch('/api/auth/me')
+      // 200：session 還在，這次斷線與登入狀態無關 —— 但它之後仍可能過期，所以只是往後推
+      nextProbeAtFailures = failures.value + SESSION_PROBE_RETRY_EVERY_FAILURES
     }
     catch (err) {
       const e = err as { statusCode?: number, response?: { status?: number } }
       const code = e?.statusCode ?? e?.response?.status
-      if (code !== 401) return
+      if (code !== 401) {
+        // 非 401：什麼都斷定不了。MUST NOT 登出，但 MUST 保留之後重問的機會
+        nextProbeAtFailures = failures.value + SESSION_PROBE_RETRY_EVERY_FAILURES
+        return
+      }
 
       disconnect()
       useAuthStore().invalidate()
       await navigateTo('/login')
+    }
+    finally {
+      probeInFlight = false
     }
   }
 
@@ -228,7 +261,7 @@ export const useStreamStore = defineStore('stream', () => {
     teardownSource()
     status.value = 'idle'
     hasConnectedBefore = false
-    sessionProbed = false
+    nextProbeAtFailures = SESSION_PROBE_AFTER_FAILURES
     failures.value = 0
   }
 

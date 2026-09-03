@@ -74,6 +74,8 @@ const navigateToMock = vi.fn()
 const invalidateMock = vi.fn()
 
 let useStreamStore: typeof import('../../app/stores/stream.js')['useStreamStore']
+/** ⚠️ 從 store 匯入而非在測試裡抄一份 —— 常數改了測試才會跟著改 */
+let SESSION_PROBE_RETRY_EVERY_FAILURES: number
 
 beforeEach(async () => {
   FakeEventSource.reset()
@@ -97,7 +99,7 @@ beforeEach(async () => {
   setActivePinia(createPinia())
 
   // ⚠️ 動態載入：stubGlobal 必須在 module 求值前生效
-  ;({ useStreamStore } = await import('../../app/stores/stream.js'))
+  ;({ useStreamStore, SESSION_PROBE_RETRY_EVERY_FAILURES } = await import('../../app/stores/stream.js'))
 })
 
 afterEach(() => {
@@ -231,11 +233,52 @@ describe('SSE 連線與自動重連（§9.5 / §18 M1）', () => {
     expect(navigateToMock).not.toHaveBeenCalled()
     expect(store.status).toBe('reconnecting')
 
-    // 一輪斷線只探測一次，不要每次重試都打一發
+    // 門檻重新到期前不重問，不要每次重試都打一發（重新武裝由下一條測試守）
     await vi.advanceTimersByTimeAsync(2_000)
     FakeEventSource.latest.fail()
     await vi.advanceTimersByTimeAsync(0)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * ⚠️ 這一條與上一條是**一對夾擊條件**，MUST 同時存在。
+   *
+   * 只有上一條時，「探測一次就永遠不再問」的實作會通過測試 —— 而那正是
+   * 2026-09-03 T058 手動驗收踩到的缺陷：斷線當下 server 正在重啟，探測拿到的是
+   * 網路錯誤而非 401，一次性旗標就此鎖死；等 server 起來、`/api/stream` 因 session
+   * 已被清而回 401 時，分頁**永遠不會再探測**，於是無限重試卻不導去登入頁，
+   * 畫面停在「連線中斷，重新連線中…」直到使用者自己重新整理。
+   *
+   * 壞掉時紅的是最後那兩行：`navigateTo` 不會被呼叫。
+   */
+  it('⚠️ 探測沒有定論後 MUST 重新武裝 —— 稍後真的 401 時仍要發現得了（不可從此不再問）', async () => {
+    // 第一次探測撞上 server 重啟：拿到的是網路錯誤，不是 401
+    fetchMock.mockRejectedValue({ statusCode: 503 })
+
+    const store = useStreamStore()
+    store.connect()
+    FakeEventSource.latest.open()
+
+    FakeEventSource.latest.fail()
+    await vi.advanceTimersByTimeAsync(1_000)
+    FakeEventSource.latest.fail()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(navigateToMock).not.toHaveBeenCalled()
+
+    // server 起來了，但 session 已隨重啟被清掉 —— 之後每一次 /api/stream 都是 401
+    fetchMock.mockRejectedValue({ statusCode: 401 })
+
+    // 繼續斷線重試，直到門檻重新到期
+    for (let i = 0; i < SESSION_PROBE_RETRY_EVERY_FAILURES; i++) {
+      await vi.advanceTimersByTimeAsync(30_000)
+      FakeEventSource.latest.fail()
+      await vi.advanceTimersByTimeAsync(0)
+    }
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(1)
+    expect(invalidateMock).toHaveBeenCalledTimes(1)
+    expect(navigateToMock).toHaveBeenCalledWith('/login')
   })
 
   it('disconnect() 之後不再重連，且下一次 connect() 視同首次（不對帳）', async () => {
