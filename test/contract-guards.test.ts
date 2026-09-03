@@ -156,10 +156,11 @@ describe('FR-012 的門檻必須真的被接上（決策 3 的裝配點）', () 
    * 相對路徑依檔案深度而異（`./copilot-runtime.js` 與 `../copilot-runtime.js`），
    * 因此比對的是結尾而非完整字串。
    */
-  it('掛著標記的管線成員就是現有這四個（漏掉標記或多標了都會紅）', () => {
+  it('掛著標記的管線成員就是現有這五個（漏掉標記或多標了都會紅）', () => {
     expect(PIPELINE_FILES).toEqual([
       'server/services/analysis-dedupe.ts',
       'server/services/analysis-state.ts',
+      'server/services/blocks/sentiment.ts',
       'server/services/blocks/suggestion.ts',
       'server/services/copilot-analysis.ts',
     ])
@@ -171,7 +172,7 @@ describe('FR-012 的門檻必須真的被接上（決策 3 的裝配點）', () 
    *    而那恰恰是這條守衛存在的情境。動態 import 一樣會把模組拉進 TypeScript program，
    *    `tsconfig.scripts.json` 照樣整份紅，守衛宣稱防的後果原封不動。
    *
-   * ⚠️ 先剝註解再比對：這四個檔案的檔頭**正在大量討論這條禁令**，只要有人為了說清楚
+   * ⚠️ 先剝註解再比對：這五個檔案的檔頭**正在大量討論這條禁令**，只要有人為了說清楚
    *    而寫出一行完整的 import 範例，守衛就會紅，而症狀（「我明明沒 import」）很難
    *    第一時間對上原因。
    *
@@ -305,7 +306,7 @@ describe('分析管線的對外介面只有 copilot-analysis.ts 一個出口', (
   const TYPE_ONLY = new RegExp(`import\\s+type\\s+\\{[^}]*\\}\\s+from\\s+['"][^'"]*(?:${alt})\\.js['"]`, 'g')
 
   it('內部檔清單確實推導自管線成員（推導壞掉時這裡會先紅）', () => {
-    expect(internalSpecifiers().sort()).toEqual(['analysis-dedupe', 'analysis-state', 'blocks/suggestion'])
+    expect(internalSpecifiers().sort()).toEqual(['analysis-dedupe', 'analysis-state', 'blocks/sentiment', 'blocks/suggestion'])
   })
 
   it('server/ 底下只有管線成員可以值 import 管線內部檔案', () => {
