@@ -92,4 +92,24 @@ export interface MessageSource {
 
   /** 外部訊號說「這個對話有新東西了」（§9.3.1 第一層通知第二層），立刻拉一次 */
   poke(conversationId: string): void
+
+  /**
+   * 該對話目前對任一位客服而言是否為前景（specs/002-suggestion-knowledge-search/research.md #9）。
+   * 對話目前無任何訂閱者時回傳 `'background'`（安全預設）。
+   */
+  getPriority(conversationId: string): WatchPriority
+
+  /**
+   * 該對話目前是否**仍有任何人 JOIN**（specs/003-analysis-trigger-policy 決策 3）。
+   *
+   * 與 `getPriority()` 完全對稱：同一份訂閱者聚合的另一個欄位、同樣的安全預設約定。
+   * 目前無任何訂閱者時回傳 `false`（安全預設）。
+   *
+   * ⚠️ **它只答得出「我方系統內」的 JOIN。** 同事若直接在 iMBrace 官方介面 JOIN，
+   *    我方的訂閱者清單裡沒有他，此方法回傳 `false`
+   *    （docs/ARCHITECTURE.md §10.2：平台回傳的 `users[]` 是團隊名冊而非對話參與者）。
+   *    這是既有的平台能力缺口，M4 的 webhook payload 到位前無解，
+   *    **MUST NOT** 在實作端用猜測填補。
+   */
+  isJoined(conversationId: string): boolean
 }

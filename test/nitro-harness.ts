@@ -67,7 +67,7 @@ export interface NitroHarness {
 }
 
 export async function startNitro(
-  opts: { port?: number, gateway?: MockGatewayOptions } = {},
+  opts: { port?: number, gateway?: MockGatewayOptions, env?: Record<string, string> } = {},
 ): Promise<NitroHarness> {
   const gateway = await startMockGateway(opts.gateway)
   // ⚠️ 預設不是 3123 —— 那個埠屬於 `smoke-http.ts`。
@@ -87,10 +87,20 @@ export async function startNitro(
         NUXT_SESSION_SECRET: 'smoke-test-secret',
         NUXT_IMBRACE_BASE_URL: gateway.baseUrl,
         NUXT_PUBLIC_IMBRACE_ENV: 'stable',
+        ...opts.env,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     server.stderr?.on('data', d => process.stderr.write(`[server] ${d}`))
+    /**
+     * ⚠️ stdout **必須被消耗掉**，即使不印。`stdio: 'pipe'` 開了管線卻沒人讀，
+     *    緩衝區滿了之後伺服器的 `console.log` 會**阻塞整個程序**（症狀是伺服器
+     *    毫無徵兆地停住，看起來像死結）。順便：這也是為什麼加在伺服器端的
+     *    `console.log` 探針在這裡完全看不到 —— 只有 stderr 被轉發。
+     */
+    server.stdout?.on('data', (d) => {
+      if (process.env.SMOKE_TRACE) process.stderr.write(`[server:out] ${d}`)
+    })
 
     await waitForServer(baseUrl)
   }

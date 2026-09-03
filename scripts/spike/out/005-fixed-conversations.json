@@ -1,0 +1,171 @@
+{
+  "at": "2026-09-02T18:08:24.692Z",
+  "spec": "specs/005-m2-residual-defects",
+  "requirement": "FR-017（固定 15 段對話 × 3 輪 ＝ 45 次帶命中的生成）",
+  "env": "stable",
+  "usedBy": [
+    "npm run spike:citation-quality（27 號，讀 .env.local 的 SPIKE_CITATION_CONVERSATION_IDS）",
+    "npm run spike:sentiment-concurrency（26 號，命令列帶同一組 id）"
+  ],
+  "selection": {
+    "universe": 21,
+    "method": "searchConversations()（防腐層，offset 分頁）列出整個 business unit；q=''、limit 100 一頁即取完，total 欄位回報 21",
+    "rule": "凡是 fetchLatest() 視窗內至少有 1 則客戶文字發言的對話全部納入 —— 恰好 15 段，正是 FR-017 要的數量",
+    "note": "另外 6 段（TWN#IR9721／TWN#JD9564／TWN#KZ1636／TWN#YR2857／TWN#XY6967／TWN#UL1936）視窗內 0 則客戶發言，冷啟動不會產生任何建議卡，納入只會製造空樣本",
+    "deviations": [
+      "原定「排除 mode 為 manual／hybrid」的候選條件在本環境**無法滿足 15 段**：非 manual 且有客戶文字發言的只有 13 段。27 號與 26 號都是**唯讀**（只 GET 對話與訊息、在本機記憶體跑分析，不 JOIN／不 LEAVE／不切換 mode），21 號檔頭排除 manual／hybrid 的理由是 --join 會改動 mode 而介入同事現場 —— 該理由對唯讀路徑不成立，因此納入 2 段 manual 對話（TWN#UG1103、d6a42e54）",
+      "原定「至少 3 則客戶文字發言」在本環境同樣無法滿足 15 段（只有 9 段）：納入 4 段客戶文字發言 1～2 則的對話（TWN#YD0053／TWN#RN5999／TWN#ON1992／469d35ad）",
+      "可比較性優先：21 號歷史量測用過的 4 段全部保留，即使其中 TWN#UG1103 現況為 manual、TWN#SA8194 預查 0 命中、TWN#YD0053 客戶文字發言只有 2 則"
+    ],
+    "hitProbe": "挑選當下以真實 useKnowledgeProvider().search()（query 比照 blocks/suggestion.ts 的客戶發言合併文字，topK 5、timeout 30 秒）預查一次。⚠️ 這只是挑選依據，不是量測數字；正式量測的命中數以 27 號跑出來的稽核事件為準"
+  },
+  "conversations": [
+    {
+      "conversationId": "a601198b-7dda-4a77-a732-fe1af9fe79e2",
+      "title": "(個人名稱)",
+      "mode": "automation",
+      "status": "open",
+      "messageCount": 50,
+      "customerTextCount": 32,
+      "probeHits": 3,
+      "titleRedacted": true
+    },
+    {
+      "conversationId": "b6f76f09-75e6-48ad-82a6-a5af0cd93314",
+      "title": "TWN#UG1103",
+      "mode": "manual",
+      "status": "active",
+      "messageCount": 50,
+      "customerTextCount": 25,
+      "probeHits": 3,
+      "inLegacy21": true
+    },
+    {
+      "conversationId": "49411982-1f40-44f3-8c88-bac4c64564ff",
+      "title": "(個人名稱)",
+      "mode": null,
+      "status": "open",
+      "messageCount": 50,
+      "customerTextCount": 22,
+      "probeHits": null,
+      "probeNote": "預查時 知識庫檢索逾時（30000ms）",
+      "titleRedacted": true
+    },
+    {
+      "conversationId": "d6a42e54-9ecb-42b7-a3b7-528bdc6b6541",
+      "title": "(個人名稱)",
+      "mode": "manual",
+      "status": "open",
+      "messageCount": 50,
+      "customerTextCount": 17,
+      "probeHits": null,
+      "probeNote": "預查時 知識庫檢索逾時（30000ms）",
+      "titleRedacted": true
+    },
+    {
+      "conversationId": "b28f568a-fb62-4c38-b2e9-d3b82f9d1feb",
+      "title": "TWN#GW4772",
+      "mode": "automation",
+      "status": "active",
+      "messageCount": 33,
+      "customerTextCount": 17,
+      "probeHits": 3,
+      "inLegacy21": true
+    },
+    {
+      "conversationId": "68e39cf1-68df-47a0-9e68-6e19c72eff8a",
+      "title": "TWN#UK2594",
+      "mode": "automation",
+      "status": "active",
+      "messageCount": 18,
+      "customerTextCount": 10,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "453984e3-8324-4e3b-bfde-aad788481f38",
+      "title": "TWN#ZN8978",
+      "mode": "automation",
+      "status": "active",
+      "messageCount": 8,
+      "customerTextCount": 8,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "2a5079b1-17c4-4050-a439-63f305e80408",
+      "title": "TWN#UT5447",
+      "mode": "automation",
+      "status": "active",
+      "messageCount": 16,
+      "customerTextCount": 7,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "02bb6271-81d9-45c7-a503-c7787d1152b9",
+      "title": "TWN#SA8194",
+      "mode": "automation",
+      "status": "active",
+      "messageCount": 9,
+      "customerTextCount": 6,
+      "probeHits": 0,
+      "inLegacy21": true
+    },
+    {
+      "conversationId": "d3918e02-ee05-4bac-9fa6-afda8d914551",
+      "title": "TWN#AV2150",
+      "mode": null,
+      "status": "active",
+      "messageCount": 3,
+      "customerTextCount": 3,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "686734a3-c64f-4a96-ad69-36b58a6e1110",
+      "title": "TWN#SW9574",
+      "mode": null,
+      "status": "active",
+      "messageCount": 6,
+      "customerTextCount": 3,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "248c18d4-9c6a-48eb-bed6-ac53319df647",
+      "title": "TWN#YD0053",
+      "mode": "automation",
+      "status": "active",
+      "messageCount": 8,
+      "customerTextCount": 2,
+      "probeHits": 3,
+      "inLegacy21": true
+    },
+    {
+      "conversationId": "de9ef241-59e8-4c01-8736-25d73c321bdf",
+      "title": "TWN#RN5999",
+      "mode": null,
+      "status": "active",
+      "messageCount": 2,
+      "customerTextCount": 2,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "26b838d2-ecad-4a67-aab1-74449ea192ae",
+      "title": "TWN#ON1992",
+      "mode": null,
+      "status": "active",
+      "messageCount": 4,
+      "customerTextCount": 1,
+      "probeHits": 3
+    },
+    {
+      "conversationId": "469d35ad-1f93-4da3-a0db-636cd19bc6da",
+      "title": "(個人名稱)",
+      "mode": null,
+      "status": "open",
+      "messageCount": 5,
+      "customerTextCount": 1,
+      "probeHits": 3,
+      "titleRedacted": true
+    }
+  ],
+  "privacy": "⚠️ 本檔進版控，因此**個人名稱型的對話標題一律不落字**（改記 (個人名稱)，另以 titleRedacted 標記）；平台代號型標題（TWN#XXNNNN）原樣保留。對話一律以 conversationId 識別，量測腳本也只吃 id。本檔不含任何訊息內容（憲法 1.5）。",
+  "gitignoreNote": "scripts/spike/out/ 整個目錄在 .gitignore 內（原始產出可能含 PII）；本檔是唯一的例外，由 .gitignore 的一條否定規則放行 —— 它是人工整理的索引，不是原始產出。27／26 號跑出來的原始 JSON 仍只留在本機。"
+}

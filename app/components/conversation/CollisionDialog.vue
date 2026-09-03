@@ -30,22 +30,45 @@ const emit = defineEmits<{
 
 const { t } = useI18n()
 
-const headline = computed(() => {
-  if (props.collision.kind === 'unverified') return t('collision.unverified')
-  if (props.collision.kind === 'ai') return t('collision.byAi')
-
-  const latest = props.collision.messages.at(-1)
-  return t('collision.byAgent', {
-    name: latest?.sender.name || t('presence.unknownName'),
-  })
-})
+/** 畫布 §8.4 的預覽長度 —— 只要能認出是哪一則，不必完整重述（下方本來就列了全文） */
+const PREVIEW_MAX = 12
 
 function timeOf(at: string): string {
   const d = new Date(at)
   return Number.isNaN(d.getTime())
     ? at
-    : d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit' })
+    : d.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
+
+/** 「N 秒前／N 分鐘前」—— 畫布的句型把絕對與相對時間並列，兩者都要 */
+function agoOf(at: string): string {
+  const ms = Date.now() - new Date(at).getTime()
+  if (!Number.isFinite(ms) || ms < 0) return t('common.justNow')
+  const sec = Math.floor(ms / 1000)
+  if (sec < 60) return t('collision.secondsAgo', { n: sec })
+  const min = Math.floor(sec / 60)
+  if (min < 60) return t('common.minutesAgo', { n: min })
+  return t('common.hoursAgo', { n: Math.floor(min / 60) })
+}
+
+const headline = computed(() => {
+  // ⚠️ `unverified` 沒有對應的畫布句型，也不該有 —— 它要表達的是「檢查本身失敗」，
+  //    套用「已於 … 送出 …」的句型等於謊報一個並不存在的訊息（憲法 3.2）。
+  if (props.collision.kind === 'unverified') return t('collision.unverified')
+
+  const latest = props.collision.messages.at(-1)
+  const raw = latest?.text ?? ''
+  const preview = raw.length > PREVIEW_MAX ? `${raw.slice(0, PREVIEW_MAX)}…` : raw
+  const shared = {
+    time: latest ? timeOf(latest.at) : '—',
+    ago: latest ? agoOf(latest.at) : '—',
+    preview,
+  }
+
+  return props.collision.kind === 'ai'
+    ? t('collision.byAi', shared)
+    : t('collision.byAgent', { ...shared, name: latest?.sender.name || t('presence.unknownName') })
+})
 </script>
 
 <template>
@@ -117,6 +140,12 @@ function timeOf(at: string): string {
             {{ t('collision.discard') }}
           </button>
         </div>
+
+        <!-- 畫布 §8.4：明說草稿沒有不見、且送出鍵是被鎖住而非壞掉 -->
+        <p class="flex items-center gap-1.5 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+          <UIcon name="i-lucide-lock" class="size-3 shrink-0" />
+          {{ t('collision.draftHeld') }}
+        </p>
       </div>
     </div>
   </div>

@@ -28,16 +28,25 @@ const OPTIONS: ConversationMode[] = ['manual', 'hybrid', 'automation']
 
 const current = computed(() => props.mode)
 
+/**
+ * 選中態的三組配色 —— 畫布 1c 逐字（2026-09-01 版）。
+ *
+ * ⚠️ **三個模式的色系與「AI 參與程度」對應，不是隨意分配的**：
+ *    全真人＝`--navy-soft`（我方主色，人在主導）、協作＝`--ai`（AI 也在說話）、
+ *    全自動＝`--active`（系統自行運作）。先前 `automation` 用 `--ai`、`hybrid` 用 `--open`，
+ *    等於把「AI 也在說話」這件事標在錯的那一個上。
+ */
 function toneOf(mode: ConversationMode): Record<string, string> {
-  if (mode === 'automation') return { background: 'var(--ai-bg)', borderColor: 'var(--ai-bd)', color: 'var(--ai)' }
-  if (mode === 'hybrid') return { background: 'var(--open-bg)', borderColor: 'var(--border-strong)', color: 'var(--open)' }
-  return { background: 'var(--active-bg)', borderColor: 'var(--border-strong)', color: 'var(--active)' }
+  if (mode === 'automation') return { background: 'var(--active-bg)', borderColor: 'var(--active)', color: 'var(--active)' }
+  if (mode === 'hybrid') return { background: 'var(--ai-bg)', borderColor: 'var(--ai-bd)', color: 'var(--ai)' }
+  return { background: 'var(--navy-soft)', borderColor: 'var(--navy-soft-bd)', color: 'var(--navy-2)' }
 }
 </script>
 
 <template>
   <div class="flex flex-wrap items-center gap-2">
-    <span class="ac-status-label">{{ t('mode.label') }}</span>
+    <!-- ⚠️ 畫布這一顆是普通字重的 `--text-3` 文字，不是 `.ac-status-label`（700＋letter-spacing） -->
+    <span class="text-[0.84375rem]" :style="{ color: 'var(--text-3)' }">{{ t('mode.label') }}</span>
 
     <div class="flex items-center gap-1" role="radiogroup" :aria-label="t('mode.label')">
       <button
@@ -65,9 +74,15 @@ function toneOf(mode: ConversationMode): Record<string, string> {
       {{ t('mode.switching') }}
     </span>
 
-    <!-- ⚠️ 常駐警語。這不是提示，是防止誤操作的必要資訊 -->
-    <p class="w-full text-[0.8125rem] leading-snug" :style="{ color: 'var(--text-3)' }">
-      {{ t('mode.sharedWarning') }}
+    <!--
+      ⚠️ 常駐警語。這不是提示，是防止誤操作的必要資訊。
+      ⚠️ 前綴用 `UIcon` 而**不是文案裡的 ⚠️ emoji**（畫布 1c 是 11px 的 `alert-triangle`／`--open`）：
+         emoji 在不同 OS 會渲染成各自的彩色圖，與整套線性 icon 不同族，且大小不受控。
+         文案裡不留 emoji，i18n 字串才是純文字。
+    -->
+    <p class="flex w-full items-start gap-1.5 text-[0.8125rem] leading-snug" :style="{ color: 'var(--text-3)' }">
+      <UIcon name="i-lucide-alert-triangle" class="mt-0.5 size-[11px] shrink-0" :style="{ color: 'var(--open)' }" />
+      <span>{{ t('mode.sharedWarning') }}</span>
     </p>
   </div>
 </template>

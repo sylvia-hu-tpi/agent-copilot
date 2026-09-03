@@ -165,6 +165,73 @@ describe('fetchSince', () => {
   })
 })
 
+describe('getPriority（specs/002-suggestion-knowledge-search/research.md #9）', () => {
+  it('沒有任何訂閱者時回傳 background（安全預設）', async () => {
+    active = makeSource([msg('m1')])
+    expect(active.source.getPriority('c1')).toBe('background')
+  })
+
+  it('至少一位前景訂閱者時回傳 foreground（前景蓋過背景）', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {}, { priority: 'background' })
+    active.source.subscribe('c1', () => {}, { priority: 'foreground' })
+    expect(active.source.getPriority('c1')).toBe('foreground')
+  })
+
+  it('全部訂閱者皆為背景時回傳 background', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {}, { priority: 'background' })
+    expect(active.source.getPriority('c1')).toBe('background')
+  })
+})
+
+/**
+ * specs/003-analysis-trigger-policy 決策 3 —— 分析管線的 JOIN 界線（FR-012、FR-014）。
+ *
+ * ⚠️ 這是「靜默失效」型的判斷：寫錯不報錯、不會有型別錯誤，只會讓分析在 LEAVE 之後
+ *    繼續跑（門檻太寬）或在同事仍 JOIN 時停掉（門檻太窄）。兩者都只能靠這裡驗。
+ */
+describe('isJoined（specs/003-analysis-trigger-policy 決策 3）', () => {
+  it('沒有任何訂閱者時回傳 false（安全預設，比照 getPriority 的 background）', async () => {
+    active = makeSource([msg('m1')])
+    expect(active.source.isJoined('c1')).toBe(false)
+    // 從未見過的對話同樣是 false，不拋錯
+    expect(active.source.isJoined('never-seen')).toBe(false)
+  })
+
+  it('單一訂閱者 joined:true → true', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {}, { joined: true })
+    expect(active.source.isJoined('c1')).toBe(true)
+  })
+
+  it('未指定 joined 時預設為 false（subscribe 的既有預設值）', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {})
+    expect(active.source.isJoined('c1')).toBe(false)
+  })
+
+  it('兩位訂閱者其一 joined:false → 仍為 true（對話層級聚合，FR-014）', async () => {
+    active = makeSource([msg('m1')])
+    active.source.subscribe('c1', () => {}, { joined: true })
+    active.source.subscribe('c1', () => {}, { joined: false })
+    expect(active.source.isJoined('c1')).toBe(true)
+  })
+
+  it('全部退訂後回傳 false —— entry 被回收，等同從未 JOIN', async () => {
+    active = makeSource([msg('m1')])
+    const offA = active.source.subscribe('c1', () => {}, { joined: true })
+    const offB = active.source.subscribe('c1', () => {}, { joined: false })
+
+    offA()
+    // 只剩 joined:false 的那位 → 聚合翻為 false（這正是最後一位客服 LEAVE 的形狀）
+    expect(active.source.isJoined('c1')).toBe(false)
+
+    offB()
+    expect(active.source.isJoined('c1')).toBe(false)
+  })
+})
+
 describe('錯誤處理（憲法 3.2 靜默降級）', () => {
   it('單一訂閱者拋錯不影響其他訂閱者', async () => {
     active = makeSource([msg('m1')])

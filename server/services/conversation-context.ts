@@ -23,6 +23,7 @@ import type { Conversation } from '../../shared/types/conversation.js'
 import { getConversationDetail } from './imbrace.js'
 import { normalizeConversationId, toConversation } from '../sources/mappers.js'
 import { rememberOperators } from './directory.js'
+import type { StateStore } from '../state/types.js'
 
 export interface ConversationContext extends Conversation {
   /** ⚠️ 「**我**有沒有 JOIN」，不是「有沒有人 JOIN」 */
@@ -59,6 +60,47 @@ export async function loadConversationContext(
     id: normalizeConversationId(conv.id),
     viewerJoined: raw.is_joined === true,
   }
+}
+
+/**
+ * 「這位客服現在有沒有 JOIN 這個對話」—— **記憶體優先，查不到就回平台確認並回填**。
+ *
+ * ⚠️ **為什麼不能只查 `listJoinedConversations()`。**
+ *    那份記錄只有 `join.post.ts` 會寫，而且存在記憶體裡（M4 換 Redis 前）。
+ *    但**平台側的 JOIN 是持久的** —— 伺服器重啟、dev HMR、或任何讓記憶體歸零的事件之後：
+ *
+ *      - 前端仍顯示「已接手」（它讀的是平台詳情的 `is_joined`）
+ *      - Copilot 面板照常展開並跑分析（presence 心跳帶著 `joined: true` 抵達，
+ *        004 的 `recoverColdStart()` 據此補跑）
+ *      - **但知識庫快查會回 403「需先加入對話」**
+ *
+ *    三者對「有沒有 JOIN」給出不同答案，而唯一會報錯的是最後那個。客服看到的是
+ *    「面板明明開著、分析明明在跑，為什麼說我沒加入」，唯一的復原方式是 LEAVE 再 JOIN。
+ *    2026-08-29 由使用者在真實環境回報。這與 004 修掉的冷啟動復原缺口是**同一個家族**：
+ *    平台的持久狀態與我方的記憶體狀態不同步。
+ *
+ * ⚠️ **MUST NOT 改成信任前端傳來的 `joined` 旗標。** FR-025 的門檻是伺服器端的授權判斷，
+ *    改用用戶端自陳等於讓任何人都能繞過它。這裡用的是**該客服自己的 token** 去問平台，
+ *    拿到的 `is_joined` 才是「我有沒有 JOIN」的權威答案（見 `loadConversationContext`）。
+ *
+ * ⚠️ 回填是刻意的：不回填的話，每一次查詢都要多打一次平台 API。
+ *    回填後只有重啟後的第一次查詢付這個成本。
+ */
+export async function isViewerJoined(
+  store: StateStore,
+  client: ImbraceClient,
+  orgId: string,
+  operatorId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const joined = await store.listJoinedConversations(operatorId)
+  if (joined.includes(conversationId)) return true
+
+  const ctx = await loadConversationContext(client, orgId, conversationId)
+  if (!ctx?.viewerJoined) return false
+
+  await store.addJoinedConversation(operatorId, conversationId)
+  return true
 }
 
 /**

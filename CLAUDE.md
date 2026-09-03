@@ -12,7 +12,9 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 |---|---|
 | `docs/ARCHITECTURE.md` | 架構決策與**所有平台實測結論**。1600+ 行，用章節號索引 |
 | `docs/CONSTITUTION.md` | 程式碼約束（九條憲法）＋命名慣例＋修憲流程。寫 code 前必讀。條號是穩定介面，程式碼註解直接引用 |
-| `docs/IMBRACE_QUESTIONS.md` | 待向 iMBrace 確認的清單。⚠️ **唯一會離開這個 repo 的文件** |
+| `docs/IMBRACE_QUESTIONS.md` | 待向 iMBrace 確認的清單。⚠️ **會離開這個 repo** |
+| `docs/DESIGN_FEEDBACK.md` | 給 Design 的畫布回饋（實作刻意偏離畫布之處＋理由）。⚠️ **會離開這個 repo** |
+| `docs/AGENT_PROMPTS.md` | 四個 iMBrace agent 的 system prompt 與模型**快照**。⚠️ 生成物，改它不會改變 agent 行為；用 `npm run spike:agent-prompts` 維護與比對 |
 | `docs/PLATFORM_CAPABILITY.md`、`docs/SDK_FINDINGS.md` | 平台能力與 SDK 的實測記錄 |
 | `docs/DESIGN_TOKENS.md` | 設計規格。⚠️ 衍生自 Claude Design 畫布，可能與畫布脫鉤 |
 | `scripts/spike/out/` | 實測原始產出。**結論有疑慮時以此為準，不以文件敘述為準** |
@@ -22,6 +24,18 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 正典文件若要引用其中的結論，**必須把結論本身寫進正典文件**（用自己的措辭重述），而不是連過去。
 否則換一台機器、換一個協作者 clone 這個 repo 時，正典文件裡的連結會全部指向不存在的檔案——
 這個問題已經在三份正典文件裡發生過一次，2026-08-26 才清乾淨。
+
+## 溝通語言
+
+- 與使用者的**對話輸出一律用繁體中文**：回報成果、說明、詢問問題、摘要都用繁體中文。
+- 技術識別項照原文，不翻譯：程式碼、指令、檔名/路徑（`server/api/**`、`shared/types/copilot.ts`）、
+  型別與欄位名（`mode`、`status`、`conversationId`、`teamConversationId`）、
+  受控字彙值（`manual`／`hybrid`／`automation`、`analyzing`／`retrying`／`ready`／`error`）、
+  Conventional Commits 前綴（`feat`、`fix`、`chore`、`docs`）、
+  API／憑證名稱（`IMBRACE_API_KEY`、`accessToken`、`SESSION_SECRET`）、
+  既有英文術語（JOIN、LEAVE、webhook、SSE、sparkline、debounce、provider、refcount）。
+- 規格文件（`spec.md`、`plan.md`、`tasks.md` 等 Spec Kit 產出）與 UI 文案（i18n）本身也以繁體中文撰寫，
+  技術名詞比照上一點保留原文。
 
 ## ⚠️ 正典文件修改後，必須 grep 舊說法（不限於實測結論）
 
@@ -45,11 +59,11 @@ grep -rln "<被撤銷方案的名稱/端點>" docs/   # 例：撤銷 ai.embed() 
 
 完整說明見 `docs/ARCHITECTURE.md` 附錄「推翻既有結論時的必要步驟」。
 
-> **`IMBRACE_QUESTIONS.md` 要特別小心** —— 它會被直接轉貼給 iMBrace。
-> 內容過期不只是不準確，而是浪費對方時間並稀釋其他真正待答問題。
+> **`IMBRACE_QUESTIONS.md` 與 `DESIGN_FEEDBACK.md` 要特別小心** —— 兩者都會被直接轉貼出去
+> （前者給 iMBrace、後者給 Design）。內容過期不只是不準確，而是浪費對方時間並稀釋其他真正待答的項目。
 > 自行解決的問題要**明確撤回並附上解法**，不是默默刪掉（對方可能已經在查了）。
 
-## ⚠️ 三個會「靜默失效」的地雷
+## ⚠️ 四個會「靜默失效」的地雷
 
 以下都**不會報錯、不會有型別錯誤**，只會安靜地做錯事。動到相關區域前務必先讀章節。
 
@@ -60,6 +74,16 @@ grep -rln "<被撤銷方案的名稱/端點>" docs/   # 例：撤銷 ai.embed() 
 3. **SDK 的型別與實際 API 不一致**（欄位名不同、必填標錯、參數未宣告）。
    照型別寫會 400 或 401，而錯誤訊息無法反推原因。
    所有繞道一律關在 `server/services/imbrace.ts` 的防腐層，**不得散落到 route**。
+4. **四個 agent 的 system prompt 與模型都在 iMBrace 後台，不在這個 repo 裡** ——
+   被改掉不會有 commit、不會有型別錯誤，只會安靜地改變摘要的形狀、情緒的刻度、
+   建議卡的引用規則。**動 AI 路徑或判讀 AI 相關量測數字前，先跑 `npm run spike:agent-prompts`**
+   （約 1 秒），它會把後台現況與 `docs/AGENT_PROMPTS.md` 的快照逐字元比對。
+   → **§11 「agent 的 system prompt 也不在版本控制裡」**
+
+   ⚠️ 這一條是 2026-09-02 補的，起因是**沒有它就得靠量測數字反推 prompt 有沒有被改**：
+   情緒 24-B 的批次偏離由 3.6 分升到 11.7 分，被誤讀成絕對分數帶失效，於是花三分鐘重跑
+   spike 24，還把錯誤的推測寫進了正典文件。實際 prompt 完好，`git diff` 一秒就能證明。
+   **量測數字是間接證據，快照 diff 是直接證據；有直接證據時不要用間接的。**
 
 判斷「文件說的」與「平台實際行為」哪個對時：**跑 spike 實測，不要推理**。
 `scripts/spike/` 下有現成的探測腳本，`npm run spike:*`。
@@ -83,15 +107,28 @@ npm run smoke:realtime  # 兩位客服、兩條 SSE：M1 的「4 秒內看到」
 機器負載很重時它可能是唯一會浮動的檢查 —— 但失敗是真的訊號，
 不要因為「偶爾紅」就放寬門檻，那個數字是驗收標準本身。
 
+## Commit 規範
+
+- 沿用 Conventional Commits 前綴（`feat`／`fix`／`build`／`ci`／`chore`／`docs`／`test`／`refactor`…），
+  **前綴後的描述一律用繁體中文**；可帶 scope，例如 spec 編號：`feat(002): ...`。
+- **type 選用**：`feat` 交付能力增量；`fix` 修正錯誤行為；`build` 建置／工具／相依設定
+  （`package.json`、`tsconfig`、`nuxt.config.ts`…）；`ci` CI 設定；`chore` 其餘雜項與純鷹架；
+  `docs`／`test`／`refactor` 依字面。
+- 內文說明**為什麼**，不只是改了什麼 —— 這個專案的多數 commit 是在記錄「某個假設被實測推翻」，
+  那個推翻的理由才是價值所在（見上方「正典文件修改後」一節）。
+- **預設只在使用者要求時才 commit**；分類與建立交給 `/commit-split`（可用 `--exclude` 讓指定檔案留在 worktree）。
+- 跑 `/speckit-implement` 或 `/speckit-analyze` 時例外：**邊實作邊在 `tasks.md` 或 checklist 逐一勾選完成項目**
+  （例如完成 T010 就打勾 `[x]`），每個 Phase 結束後用 `/commit-split` 分類並建立 commit，不需逐次徵詢；
+  勾選變更併入該 phase 收尾的 commit，讓 tasks.md 與 git 歷史對齊。範圍夠大的 phase 可依開發大項拆成
+  多個 commit，但避免拆得過度零碎。
+
 ## 協作注意
 
 - **可能有另一個 Claude session 正在編輯同一份文件** —— 不限於 `docs/DESIGN_TOKENS.md`，
   `docs/ARCHITECTURE.md` 同樣會被跨 session 修正（例如發現文件內部不同步、
   或畫布內容有更新時）。`git add -A` 前先 `git status` 看一眼，
   避免把對方進行中的修改掃進自己的 commit。
-- commit 訊息用 Conventional Commits，內文說明**為什麼**，不只是改了什麼 ——
-  這個專案的多數 commit 是在記錄「某個假設被實測推翻」，那個推翻的理由才是價值所在。
-- 里程碑完成打 tag（`m0-done`、`m1-ready`）。**tag 一旦建立就不移動。**
+- 里程碑完成打 tag（`m0-done`、`m1-done`）。**tag 一旦建立就不移動。**
 
   ⚠️ **「tag 落後 HEAD」不是需要修正的錯誤，那是它的正常狀態，也正是它的用途** ——
   它標記的是「當時通過驗收」這個歷史事實，本來就會隨後續 commit 越落越後。

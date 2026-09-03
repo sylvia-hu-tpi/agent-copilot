@@ -20,36 +20,41 @@
  *   它不是「有人在看」，只是一根管線。
  */
 
+import { controlFromMode } from '../../shared/types/conversation.js'
 import type { Message } from '../../shared/types/conversation.js'
 import type { CopilotEvent } from '../../shared/types/events.js'
 import type { Unsubscribe, WatchPriority } from '../sources/types.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
 import type { CopilotSession } from '../state/types.js'
+import { checkSuggestionsSuperseded, scheduleIncremental } from './copilot-analysis.js'
 import { useCopilotRuntime } from './copilot-runtime.js'
 import { inferFromMessages } from './presence.js'
+import {
+  acquirePipeline,
+  attachWatcher,
+  detachWatcher,
+  releasePipelineRef,
+} from './session-registry.js'
+
+// ⚠️ 計數本身（`session.watchers` 與 `pipeline.refs`）住在 `session-registry.ts`，不在本檔 ——
+//    本檔 import `copilot-runtime.ts`，vitest／tsc 碰不得（理由見該檔檔頭）。FR-004 的等式
+//    `watchers.length === pipeline.refs` 由 `test/connection-counting.test.ts` 對那個模組驗；
+//    監控用的 `pipelineCount()` 也從那裡 import，本檔不再 re-export（單一出處）。
 
 export interface WatchRequest {
   conversationId: string
   orgId: string
   operator: { id: string, name: string }
+  /**
+   * 這條 SSE 連線的 server 端識別（`stream.get.ts` 以 `crypto.randomUUID()` 產生）——
+   * `session.watchers` 與 refcount 的單位（specs/005-m2-residual-defects research.md #1）。
+   * ⚠️ MUST NOT 傳前端的 `clientId`：複製分頁會共用它。
+   */
+  connectionId: string
   priority: WatchPriority
   /** 已 JOIN 的對話輪詢較密（§9.2）—— 撞單風險只存在於已 JOIN 的對話 */
   joined: boolean
-}
-
-interface Pipeline {
-  refs: number
-  unsubscribePublisher: Unsubscribe
-}
-
-const KEY = Symbol.for('agent-copilot.session-pipelines')
-type Global = typeof globalThis & { [KEY]?: Map<string, Pipeline> }
-
-function pipelines(): Map<string, Pipeline> {
-  const g = globalThis as Global
-  if (!g[KEY]) g[KEY] = new Map()
-  return g[KEY]
 }
 
 /**
@@ -57,14 +62,27 @@ function pipelines(): Map<string, Pipeline> {
  *
  * @returns 停止檢視的函式。**必須**在 SSE 連線關閉時呼叫 ——
  *          沒呼叫的話該對話會被永遠輪詢下去（憲法 6.1「訂閱數歸零即停止」）。
+ *          只解除**這一條連線**的那一筆；同一位客服的其他分頁完全不受影響（FR-003、I-8）。
  */
 export async function watchConversation(req: WatchRequest): Promise<Unsubscribe> {
-  const { conversationId, orgId, operator } = req
+  const { conversationId, orgId, operator, connectionId } = req
   const runtime = useCopilotRuntime(orgId)
-  const session = await upsertSession(conversationId, operator.id)
-  const isResume = session.watchers.length > 1
 
-  ensurePipeline(conversationId, orgId, operator)
+  /**
+   * ⚠️ `isResume` 的語意在 005 改變了（data-model.md §2）：現在是「這個對話在我 attach 之前
+   *    已經有人在看」，不再區分那個人是不是自己 —— 同一位客服的第二個分頁由 `join` 變成 `resume`。
+   *    `session.opened` 的 `reason` 目前無前端消費者，這裡只是如實反映連線計數。
+   */
+  const { isResume } = await attachWatcher(conversationId, { operatorId: operator.id, connectionId })
+
+  // ① publisher：整個對話只有這一份（0→1 時才建立），priority 取最不積極值
+  acquirePipeline(conversationId, () => runtime.messageSource.subscribe(
+    conversationId,
+    (messages) => {
+      void onMessages(conversationId, orgId, operator.id, messages)
+    },
+    { priority: 'background', joined: false },
+  ))
 
   // ② watcher：只帶頻率資訊，不做事
   const unsubscribeWatcher = runtime.messageSource.subscribe(
@@ -84,7 +102,7 @@ export async function watchConversation(req: WatchRequest): Promise<Unsubscribe>
     if (done) return
     done = true
     unsubscribeWatcher()
-    void releasePipeline(conversationId, operator.id)
+    void releasePipeline(conversationId, connectionId)
   }
 }
 
@@ -115,56 +133,20 @@ export async function advanceAnchor(conversationId: string, lastMessageId: strin
   await store.setCopilotSession({ ...session, lastMessageId, updatedAt: Date.now() })
 }
 
-/** 監控用（§17）與測試用 */
-export function pipelineCount(): number {
-  return pipelines().size
-}
-
 // ── 內部 ────────────────────────────────────────────────────────────────
 
-function ensurePipeline(
-  conversationId: string,
-  orgId: string,
-  operator: { id: string },
-): void {
-  const existing = pipelines().get(conversationId)
-  if (existing) {
-    existing.refs++
-    return
-  }
+/**
+ * 一條連線關閉（或主動 unwatch）時的清理：`watchers` 與 refcount 各減這一筆（I-4 在完成後成立）。
+ *
+ * ⚠️ 這是「關掉分頁」那條路。「主動離開對話」走 `leave.post.ts` → `removeJoinedConversation()`
+ *    ＋ 廣播 `control.updated`，**完全不經這裡**（research.md #6）—— 兩條路 MUST NOT 統一：
+ *    離開是關於「這個人」的決定（該客服所有分頁一起消失，003 T032a），關線只是少了一條連線。
+ *    `test/contract-guards.test.ts` 守著 `leave.post.ts` 不得出現 `releasePipeline`／`connectionId`。
+ */
+async function releasePipeline(conversationId: string, connectionId: string): Promise<void> {
+  await detachWatcher(conversationId, connectionId)
 
-  const runtime = useCopilotRuntime(orgId)
-
-  // ① publisher：整個對話只有這一份，priority 取最不積極值
-  const unsubscribePublisher = runtime.messageSource.subscribe(
-    conversationId,
-    (messages) => {
-      void onMessages(conversationId, orgId, operator.id, messages)
-    },
-    { priority: 'background', joined: false },
-  )
-
-  pipelines().set(conversationId, { refs: 1, unsubscribePublisher })
-}
-
-async function releasePipeline(conversationId: string, operatorId: string): Promise<void> {
-  const store = useStateStore()
-  const session = await store.getCopilotSession(conversationId)
-
-  if (session) {
-    const watchers = session.watchers.filter(id => id !== operatorId)
-    if (watchers.length === 0) await store.deleteCopilotSession(conversationId)
-    else await store.setCopilotSession({ ...session, watchers, updatedAt: Date.now() })
-  }
-
-  const pipeline = pipelines().get(conversationId)
-  if (!pipeline) return
-
-  pipeline.refs--
-  if (pipeline.refs > 0) return
-
-  pipeline.unsubscribePublisher()
-  pipelines().delete(conversationId)
+  if (releasePipelineRef(conversationId) !== 'closed') return
 
   await publish(conversationTopic(conversationId), {
     type: 'session.closed',
@@ -201,39 +183,29 @@ async function onMessages(
     excludeOperatorId: viewerOperatorId,
   })
 
+  // 情緒／建議卡增量觸發（specs/001-sentiment-panel FR-004、FR-005；
+  // specs/002-suggestion-knowledge-search T019、T021）——
+  // ⚠️ 只有客戶發言才觸發重新分析；客服自己送出的訊息 MUST NOT 觸發（FR-005）。
+  //    debounce（1 秒聚合）由 scheduleIncremental() 內部處理，這裡只負責過濾。
+  const customerMessages = messages.filter(m => m.sender.type === 'customer')
+  if (customerMessages.length > 0) {
+    // ⚠️ 兩者刻意在同一處一次算齊：priority 取自 messageSource（§9.2 聚合規則同一份），
+    //    aiReplies MUST 一律以 controlFromMode() 推導，MUST NOT 寫成 mode === 'hybrid'
+    //    （FR-016，§10.2／§10.6 記錄過的靜默失效地雷）。
+    const runtime = useCopilotRuntime(orgId)
+    const priority = runtime.messageSource.getPriority(conversationId)
+    const aiReplies = controlFromMode(runtime.listPoller.latest(conversationId)?.mode).aiReplies
+    scheduleIncremental(conversationId, customerMessages, priority, aiReplies)
+  }
+
+  // FR-015：同事回覆或 AI 自動回覆抵達時，檢查既有建議卡是否已被搶答（US4 AC#2）
+  void checkSuggestionsSuperseded(conversationId, messages)
+
   await publish(conversationTopic(conversationId), {
     type: 'messages.appended',
     conversationId,
     messages,
   })
-}
-
-async function upsertSession(
-  conversationId: string,
-  operatorId: string,
-): Promise<CopilotSession> {
-  const store = useStateStore()
-  const now = Date.now()
-  const existing = await store.getCopilotSession(conversationId)
-
-  const session: CopilotSession = existing
-    ? {
-        ...existing,
-        watchers: existing.watchers.includes(operatorId)
-          ? existing.watchers
-          : [...existing.watchers, operatorId],
-        updatedAt: now,
-      }
-    : {
-        conversationId,
-        watchers: [operatorId],
-        lastMessageId: null,
-        createdAt: now,
-        updatedAt: now,
-      }
-
-  await store.setCopilotSession(session)
-  return session
 }
 
 async function publish(topic: string, event: CopilotEvent): Promise<void> {

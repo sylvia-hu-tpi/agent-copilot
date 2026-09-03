@@ -6,7 +6,7 @@
  *    因此每一種變動都要有自己的測試。
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   ConversationListPoller,
   LIST_INTERVAL_BACKGROUND_MS,
@@ -119,6 +119,92 @@ describe('頻率與韌性', () => {
   it('有人前景在線 3 秒，全部背景時降到 30 秒（§9.2）', () => {
     expect(makePoller([[]], true).intervalMs()).toBe(LIST_INTERVAL_FOREGROUND_MS)
     expect(makePoller([[]], false).intervalMs()).toBe(LIST_INTERVAL_BACKGROUND_MS)
+  })
+
+  /**
+   * ⚠️ 全程用假計時器，且**在 start() 之前就切換** —— 迴圈的計時器是在 start() 當下排的，
+   *    先跑真計時器再切假的，advanceTimersByTime 對那支已存在的計時器完全無效，
+   *    測試會綠得毫無意義（2026-08-29 第一版就是這樣，改寫於此以免再犯）。
+   */
+  it('第一拍排在無人連線時 → 有人上線後 wake() 讓它回到前景頻率（2026-08-29 實測缺陷）', async () => {
+    let foreground = false
+    let polls = 0
+    const poller = new ConversationListPoller({
+      fetchAll: async () => { polls++; return [] },
+      hasForeground: () => foreground,
+    })
+
+    vi.useFakeTimers()
+    try {
+      poller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      // 第一拍是在「沒人連線」時跑的 —— 下一拍照 30 秒排
+      expect(polls).toBe(1)
+      expect(poller.intervalMs()).toBe(LIST_INTERVAL_BACKGROUND_MS)
+
+      // 反向對照：沒有 wake() 的話，3 秒過去仍然不會有第二拍
+      foreground = true
+      await vi.advanceTimersByTimeAsync(LIST_INTERVAL_FOREGROUND_MS + 50)
+      expect(polls).toBe(1)
+
+      // 有人上線 → wake() 重算「下一拍本來該在什麼時候」。此刻已經超過那個時間，
+      // 所以是立刻補跑，而不是再等一個完整間隔
+      poller.wake()
+      await vi.advanceTimersByTimeAsync(50)
+      expect(polls).toBe(2)
+    }
+    finally {
+      poller.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('wake() 不會讓每一次心跳都多打一次清單（已排得夠早就不動）', async () => {
+    let polls = 0
+    const poller = new ConversationListPoller({
+      fetchAll: async () => { polls++; return [] },
+      hasForeground: () => true,
+    })
+
+    vi.useFakeTimers()
+    try {
+      poller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(polls).toBe(1)
+
+      // 第一拍就是在前景排的 —— 下一拍已經是 3 秒，再怎麼叫醒也不該提前
+      for (let i = 0; i < 5; i++) poller.wake()
+      await vi.advanceTimersByTimeAsync(LIST_INTERVAL_FOREGROUND_MS - 100)
+      expect(polls).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(200)
+      expect(polls).toBe(2)
+    }
+    finally {
+      poller.stop()
+      vi.useRealTimers()
+    }
+  })
+
+  it('停掉之後 wake() 不得把迴圈救活', async () => {
+    let polls = 0
+    const poller = new ConversationListPoller({
+      fetchAll: async () => { polls++; return [] },
+      hasForeground: () => true,
+    })
+
+    vi.useFakeTimers()
+    try {
+      poller.start()
+      await vi.advanceTimersByTimeAsync(0)
+      poller.stop()
+      poller.wake()
+      await vi.advanceTimersByTimeAsync(LIST_INTERVAL_BACKGROUND_MS * 2)
+      expect(polls).toBe(1)
+    }
+    finally {
+      vi.useRealTimers()
+    }
   })
 
   it('取數失敗不拋出、不清空快取 —— 一次網路抖動不該讓迴圈死掉', async () => {

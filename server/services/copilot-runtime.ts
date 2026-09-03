@@ -24,12 +24,15 @@ import { fetchLatest } from '../sources/message-fetch.js'
 import { toConversation, unwrapPaged } from '../sources/mappers.js'
 import { PollingMessageSource } from '../sources/polling-message-source.js'
 import { imbraceClientForPolling } from '../utils/imbrace-client.js'
+import { searchConversations } from './imbrace.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic, organizationTopic } from '../state/types.js'
 import { resolveBusinessUnitId } from './business-unit.js'
+import { setHistoryResolver, setJoinedResolver } from './copilot-analysis.js'
 import {
   borrowCredential,
   hasForegroundOperator,
+  onCredentialUpgrade,
 } from './credentials.js'
 import { snapshotOf } from './presence.js'
 
@@ -63,6 +66,54 @@ export function useCopilotRuntime(orgId: string): CopilotRuntime {
   return runtime
 }
 
+/**
+ * 該對話目前是否仍有任何人 JOIN（我方系統內）—— specs/003-analysis-trigger-policy 決策 3。
+ *
+ * ⚠️ 不需要 `orgId`：一個對話只屬於一個組織，其餘組織的 `messageSource` 對它沒有 entry
+ *    而回傳 `false`，因此「任一組織說 true 即為 true」與「先找出正確的組織再問」等價，
+ *    但不必把 orgId 一路穿過 `copilot-analysis.ts` 的每一個入口。
+ */
+export function isConversationJoined(conversationId: string): boolean {
+  for (const runtime of runtimes().values()) {
+    if (runtime.messageSource.isJoined(conversationId)) return true
+  }
+  return false
+}
+
+/**
+ * ⚠️ **裝配點，MUST NOT 刪除。** `copilot-analysis.ts` 需要上面那個判斷來守住 FR-012 的
+ *    JOIN 界線，但它**不能**反向 import 本檔：本檔經 `server/utils/imbrace-client.ts`
+ *    用到 Nitro auto-import 的 `useRuntimeConfig()`，一旦被 `test/` 間接拉進型別圖，
+ *    `tsconfig.scripts.json` 會整份紅（該檔開頭已把這個陷阱寫成警告）。
+ *    因此相依方向反過來，由這裡在載入時注入。
+ *
+ *    這一行被刪掉時解析器會退回「一律視為已 JOIN」，症狀是 LEAVE 之後分析照跑、
+ *    面板事件照送 —— **不報錯、不會有型別錯誤**。`test/contract-guards.test.ts`
+ *    因此直接掃描本檔是否仍有這行呼叫。
+ */
+setJoinedResolver(isConversationJoined)
+
+/**
+ * ⚠️ **裝配點，MUST NOT 刪除**（specs/005-m2-residual-defects research.md #10）。恢復補算要撈缺口，
+ *    歷史只有 `messageSource.fetchSince()` 拿得到，而管線不能反向 import 本檔（理由同上）。
+ *    這一行被刪掉時解析器退回「回空陣列＝視為無缺口」：缺口永遠補不到、旗標卻被清掉，
+ *    US2 整個靜默失效而單元測試全綠。`test/contract-guards.test.ts` 因此掃描本檔是否仍有這行。
+ *
+ * 一個對話只屬於一個組織：補算只在仍有人 JOIN 時發生（`resolveJoined` 先擋），
+ * 因此以 `messageSource.isJoined()` 找出正確的 runtime；找不到時（例如只有一個組織在跑）
+ * 退回唯一的那個。
+ *
+ * ⚠️ **仍找不到時 MUST 拋錯，MUST NOT 回空陣列**：呼叫端把空陣列當成「沒有缺口」而清掉
+ *    `sentimentGap`，一次多組織下的 LEAVE 競態就會把缺口永久抹掉而不報錯；拋錯則走它的
+ *    降級路徑（這一輪不補、旗標保留、下一次自然觸發再試）。
+ */
+setHistoryResolver(async (conversationId, sinceMessageId) => {
+  const all = [...runtimes().values()]
+  const owner = all.find(r => r.messageSource.isJoined(conversationId)) ?? (all.length === 1 ? all[0] : undefined)
+  if (!owner) throw new Error(`找不到擁有對話 ${conversationId} 的 runtime（${all.length} 個組織在跑）`)
+  return owner.messageSource.fetchSince(conversationId, sinceMessageId)
+})
+
 /** 測試與程序關閉用 */
 export async function disposeAllRuntimes(): Promise<void> {
   const all = [...runtimes().values()]
@@ -85,6 +136,16 @@ function createRuntime(orgId: string): CopilotRuntime {
     store,
     isListCovered: convId => listPoller.isListCovered(convId),
     onError: (convId, err) => logPollFailure('messages', convId, err),
+  })
+
+  /**
+   * ⚠️ **裝配點，MUST NOT 刪除。** 第一層的間隔在排下一拍時就固定了，而這個 runtime
+   *    很可能在還沒有任何人連線時就被建立（JOIN 這類請求也會建），那一拍會照 30 秒排。
+   *    少了這行，客服上線或切回前景後仍要等滿 30 秒第一層才會醒 —— 不報錯、
+   *    只是側欄與 mode 變動安靜地遲到。詳見 `ConversationListPoller.wake()`。
+   */
+  const offCredentialUpgrade = onCredentialUpgrade((changedOrgId) => {
+    if (changedOrgId === orgId) listPoller.wake()
   })
 
   const offChange = listPoller.onChange((change) => {
@@ -127,6 +188,7 @@ function createRuntime(orgId: string): CopilotRuntime {
     listPoller,
     messageSource,
     dispose: async () => {
+      offCredentialUpgrade()
       offChange()
       listPoller.stop()
       await messageSource.dispose()
@@ -148,7 +210,10 @@ async function publish(
  * ⚠️ 用 `search()` 而非 `list()`：後者沒有 business unit scope 時**永遠回空陣列且不報錯**
  *    —— 「症狀看起來像沒資料、實際是查詢方式錯」的典型坑。
  *
- * TODO(M2)：對話數超過 LIST_PAGE_SIZE 的組織需要分頁。
+ * TODO(M4)：對話數超過 LIST_PAGE_SIZE 的組織需要分頁。
+ *   （2026-09-01 使用者裁定歸屬 M4；先前掛著 `TODO(M2)` 卻不在任何一份驗收清單裡。
+ *    M4 的驗收條文刻意寫成二擇一——webhook 到位使第一層不再負責偵測新訊息，
+ *    **或**這裡取得分頁能力——好讓它不依賴外部規格也關得掉。見 ARCHITECTURE §18 M4。）
  * 目前刻意不做 —— 沒有實際資料前不知道該用 skip 分頁還是改查 `_outstanding`，
  * 兩者的成本模型差很多。真的超過時第一層會安靜地漏掉尾端的對話，
  * 因此 `metrics().tracked` 貼到上限即為警訊（§17）。
@@ -160,7 +225,8 @@ async function fetchConversationList(orgId: string) {
 
   const client = imbraceClientForPolling(cred)
   const businessUnitId = await resolveBusinessUnitId(client, orgId)
-  const res = await client.conversations.search({
+  // ⚠️ 走防腐層，不直接呼叫 SDK —— 分頁參數名與排序的實測結論都記在那裡
+  const res = await searchConversations(client, {
     businessUnitId,
     q: '',
     limit: LIST_PAGE_SIZE,

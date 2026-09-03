@@ -7,8 +7,8 @@
     "cancel": "取消",
     "refresh": "重新整理",
     "loading": "載入中…",
-    "search": "搜尋對話…",
-    "loadMore": "載入更早的訊息",
+    "search": "搜尋客戶代號",
+    "loadMore": "載入較早的訊息",
     "justNow": "剛剛",
     "minutesAgo": "{n} 分鐘前",
     "hoursAgo": "{n} 小時前"
@@ -18,25 +18,47 @@
   },
   "sidebar": {
     "title": "對話",
-    "empty": "沒有符合的對話。",
     "loadFailed": "讀取對話清單失敗",
     "unread": "有新訊息",
+    "unreadLabel": "未讀",
+    "filter": "依狀態篩選",
+    "filterAll": "全部",
+    "loadMore": "載入更多對話…",
+    "shown": "顯示 {n} / {total}",
+    "shownOnly": "顯示 {n}",
+    "sortedBy": "依最新訊息排序",
+    "coverageLimit": "只列出最近 {n} 筆；更早的請用上方搜尋",
     "collapse": "收合側欄",
-    "expand": "展開側欄"
+    "expand": "展開側欄",
+    "collapseGroup": "收合{date}的對話",
+    "expandGroup": "展開{date}的對話",
+    "collapseGroupHint": "收合此日期區間",
+    "expandGroupHint": "展開此日期區間",
+    "emptyTitle": "找不到符合的對話",
+    "emptyHint": "客戶僅有代號，請輸入完整代號片段（例：GW4772）或清除篩選。",
+    "clearFilters": "清除搜尋與篩選"
   },
   "stream": {
     "connecting": "連線中…",
     "reconnecting": "連線中斷，重新連線中…",
     "resyncing": "正在補齊斷線期間的訊息…",
-    "offline": "即時更新已中斷。畫面上的內容可能不是最新的。"
+    "offline": "即時更新已中斷。畫面上的內容可能不是最新的。",
+    "connected": "已連線"
   },
   "presence": {
+    "inThisConversation": "在此對話中",
+    "youViewing": "你正在檢視",
+    "shortOthers": "你＋{n} 人",
+    "lastUpdated": "最後更新 {time}",
     "viewing": "正在檢視",
     "composing": "正在輸入…",
     "joined": "已加入",
     "repliedAgo": "{time}回覆過",
     "unknownName": "另一位同事",
     "unidentified": "有同事正在處理（無法確認身分）",
+    "youHere": "你在此對話中",
+    "someoneHere": "有客服在此",
+    "someoneHereHint": "有客服在此對話中 —— 平台不提供是誰，也分不出是不是你自己",
     "none": "沒有偵測到其他人",
     "sourceHint": "「回覆過」代表對方曾經發言，不代表現在還在線上。"
   },
@@ -49,35 +71,61 @@
     "automation": "全自動（唯讀）",
     "automationHint": "AI 自動回覆，所有人都無法手動送出訊息",
     "none": "尚未加入",
-    "sharedWarning": "⚠️ 模式是這個對話的共用設定，切換會影響所有人，包含在 iMBrace 官方介面工作的同事。",
+    "sharedWarning": "模式是這個對話的共用設定，切換會影響所有人，包含在 iMBrace 官方介面工作的同事。",
     "switching": "切換中…",
     "switchFailed": "切換模式失敗"
   },
   "conversation": {
-    "join": "加入對話",
-    "joining": "加入中…",
-    "leave": "離開",
+    "join": "接手對話",
+    "joining": "接手中…",
+    "joinModeLabel": "選擇接手方式",
+    "joinAsManual": "接手並停用 AI 自動回覆",
+    "joinAsManualHint": "之後由我回覆，AI 不再自動發話",
+    "joinAsHybrid": "接手但保留 AI 自動回覆",
+    "joinAsHybridHint": "AI 繼續自動回覆，我可隨時插話",
+    "leave": "離開對話",
     "leaving": "離開中…",
+    "close": "結案",
+    "closing": "結案中…",
+    "closeFailed": "結案失敗",
+    "exitHint": "離開＝僅退出不寫入 · 結案＝產生摘要供確認後寫入",
     "joinFailed": "加入對話失敗",
     "leaveFailed": "離開對話失敗",
     "empty": "這個對話還沒有訊息。",
     "loadFailed": "讀取訊息失敗",
     "notFound": "找不到這個對話",
-    "selectPrompt": "從左側選擇一個對話開始。",
-    "messageCount": "共 {n} 則訊息"
+    "createdAt": "建立於 {time}",
+    "messagesTotal": "訊息 {n} 則",
+    "messagesLoaded": "已載入 {n} 則",
+    "loadingMessages": "正在載入訊息…",
+    "dateToday": "{date}（今天）",
+    "dateYesterday": "{date}（昨天）",
+    "sentSecondsAgo": "{n} 秒前送出",
+    "sentMinutesAgo": "{n} 分鐘前送出",
+    "noneSelected": "尚未選擇對話",
+    "noneSelectedHintBefore": "從左側列表選擇一個對話開始處理。標記",
+    "noneSelectedHintAfter": "的對話代表客戶正在等待回覆，建議優先處理。",
+    "openOldestActive": "處理最舊的 active 對話",
+    "collapseHeader": "收合對話資訊列",
+    "expandHeader": "展開對話資訊列",
+    "jumpToLatest": "回到最新訊息"
   },
   "sender": {
     "customer": "客戶",
     "agent": "客服",
-    "ai": "AI",
+    "ai": "AI 自動回覆",
     "unknown": "未知來源",
-    "workflowInternal": "AI 內部訊息（客戶收不到）"
+    "workflowInternal": "AI 內部訊息（客戶收不到）",
+    "agentRole": "真人客服",
+    "agentRoleMine": "真人客服 · 你"
   },
   "attachment": {
-    "image": "圖片",
-    "pdf": "PDF",
-    "file": "檔案",
-    "noPreview": "（此版本尚無法預覽附件，僅顯示檔名）"
+    "desc": {
+      "image": "圖片 · 可預覽縮圖",
+      "pdf": "PDF · 檔名僅供辨識，無法預覽",
+      "file": "舊型附件 · 僅有檔名，無法預覽"
+    },
+    "download": "下載"
   },
   "composer": {
     "placeholder": "輸入回覆…",
@@ -87,19 +135,155 @@
     "sendFailed": "送出失敗",
     "hint": "Enter 送出，Shift + Enter 換行",
     "draftSaved": "草稿已保存",
-    "notJoined": "你尚未加入這個對話。加入後才能送出訊息。",
+    "blocked": "已攔截",
+    "notJoined": "尚未接手此對話，無法輸入回覆。請先點右上角「接手對話」。",
     "readonlyAutomation": "這個對話目前是「全自動（唯讀）」模式，任何人都無法送出訊息。",
     "locked": "{name} 已強制介入此對話。",
-    "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。"
+    "lockBoundary": "⚠️ 此鎖只在 AgentCopilot 內有效，擋不住直接使用 iMBrace 官方介面的同事。",
+    "initializing": "連線建立後才可輸入",
+    "resizeHint": "拖曳，或聚焦後用 ↑／↓、Home／End 調整輸入框高度",
+    "resizeLabel": "調整輸入框高度"
+  },
+  "copilot": {
+    "summary": {
+      "title": "對話摘要",
+      "tag": "AI 產生 · 接手前必讀",
+      "generatedAt": "產生於",
+      "regenerate": "重新產生",
+      "details": "詳細內容",
+      "errorTitle": "摘要產生失敗",
+      "errorHint": "其餘區塊不受影響，可直接閱讀完整對話紀錄。",
+      "empty": "尚無可分析內容",
+      "analyzing": "分析中…",
+      "updating": "更新中…",
+      "retrying": "重試中 ({attempt}/2)",
+      "error": "暫時無法分析",
+      "keyFacts": "已知事實",
+      "attempted": "已嘗試處理",
+      "openIssues": "尚未解決",
+      "advice": "建議行動",
+      "riskFlags": {
+        "churn": "流失風險",
+        "escalation": "需要升級",
+        "compliance": "合規疑慮",
+        "vip": "VIP 客戶",
+        "repeat_contact": "重複聯絡"
+      },
+      "detailsHint": "四段 · 掃完摘要後查",
+      "regenerateHint": "同一則訊息不會有不同結果，僅產生失敗時可重試",
+      "noBody": "本次未產生摘要正文，已改為預設展開詳細內容。",
+      "errorRetry": "重試"
+    },
+    "sentiment": {
+      "title": "客戶情緒提示",
+      "empty": "尚無可分析內容",
+      "analyzing": "分析中…",
+      "updating": "更新中…",
+      "retrying": "重試中 ({attempt}/2)",
+      "error": "暫時無法分析",
+      "rounds": "近 {n} 輪",
+      "attachmentMarker": "客戶傳送附件",
+      "singlePoint": "僅一次評分，尚不足以看出走勢",
+      "label": {
+        "calm": "平靜",
+        "neutral": "普通",
+        "concerned": "擔憂",
+        "frustrated": "挫折",
+        "angry": "生氣"
+      },
+      "alert": {
+        "frustrated": "客戶情緒：挫折",
+        "angry": "客戶情緒：生氣"
+      },
+      "scale": "情緒量表",
+      "scaleNow": "情緒量表，目前為「{label}」",
+      "axisRound": "第 {n} 輪",
+      "attachmentLegend": "附件"
+    },
+    "suggestion": {
+      "title": "AI 即時回覆建議",
+      "empty": "尚無資料",
+      "analyzing": "產生中…",
+      "updating": "更新中…",
+      "retrying": "重試中 ({attempt}/2)",
+      "error": "暫時無法產生建議",
+      "count": "本次回傳 {n} 則",
+      "readyEmpty": "本次未產生建議",
+      "insert": "一鍵帶入",
+      "scrollHint": "可捲動查看其餘建議",
+      "noKnowledgeRef": "未引用知識庫",
+      "noKnowledgeRefPending": "尚未引用知識庫",
+      "citationPending": "尚未引用知識庫・檢索中",
+      "citedUpdated": "已更新為有 SOP 依據的版本",
+      "confidence": "信心度 {value}%",
+      "tone": {
+        "apologetic": "致歉",
+        "informative": "說明",
+        "retention": "挽留",
+        "closing": "結案",
+        "escalating": "升級"
+      },
+      "supersededBy": {
+        "agent": "同事已回覆類似內容",
+        "ai": "AI 已回覆類似內容"
+      },
+      "rationale": "推薦理由：{text}",
+      "requiresData": "需補：{fields} — 帶入前請先填寫"
+    },
+    "knowledgeSearch": {
+      "title": "知識庫快查",
+      "placeholder": "用一句話問，例：發票補寄要多久",
+      "empty": "尚未輸入查詢",
+      "noResults": "查無相關結果",
+      "notJoined": "需先加入對話才能使用",
+      "degraded": "知識庫服務暫時無法使用",
+      "updatedAtUnknown": "更新日期未知",
+      "insert": "插入為回覆",
+      "expand": "展開全文",
+      "expandDisclaimer": "本次可取得的相關內容，可能未涵蓋完整文件",
+      "staleWarning": "已超過 12 個月未更新，引用前請確認"
+    },
+    "draftOverwrite": {
+      "message": "目前輸入框已有內容，套用後會覆蓋。",
+      "confirm": "覆蓋",
+      "cancel": "取消"
+    },
+    "block": {
+      "collapse": "收合「{title}」",
+      "expand": "展開「{title}」"
+    },
+    "retry": "重新分析",
+    "panelTitle": "COPILOT",
+    "subtitleLive": "即時輔助",
+    "subtitleAnalyzing": "分析中",
+    "collapse": "收合 Copilot 面板",
+    "expand": "展開 Copilot 面板",
+    "retryAll": "全部重試",
+    "retryAllHint": "重新產生所有失敗的區塊",
+    "collapsedLabel": "已收合"
   },
   "collision": {
-    "title": "有人搶先回覆了",
-    "byAgent": "{name} 已經回覆過客戶，你的內容可能重複。",
-    "byAi": "AI 已經自動回覆，請確認內容是否衝突。",
+    "title": "撞單攔截：客戶已在你打字期間收到回覆",
+    "byAgent": "{name} 已於 {time}（{ago}）送出「{preview}」。你的草稿尚未送出，直接送出可能造成重複或矛盾訊息。",
+    "byAi": "AI 自動回覆已於 {time}（{ago}）送出「{preview}」。你的草稿尚未送出，直接送出可能造成重複或矛盾訊息。",
     "unverified": "無法確認是否有人搶先回覆，請自行確認對話內容後再送出。",
     "theirMessage": "對方送出的內容",
-    "sendAnyway": "仍要送出",
-    "discard": "捨棄我的內容",
-    "review": "先看看"
+    "sendAnyway": "我已確認，仍要送出",
+    "discard": "捨棄草稿",
+    "review": "先看最新訊息",
+    "draftHeld": "草稿已保留 · 送出鍵已鎖定",
+    "secondsAgo": "{n} 秒前"
+  },
+  "layout": {
+    "resizeHint": "拖曳，或聚焦後用 ←／→、Home／End 調整寬度",
+    "resizeSidebar": "調整對話列表寬度",
+    "resizeCopilot": "調整 Copilot 面板寬度"
+  },
+  "auth": {
+    "logout": "登出",
+    "accountMenu": "帳號選單"
+  },
+  "account": {
+    "signedInAs": "已登入身分"
   }
 }

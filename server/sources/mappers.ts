@@ -39,7 +39,9 @@ import type {
  * 實測值域（stable 環境，2026-08-25）：
  *   con_…  客戶（contact）
  *   u_…    真人客服（user）
- *   pub_…  推測為 AI workflow —— ⚠️ 尚未由 iMBrace 確認，見 IMBRACE_QUESTIONS H-3b
+ *   pub_…  推測為 AI workflow —— ⚠️ 尚未由 iMBrace 確認，見 IMBRACE_QUESTIONS H-3c ③
+ *          （原 H-3b「pub_ 是否即代表 AI」已於 2026-08-29 撤回：後續分析顯示 pub_ 是
+ *           publisher 實體 id，該問法答不到我們要的東西，改由 H-3c 承接）
  *
  * ⚠️ 未知前綴一律歸為 'unknown'，**不可**預設為 'ai'。
  * 撞單防護寧可漏判也不能誤判：把同事誤判成 AI 會讓客服收到假警報，
@@ -248,6 +250,8 @@ export function toConversation(raw: SdkConversation): Conversation {
     /** §9.3.1 第一層輪詢的變動偵測依據。SDK 型別未宣告，實測存在（填充率 83%） */
     last_message_at?: string | null
     updated_at?: string | null
+    /** 畫布 §8.3 meta 列的「建立於 …」。SDK 型別未宣告，實測填充率 100% */
+    created_at?: string | null
   }
   // `tcu_` 開頭者才是 team_conversation 記錄 id（JOIN/LEAVE/mode 要用）；
   // 清單 payload 的 id 是對話 id，沒有 tcu → 維持 undefined
@@ -267,6 +271,7 @@ export function toConversation(raw: SdkConversation): Conversation {
       name: u.display_name,
     })),
     lastMessageAt: withConvId.last_message_at ?? undefined,
+    createdAt: withConvId.created_at ?? undefined,
     // ⚠️ 取 updated_at 優先於 timestamp：實測 JOIN／LEAVE／切換 mode 時
     //    只有 updated_at 會跳動，而 §9.3.1 的第一層輪詢正是靠它偵測狀態變動。
     updatedAt: withConvId.updated_at ?? raw.timestamp,

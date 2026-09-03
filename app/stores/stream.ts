@@ -19,6 +19,7 @@
 
 import { defineStore } from 'pinia'
 import type { CopilotEvent } from '#shared/types/events'
+import { CONNECTION_HEARTBEAT_MS } from '#shared/types/events'
 
 export type StreamStatus = 'idle' | 'connecting' | 'open' | 'reconnecting'
 
@@ -42,6 +43,21 @@ const RECONNECT_MAX_MS = 30_000
  *    那條路徑不存在，所以必須在這裡自己探測。
  */
 const SESSION_PROBE_AFTER_FAILURES = 2
+
+/**
+ * 探測**沒有得到確定答案**時，要再累積幾次失敗才重問一次。
+ *
+ * ⚠️ **2026-09-03 修**：原本是「一輪斷線只探測一次」的一次性旗標，而旗標在**發動探測之前**
+ *    就鎖上了。於是斷線當下若 server 正在重啟，探測拿到的是網路錯誤而非 401 →
+ *    `probeSession()` 直接返回 → 閂永遠鎖著。等 server 起來、`/api/stream` 因 session
+ *    已被清而回 401 時，`onerror` 雖然繼續累加失敗，**卻再也不會探測第二次** ——
+ *    分頁無限重試（退避上限 30 秒）卻**永遠不會導去登入頁**，只能手動重新整理才脫困。
+ *    2026-09-03 的 T058 手動驗收實際踩到：兩個分頁一起卡在「連線中斷，重新連線中…」。
+ * ⚠️ 但「不要每次重試都打一發 `/api/auth/me`」是刻意的約束（`test/nuxt/stream-store.test.ts`
+ *    有斷言），所以不是把閂拿掉，而是**改成會重新武裝的門檻**：問過一次而沒有定論，
+ *    就往後推這麼多次失敗再問。退避上限 30 秒，因此穩定狀態下約每 90 秒才探測一次。
+ */
+export const SESSION_PROBE_RETRY_EVERY_FAILURES = 3
 
 /**
  * 這個分頁的識別碼。
@@ -76,10 +92,28 @@ export const useStreamStore = defineStore('stream', () => {
 
   let source: EventSource | null = null
   let retryTimer: ReturnType<typeof setTimeout> | undefined
+  /**
+   * 連線層級的存活心跳（specs/005-m2-residual-defects FR-005a）。
+   *
+   * ⚠️ **刻意掛在這裡、不掛在 `useConversationView.ts`**：那支的 presence 心跳以「進入某個對話」
+   *    為前提（body 必填 `conversationId`），分頁開著但還沒點進任何對話時完全不送 ——
+   *    而那正是「憑證登記已存在、卻沒有任何心跳」的狀態。連線心跳必須與有沒有進入對話無關。
+   *    兩支心跳回答的是不同問題，MUST NOT 合併。
+   * ⚠️ 少了它，server 端的登記會在 45 秒後被 TTL 回收（FR-005a 的兜底），這個分頁就再也
+   *    收不到新訊息而畫面一切正常 —— 正是 US1 要修的那個症狀。心跳失敗一律靜默：
+   *    server 端的 upsert 會在下一拍把被剔除的登記重建回來。
+   */
+  let beatTimer: ReturnType<typeof setInterval> | undefined
   /** ⚠️ 已經連過至少一次 —— 用來區分「首次連線」與「重連」，只有後者要對帳 */
   let hasConnectedBefore = false
-  /** 這一輪斷線已經探測過 session，不必每次重試都打一次 /api/auth/me */
-  let sessionProbed = false
+  /**
+   * 下一次探測 session 的失敗次數門檻 —— 不必每次重試都打一次 `/api/auth/me`。
+   * ⚠️ 探測沒有定論時會**往後推**（而不是從此不再問），見
+   * `SESSION_PROBE_RETRY_EVERY_FAILURES` 的說明。
+   */
+  let nextProbeAtFailures = SESSION_PROBE_AFTER_FAILURES
+  /** 探測進行中 —— 避免同一輪重試把探測疊著送 */
+  let probeInFlight = false
 
   /** 即時更新是否可信。false 時 UI 必須明說畫面可能不是最新的（憲法 3.2） */
   const degraded = computed(() => status.value === 'reconnecting' && failures.value >= 2)
@@ -106,13 +140,14 @@ export const useStreamStore = defineStore('stream', () => {
     es.onopen = () => {
       status.value = 'open'
       failures.value = 0
+      startBeat()
       // ⚠️ 首次連線不對帳：此時還沒有任何對話被開啟，也沒有 lastMessageId 可比對。
       //    對帳只在「曾經連上、斷掉、又接回來」時才有意義。
       if (hasConnectedBefore) {
         for (const h of [...reconnectedHandlers]) h()
       }
       hasConnectedBefore = true
-      sessionProbed = false
+      nextProbeAtFailures = SESSION_PROBE_AFTER_FAILURES
     }
 
     es.onmessage = (raw: MessageEvent<string>) => {
@@ -142,9 +177,8 @@ export const useStreamStore = defineStore('stream', () => {
       failures.value++
       status.value = 'reconnecting'
 
-      // 斷線原因可能是 session 過期，而 onerror 分辨不出來 —— 主動確認一次
-      if (failures.value >= SESSION_PROBE_AFTER_FAILURES && !sessionProbed) {
-        sessionProbed = true
+      // 斷線原因可能是 session 過期，而 onerror 分辨不出來 —— 主動確認
+      if (failures.value >= nextProbeAtFailures && !probeInFlight) {
         void probeSession()
       }
 
@@ -158,19 +192,32 @@ export const useStreamStore = defineStore('stream', () => {
    *
    * ⚠️ 不可把「探測失敗」當成「已登出」：網路斷掉時這支請求本來就會失敗，
    *    那樣會把單純的網路抖動變成把客服踢出去，草稿與工作脈絡一起消失。
+   * ⚠️ **但也不可因為問不出結果就從此不再問**（2026-09-03 修）：沒有定論時
+   *    MUST 把門檻往後推、之後重問，否則「探測撞上 server 重啟」會讓分頁
+   *    永久卡在重連中而永遠發現不了 401。見 `SESSION_PROBE_RETRY_EVERY_FAILURES`。
    */
   async function probeSession(): Promise<void> {
+    probeInFlight = true
     try {
       await $fetch('/api/auth/me')
+      // 200：session 還在，這次斷線與登入狀態無關 —— 但它之後仍可能過期，所以只是往後推
+      nextProbeAtFailures = failures.value + SESSION_PROBE_RETRY_EVERY_FAILURES
     }
     catch (err) {
       const e = err as { statusCode?: number, response?: { status?: number } }
       const code = e?.statusCode ?? e?.response?.status
-      if (code !== 401) return
+      if (code !== 401) {
+        // 非 401：什麼都斷定不了。MUST NOT 登出，但 MUST 保留之後重問的機會
+        nextProbeAtFailures = failures.value + SESSION_PROBE_RETRY_EVERY_FAILURES
+        return
+      }
 
       disconnect()
       useAuthStore().invalidate()
       await navigateTo('/login')
+    }
+    finally {
+      probeInFlight = false
     }
   }
 
@@ -180,7 +227,26 @@ export const useStreamStore = defineStore('stream', () => {
     retryTimer = setTimeout(connect, delay)
   }
 
+  /** 每 `CONNECTION_HEARTBEAT_MS` 告訴 server「這條連線還在」—— 見 `beatTimer` 的說明 */
+  function startBeat(): void {
+    stopBeat()
+    beatTimer = setInterval(() => {
+      void $fetch('/api/connection/beat', {
+        method: 'POST',
+        body: { clientId: clientId.value },
+      }).catch(() => {
+        // 心跳失敗只代表這一拍沒送到；下一拍的 upsert 會把登記補回來。不打擾使用者。
+      })
+    }, CONNECTION_HEARTBEAT_MS)
+  }
+
+  function stopBeat(): void {
+    if (beatTimer) clearInterval(beatTimer)
+    beatTimer = undefined
+  }
+
   function teardownSource(): void {
+    stopBeat()
     if (!source) return
     source.onopen = null
     source.onmessage = null
@@ -195,7 +261,7 @@ export const useStreamStore = defineStore('stream', () => {
     teardownSource()
     status.value = 'idle'
     hasConnectedBefore = false
-    sessionProbed = false
+    nextProbeAtFailures = SESSION_PROBE_AFTER_FAILURES
     failures.value = 0
   }
 

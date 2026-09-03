@@ -51,13 +51,34 @@ function ago(at: string): string {
 function displayName(entry: PresenceEntry): string {
   return entry.operatorName || t('presence.unknownName')
 }
+
+/**
+ * 「最後更新 HH:MM:SS」（畫布 §8.3）。
+ *
+ * ⚠️ `PresenceSnapshot` 本身**沒有時間戳**，所以這裡記的是「我方最後一次收到
+ *    presence 更新的時刻」，不是伺服器產生快照的時刻。兩者在正常情況下差幾十毫秒，
+ *    但斷線重連時會差很多——這正是這一行存在的意義：它讓「這份資料有多新」看得見。
+ *    ⚠️ MUST NOT 改成 `new Date()` 即時渲染，那樣它永遠顯示現在時間、等於沒有資訊。
+ */
+const lastUpdatedAt = ref<Date | null>(null)
+watch(() => props.presence, () => { lastUpdatedAt.value = new Date() }, { immediate: true, deep: true })
+
+const lastUpdatedText = computed(() => (
+  lastUpdatedAt.value
+    ? t('presence.lastUpdated', {
+        time: lastUpdatedAt.value.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }),
+      })
+    : ''
+))
 </script>
 
 <template>
   <div
-    class="flex min-h-[30px] flex-wrap items-center gap-x-3 gap-y-1 px-4 py-1.5 text-[0.875rem]"
-    :style="{ color: 'var(--text-3)' }"
+    class="flex min-h-[34px] flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-1.5 text-[0.875rem]"
+    :style="{ color: 'var(--text-3)', background: 'var(--surface-2)', borderColor: 'var(--border)' }"
   >
+    <span class="ac-status-label shrink-0">{{ t('presence.inThisConversation') }}</span>
+
     <!-- ① 自家 SSE：確定在線 -->
     <span
       v-for="op in live"
@@ -96,7 +117,35 @@ function displayName(entry: PresenceEntry): string {
       {{ t('presence.unidentified') }}
     </span>
 
-    <!-- 空狀態：常態，不是錯誤。措辭刻意保守 -->
-    <span v-if="isEmpty" class="italic opacity-70">{{ t('presence.none') }}</span>
+    <!--
+      空狀態：常態，不是錯誤。措辭刻意保守。
+      ⚠️ **不採用畫布的「無人／未知」＋「presence 資料未提供」**（2026-08-29 使用者裁定保留實作）：
+         畫布把「沒有人」與「偵測不到」並列，而 §10.2 明訂我方無法區分這兩者，
+         寫成並列等於宣稱我們分得出來。實作只講偵測結果。
+    -->
+    <!--
+      ⚠️ 畫布 1c 的空狀態是「20px 虛線圓框 ＋ `user` icon ＋ 一般字」，不是斜體淡字。
+         斜體＋降透明度會讓它讀起來像「這裡壞了」，而空狀態是常態不是錯誤。
+    -->
+    <span v-if="isEmpty" class="flex items-center gap-1.5">
+      <span
+        class="flex size-5 shrink-0 items-center justify-center rounded-full border border-dashed"
+        :style="{ borderColor: 'var(--border-dash)' }"
+        aria-hidden="true"
+      >
+        <UIcon name="i-lucide-user" class="size-2.5" :style="{ color: 'var(--text-3)' }" />
+      </span>
+      {{ t('presence.none') }}
+    </span>
+
+    <span class="ml-auto" />
+
+    <!-- 自己 —— 畫布 §8.3 靠右恆常顯示。presence.operators 刻意排除自己，故這裡是靜態文字 -->
+    <span class="flex shrink-0 items-center gap-1.5" :style="{ color: 'var(--text-2)' }">
+      <UIcon name="i-lucide-eye" class="size-3 shrink-0" aria-hidden="true" />
+      {{ t('presence.youViewing') }}
+    </span>
+
+    <time v-if="lastUpdatedText" class="ac-mono shrink-0 text-[0.8125rem]">{{ lastUpdatedText }}</time>
   </div>
 </template>

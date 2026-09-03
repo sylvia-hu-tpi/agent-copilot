@@ -154,7 +154,9 @@ export interface ExchangeResult {
  *    而設定它的 `client.http` 在 SDK 中是 private。
  *
  *    因此這裡複製 selectOrganization 的前半段（setOrganizationId）再自行 exchange。
- *    **這個 cast 是整個專案唯一允許存取 SDK private 成員的地方** ——
+ *    **存取 SDK private 成員的 cast 全部關在本檔**（本函式的 `http.setOrganizationId`、
+ *    `searchConversations()` 的 `http.getFetch`／`v1`、`resolveAiClientUserId()` 的
+ *    `aiAgent.http`／`base`；2026-09-02 起不再是「唯一一處」，但仍是唯一一個檔案）——
  *    若 SDK 日後開放保留 refresh_token 的官方做法，只需改這一個函式。
  */
 export async function exchangeOrganizationToken(
@@ -375,6 +377,108 @@ export async function sendTextMessage(
     body as unknown as Parameters<ImbraceClient['messages']['send']>[0],
   )
   return res as unknown as Record<string, unknown>
+}
+
+/**
+ * 對話清單查詢 —— **必須走這支，不要直接呼叫 `client.conversations.search()`**。
+ *
+ * ⚠️⚠️ **SDK 宣告的分頁參數是 `skip`，但平台實際吃的是 `offset`。**
+ *    傳 `skip` 不會報錯、不會是 400 —— 平台回 200 並**原封送回第一頁**。
+ *    症狀因此是「載入更多按下去沒反應」，而不是任何一種錯誤。
+ *    2026-08-29 由 `npm run spike:list-order` 實測定位（探測 ②③④）：
+ *      skip / from / page / start / skip_count → 全部回傳與第一頁相同的內容
+ *      offset                                  → ✅ 精確的筆數位移
+ *    佐證：`offset=8&limit=8` 與全量的第 9–16 筆逐筆相符；
+ *          `offset=1&limit=3` 等於第 2–4 筆（確認是位移而非頁碼語意）。
+ *
+ * ⚠️ 排序：平台預設依 **`updated_at` 由新到舊**（同一支 spike，n=16，15 組比對全部成立）。
+ *    **不是** `last_message_at`（該欄位填充率僅 81%，遞減比例只有 67%）。
+ *    §9.3.1 第一層只取前 `LIST_PAGE_SIZE` 筆而不分頁，正是依賴這個排序 ——
+ *    有新訊息的對話會讓 `updated_at` 跳動而前移，因此落在取數視窗內。
+ *    ⚠️ 若平台日後改變預設排序，那個「只取前 N 筆」的安排會**安靜地失效**。
+ */
+export async function searchConversations(
+  client: ImbraceClient,
+  params: { businessUnitId: string, q: string, limit?: number, offset?: number },
+): Promise<unknown> {
+  const res = client.conversations as unknown as {
+    http: { getFetch(): typeof fetch }
+    v1: string
+  }
+  const url = new URL(`${res.v1}/team_conversations/_search`)
+  url.searchParams.set('business_unit_id', params.businessUnitId)
+  url.searchParams.set('type', 'text')
+  url.searchParams.set('q', params.q)
+  if (params.limit !== undefined) url.searchParams.set('limit', String(params.limit))
+  if (params.offset) url.searchParams.set('offset', String(params.offset))
+
+  const r = await res.http.getFetch()(url, { method: 'GET' })
+  if (!r.ok) throw new Error(`conversations.search 失敗：HTTP ${r.status}`)
+  return r.json()
+}
+
+// ── AI Agent 的 client user id（specs/005-m2-residual-defects FR-021，research.md #21）──
+//
+// ⚠️ SDK 的 `aiAgent.streamChat()` 在 `user_id` 缺席時會**先串行 await 一次**
+//    `POST /ai-agent/chat-client/auth/user` 取 id 才打 `/v2/chat`（`node_modules/@imbrace/sdk/dist/resources/ai-agent.js`）。
+//    每一次摘要、每一次情緒批次、每一次建議卡都多付一趟往返去查同一個固定值，實測 54ms
+//    （`npm run spike:userid`，並核對過多次取得的 id 一致 —— 快取的前提成立）。
+//
+// ⚠️ **這個 id 是 AI 服務的 client user id，與客服身分無關。** 填成客服的 `operatorId` 不會報錯，
+//    只會讓 AI 服務端的用量統計掛到錯的人身上。憲法 1.3 管的是寫入歸屬，本項不觸及該條，
+//    但這個註解 MUST 留在這裡。
+//
+// ⚠️ 直接複製 SDK 內部那一行的呼叫形狀（`POST`、無 body），不用 `client.aiAgent.getChatClientUser()`
+//    （它會多送一個 JSON body）—— 省下的必須是 `streamChat()` 實際付出的那一趟。
+//    存取 SDK 的 private `http`／`base` 是與 `exchangeOrganizationToken()` 同一類的繞道，關在本檔。
+
+const AI_USER_KEY = Symbol.for('agent-copilot.ai-client-user-id')
+type AiUserGlobal = typeof globalThis & { [AI_USER_KEY]?: Map<string, Promise<string>> }
+
+function aiUserCache(): Map<string, Promise<string>> {
+  const g = globalThis as AiUserGlobal
+  if (!g[AI_USER_KEY]) g[AI_USER_KEY] = new Map()
+  return g[AI_USER_KEY]
+}
+
+/**
+ * 取得（並以 process-local 快取）這個 client 對 AI Agent 服務的 user id。
+ *
+ * 快取鍵是 `aiAgent.base`（gateway 位址）—— AI provider 只用一個 API-key client，spike 19 已驗證
+ * 同一個 client 多次取得的 id 一致。取得失敗**不快取**（下一次再試），由呼叫端決定要不要退回
+ * 「不帶 `user_id`、讓 SDK 自己去查」的舊路徑。
+ *
+ * @throws SDK 內部結構變動（找不到 `aiAgent.http`／`base`）、HTTP 非 2xx、回應缺 `id`
+ */
+export async function resolveAiClientUserId(client: ImbraceClient): Promise<string> {
+  const agent = client.aiAgent as unknown as { http?: { getFetch?: () => typeof fetch }, base?: unknown }
+  if (typeof agent?.http?.getFetch !== 'function' || typeof agent.base !== 'string') {
+    // SDK 內部結構變動時要立刻炸開，而不是靜默退回舊路徑而讓 FR-021 無聲失效
+    throw new Error(
+      '@imbrace/sdk 內部結構已變更：找不到 client.aiAgent.http.getFetch／client.aiAgent.base。'
+      + '請重新確認 chat-client/auth/user 的呼叫形狀（見 scripts/spike/19-userid-roundtrip.ts）',
+    )
+  }
+  const key = agent.base
+  const cached = aiUserCache().get(key)
+  if (cached) return cached
+
+  const fetchFn = agent.http.getFetch()
+  const task = (async () => {
+    const res = await fetchFn(`${key}/chat-client/auth/user`, { method: 'POST' })
+    if (!res.ok) throw new Error(`chat-client/auth/user 失敗：HTTP ${res.status}`)
+    const data = await res.json() as { id?: unknown }
+    if (typeof data.id !== 'string' || !data.id) throw new Error('chat-client/auth/user 回應缺少 id')
+    return data.id
+  })()
+  aiUserCache().set(key, task)
+  task.catch(() => aiUserCache().delete(key))
+  return task
+}
+
+/** 測試用：清掉快取 */
+export function resetAiClientUserIdCache(): void {
+  aiUserCache().clear()
 }
 
 /**

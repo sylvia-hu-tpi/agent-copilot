@@ -21,6 +21,8 @@
 | `OrganizationMembership` 帶 `role`／`is_admin` | ✅ 成立，可望沿用平台角色（值域待確認） | `ARCHITECTURE.md` §10.6 |
 | `auth.exchangeAccessToken()` 回傳 `refresh_token` | ✅ 成立 | `ARCHITECTURE.md` §7.1 |
 | `Environment` 型別含 `sandbox` | ✅ 成立 | — |
+| `getViewsCount()` 的 view 是 all／joined／yours（SDK 註解逐字如此） | ❌ **推翻**：實測回的是 **status** 分組 `{active, open}`；`list({type})` 四種型別全回 0 筆 —— **沒有「只列出我 JOIN 的」這條路** | `ARCHITECTURE.md` §10.2.1、`out/23-views.json` |
+| 對話清單的分頁參數是 `skip`（SDK 宣告） | ❌ **推翻**：平台吃的是 `offset`。傳 `skip` **不報錯、回 200，但原封送回第一頁**；`from`／`page`／`start`／`skip_count` 亦同。2026-09-01 複驗 n=18：`offset=9&limit=9` 與全量第 10–18 筆逐筆相符，語意為筆數位移。繞道已關在防腐層 `server/services/imbrace.ts` | `ARCHITECTURE.md` §18 M2 未歸屬項目、`out/22-list-paging-params.json` |
 
 > 📌 **唯一該記住的方法論教訓**：型別宣告只說「有這個欄位」，不說「這個欄位是什麼意思」。
 > `users[]` 是最典型的例子——欄位存在、有值、型別完全對，但語意跟預期完全不同。
@@ -48,8 +50,8 @@
 | 項目 | 原估 | 目前 | 備註 |
 |---|---|---|---|
 | M1 對話主線 | 12–18 人日 | ✅ 已完成 | 當初維持原估——`users[]` 捷徑不成立，改走 `mode` 欄位 + 本地快路徑 |
-| M2 Copilot 核心 | 12–16 人日 | 16–22 ↑ | 建議卡需完整自建；structured output 靠 prompt，需自建重試機制。**圖片／PDF vision 分析已知有直接可用的 URL，成本比最壞情況低，但此欄未針對它重新拆算** |
-| M3 知識庫與結案 | 10–14 人日 | 12–16 ↑ | RAG 檢索走 `AgentKnowledgeProvider` 或 `VikiKnowledgeProvider`，皆不需自建索引（原規劃的自建向量檢索已撤銷） |
+| M2 Copilot 核心 | 12–16 人日 | 16–22 ↑ | 建議卡需完整自建；structured output 靠 prompt，需自建重試機制。⚠️ 2026-08-26 訂正：原本此欄的圖片／PDF vision 分析人日已移出本里程碑（延後至 M3，見下列），本區間尚未針對移出後重新拆算，實際可能偏低於 16–22 |
+| M3 知識庫與結案 | 10–14 人日 | 12–16 ↑ | RAG 檢索走 `AgentKnowledgeProvider` 或 `VikiKnowledgeProvider`，皆不需自建索引（原規劃的自建向量檢索已撤銷）。⚠️ 2026-08-26 由 M2 移入：圖片／PDF vision／文件分析自建管線，`docs/IMBRACE_QUESTIONS.md` H-2a／H-2b 已確認平台無內建 OCR，預估額外 **+5～10 人日**，本區間尚未重新加總 |
 
 ---
 

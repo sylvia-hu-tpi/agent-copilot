@@ -16,8 +16,10 @@ import {
   loadConversationContext,
   requireTeamConversationId,
 } from '../../../services/conversation-context.js'
+import { runColdStart } from '../../../services/copilot-analysis.js'
 import { useCopilotRuntime } from '../../../services/copilot-runtime.js'
 import { reportViewing } from '../../../services/presence.js'
+import { fetchLatest } from '../../../sources/message-fetch.js'
 import { useEventBus, useStateStore } from '../../../state/index.js'
 import { conversationTopic } from '../../../state/types.js'
 import { conversationIdParam } from '../../../utils/conversation-param.js'
@@ -48,6 +50,20 @@ export default defineEventHandler(async (event) => {
   // ① 本地快路徑。⚠️ 去重是為了 M4 接上 webhook 後的第二條路徑（§4.3）
   const duplicate = await isDuplicateJoinEvent(store, 'join', ctx.id, session.operatorId)
 
+  // 背景 JOIN 持久追蹤（specs/002-suggestion-knowledge-search/research.md #8）——
+  // 供 SSE 重連復原背景 watch，獨立於 watcher refcount
+  await store.addJoinedConversation(session.operatorId, ctx.id)
+
+  /*
+    左欄「你在此對話中」的判定快取（§10.2.1）—— 寫穿，讓側欄下一次輪詢立刻標對，
+    不必再向平台補查一次詳情。
+
+    ⚠️ 這與上一行**不是同一件事**：`addJoinedConversation()` 只記得住 true，
+       而快取必須連「答案是 false」都記得住（否則同事的對話每輪都會重新問平台）。
+       兩個都要寫。
+  */
+  await store.setViewerJoined(session.operatorId, ctx.id, { joined: true, mode })
+
   await reportViewing(
     store,
     ctx.id,
@@ -68,5 +84,33 @@ export default defineEventHandler(async (event) => {
   // 讓第一層輪詢立刻反映新的 mode，不必等下一個週期
   void useCopilotRuntime(session.orgId).listPoller.tick()
 
+  // 情緒面板冷啟動（specs/001-sentiment-panel FR-001、FR-002、T013）——
+  // 已分析過（非 empty）的對話不重跑，避免每次重新 JOIN 就浪費一次 AI 呼叫。
+  // 非同步觸發、不等待完成才回應：AI 呼叫耗時 5～12.2 秒，等它會讓 JOIN 本身變慢。
+  void triggerColdStartIfNeeded(client, ctx.id, control.aiReplies)
+
   return { conversationId: ctx.id, control, deduped: duplicate }
 })
+
+async function triggerColdStartIfNeeded(
+  client: ReturnType<typeof imbraceClientFor>,
+  conversationId: string,
+  aiReplies: boolean,
+): Promise<void> {
+  const state = await useStateStore().getAnalysisState(conversationId)
+  const needsColdStart = !state
+    || state.summaryBlock.status === 'empty'
+    || state.sentimentBlock.status === 'empty'
+    || state.suggestionBlock.status === 'empty'
+  if (!needsColdStart) return
+
+  try {
+    const history = await fetchLatest(client, conversationId)
+    await runColdStart(conversationId, history, aiReplies)
+  }
+  catch (err) {
+    // 冷啟動失敗不得影響 JOIN 本身已經成功這件事（憲法 3.2）；個別區塊的錯誤狀態
+    // 由 copilot-analysis.ts 內部處理，這裡只需要記錄取歷史本身失敗的情況
+    console.error(`[copilot-analysis] ${conversationId} 冷啟動取歷史失敗:`, err instanceof Error ? err.message : String(err))
+  }
+}

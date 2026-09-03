@@ -76,6 +76,15 @@ async function main(): Promise<void> {
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     server.stderr?.on('data', d => process.stderr.write(`[server] ${d}`))
+    /**
+     * ⚠️ stdout **必須被消耗掉**，即使不印。`stdio: 'pipe'` 開了管線卻沒人讀，
+     *    緩衝區滿了之後伺服器的 `console.log` 會**阻塞整個程序**（症狀是伺服器
+     *    毫無徵兆地停住，看起來像死結）。順便：這也是為什麼加在伺服器端的
+     *    `console.log` 探針在這裡完全看不到 —— 只有 stderr 被轉發。
+     */
+    server.stdout?.on('data', (d) => {
+      if (process.env.SMOKE_TRACE) process.stderr.write(`[server:out] ${d}`)
+    })
 
     await waitForServer(baseUrl)
 
@@ -178,6 +187,43 @@ async function main(): Promise<void> {
     check('orgId 正確', activeJson.orgId === 'org_a')
     assertNoSecrets('me(active)', active.body, active.setCookie)
 
+
+    console.log('\n── 切換組織（U-3）─────────────────────────────────')
+    /**
+     * ⚠️ 這段守的是一條**繞過既有驗證就會出事**的路徑：換組織必須重新 exchange，
+     *    而 exchange 只吃 login_acc_ 中間 token。把它留在 active session 裡是刻意的
+     *    取捨，因此「它不會外洩到瀏覽器」必須有自動化驗證，不能只靠 code review。
+     */
+    check('active 的 me 帶得出組織清單（頂欄的切換入口靠它判斷）',
+      Array.isArray((JSON.parse(active.body) as { organizations?: unknown[] }).organizations),
+      active.body)
+
+    const reselect = await call('/api/auth/reselect-organization', { method: 'POST' })
+    check('POST /api/auth/reselect-organization 回 200', reselect.status === 200, `實際 ${reselect.status} ${reselect.body}`)
+    assertNoSecrets('reselect-organization', reselect.body, reselect.setCookie)
+
+    const backToPending = await call('/api/auth/me')
+    const backJson = JSON.parse(backToPending.body) as { stage?: string, organizations?: unknown[] }
+    check('session 退回 pending_org', backJson.stage === 'pending_org', `實際 ${backJson.stage}`)
+    check('組織清單仍在（不必重跑 OTP）', (backJson.organizations?.length ?? 0) > 0)
+    assertNoSecrets('me(退回 pending_org)', backToPending.body, backToPending.setCookie)
+
+    // ⚠️ 退回之後業務 API MUST 擋下來 —— 舊組織的 accessToken 已經丟掉了
+    const blockedAfterReselect = await call('/api/conversations')
+    check('退回 pending_org 後業務 API 被擋下（不是拿舊 token 繼續用）',
+      blockedAfterReselect.status === 401 || blockedAfterReselect.status === 403,
+      `實際 ${blockedAfterReselect.status}`)
+
+    const rechosen = await call('/api/auth/organization', {
+      method: 'POST',
+      body: JSON.stringify({ organizationId: 'org_a' }),
+    })
+    check('重新選組織回 200（既有流程原封重用）', rechosen.status === 200, `實際 ${rechosen.status} ${rechosen.body}`)
+    assertNoSecrets('organization(第二次)', rechosen.body, rechosen.setCookie)
+
+    const activeAgain = await call('/api/auth/me')
+    check('切換後回到 active', (JSON.parse(activeAgain.body) as { stage?: string }).stage === 'active')
+
     console.log('\n── 對話清單 ────────────────────────────────────────')
     const list = await call('/api/conversations')
     check('GET /api/conversations 回 200', list.status === 200, `實際 ${list.status} ${list.body}`)
@@ -246,6 +292,35 @@ async function main(): Promise<void> {
     check('JOIN 送出的是 team_conversation_id 而非 conversation_id（SDK 型別宣告錯）',
       joinBody?.team_conversation_id?.startsWith('tcu_') === true
       && joinBody?.conversation_id === undefined, JSON.stringify(joinBody))
+
+    /*
+      左欄「你在此對話中」的 HTTP 往返（§10.2.1）。
+
+      ⚠️ **這一段只有 smoke 驗得到。** `viewerJoined` 不是平台清單給的欄位，是 BFF
+         在清單路由裡補上的；單元測試驗的是 `annotateViewerJoined()` 本身，
+         驗不到「它有沒有真的接在 `/api/conversations` 上、有沒有隨回應送出去」——
+         少接一行的症狀是欄位永遠 undefined，而型別與單元測試都不會有任何反應。
+    */
+    /**
+     * 平台的「單筆詳情」請求數 —— 用來驗證快取真的擋掉了補查。
+     * ⚠️ 先接成 const：`gateway` 宣告為 `MockGateway | undefined`，
+     *    在 closure 裡 TS 收斂不到，直接用會是 TS18048。
+     */
+    const gw = gateway
+    const detailCalls = (): number => gw.requests.filter(
+      r => r.path.includes('/team_conversations/') && !r.path.includes('_'),
+    ).length
+
+    const before = detailCalls()
+    const listAfterJoin = await call('/api/conversations')
+    const afterJoinJson = JSON.parse(listAfterJoin.body) as {
+      items?: Array<{ id?: string, viewerJoined?: boolean }>
+    }
+    const mine = afterJoinJson.items?.find(c => c.id === CONV)
+    check('JOIN 後清單標出「你在此對話中」（viewerJoined 為 true）',
+      mine?.viewerJoined === true, JSON.stringify(mine))
+    check('且沒有為此多打一次平台詳情 —— JOIN 已寫穿快取（前景輪詢 3 秒一次，這是成本的關鍵）',
+      detailCalls() === before, `詳情請求數 ${before} → ${detailCalls()}`)
 
     console.log('\n── M1 撞單防護（§10.4 —— 唯一有效的一層）──────────')
     const anchor = msgListJson.lastMessageId ?? null
@@ -354,6 +429,31 @@ async function main(): Promise<void> {
     })
     check('缺 clientId 回 400（少了它控制訊息會廣播給所有分頁）',
       noClient.status === 400, `實際 ${noClient.status}`)
+
+    console.log('\n── 005 連線層級存活心跳（FR-005a、憲法 1.1）──────────')
+    /**
+     * ⚠️ 這一段只有 smoke 驗得到：`beat.post.ts` 用了 Nitro auto-import，vitest 碰不得。
+     *    守的是憲法 1.1 —— 這支端點 MUST NOT 接受或回傳任何 token；身分一律從 session 取。
+     *    smoke 的憑證外洩掃描只掃它打過的 route，新端點不加進來等於沒掃。
+     */
+    const connBeat = await call('/api/connection/beat', {
+      method: 'POST',
+      body: JSON.stringify({ clientId: 'smoke-1' }),
+    })
+    check('POST /api/connection/beat 回 200', connBeat.status === 200, `實際 ${connBeat.status} ${connBeat.body}`)
+    check('回應只有 { ok: true }（不帶 connectionId、不帶任何憑證）',
+      connBeat.body === '{"ok":true}', connBeat.body)
+    assertNoSecrets('connection beat', connBeat.body, connBeat.setCookie)
+
+    const beatNoClient = await call('/api/connection/beat', { method: 'POST', body: JSON.stringify({}) })
+    check('缺 clientId 回 400（心跳沒有定址標籤就無事可做）', beatNoClient.status === 400, `實際 ${beatNoClient.status}`)
+
+    const beatWithToken = await call('/api/connection/beat', {
+      method: 'POST',
+      body: JSON.stringify({ clientId: 'smoke-1', accessToken: 'acc_INJECTED' }),
+    })
+    check('body 夾帶 token 會被忽略、不外洩、也不改變回應', beatWithToken.status === 200 && beatWithToken.body === '{"ok":true}',
+      `實際 ${beatWithToken.status} ${beatWithToken.body}`)
 
     console.log('\n── 登出 ────────────────────────────────────────────')
     const logout = await call('/api/auth/logout', { method: 'POST' })

@@ -26,6 +26,37 @@ const route = useRoute()
 const pending = ref('')
 const error = ref('')
 
+/**
+ * ⚠️ **「此帳號尚未加入任何組織」只在 `pending_org` 階段才有意義。**
+ *
+ * `GET /api/auth/me` 對 `active` 的 session **不回傳 `organizations`**（那個欄位只存在於
+ * `PendingOrgSession`），所以 `auth.organizations` 一旦選完組織就變成空陣列。
+ * 少了這個條件，選完組織到 `navigateTo()` 生效之間的那一瞬間，畫面會閃過
+ * 「此帳號尚未加入任何組織」—— 使用者剛剛才選完，訊息卻說他沒有組織。
+ * 2026-08-29 由使用者回報。
+ */
+const showEmpty = computed(() =>
+  auth.resolved && auth.stage === 'pending_org' && auth.organizations.length === 0,
+)
+const showList = computed(() =>
+  auth.stage === 'pending_org' && auth.organizations.length > 0,
+)
+
+/**
+ * 已經是 `active` 卻停在本頁 —— 只有一種來路：頂欄那個「切換組織」連結。
+ *
+ * ⚠️ **切換組織目前沒有實作**：重新 exchange 需要 `loginToken`，而它只存在於
+ *    `PendingOrgSession`，選完組織後就沒有了。與其讓使用者停在一個永遠不會長出
+ *    清單的畫面，先導回工作區。這是**掩蓋症狀的權宜之計，不是修好**——
+ *    真正的修法需要決定要不要把 `loginToken` 留在 active session 裡（安全取捨）。
+ * ⚠️ 只在掛載時判斷一次，不用 `watch`：`choose()` 成功後 stage 也會變成 active，
+ *    reactive 版本會與 `choose()` 自己的 `navigateTo()` 打架。
+ */
+onMounted(async () => {
+  await auth.ensure()
+  if (auth.stage === 'active') await navigateTo('/')
+})
+
 /** 圖示方塊的 2 字縮寫。拉丁字母取首兩碼大寫，中文取前兩字 */
 function initialsOf(org: OrganizationChoice): string {
   const ascii = org.name.replace(/[^a-zA-Z]/g, '')
@@ -59,7 +90,8 @@ async function logout() {
 
 <template>
   <!-- ── 載入中：骨架屏，不是 spinner ─────────────────────────────── -->
-  <div v-if="!auth.resolved" class="ac-card w-[400px] max-w-full p-5">
+  <!-- 載入中，或已選完組織正在導向工作區的那一瞬間 —— 兩者都用同一個骨架 -->
+  <div v-if="!auth.resolved || !showEmpty && !showList" class="ac-card w-[400px] max-w-full p-5">
     <span class="ac-status-label">載入中</span>
     <div class="mt-4 space-y-4">
       <div v-for="n in 2" :key="n" class="flex items-center gap-3">
@@ -73,7 +105,7 @@ async function logout() {
   </div>
 
   <!-- ── 無組織 ──────────────────────────────────────────────────── -->
-  <div v-else-if="auth.organizations.length === 0" class="ac-card w-[400px] max-w-full p-5">
+  <div v-else-if="showEmpty" class="ac-card w-[400px] max-w-full p-5">
     <span class="ac-status-label">無組織</span>
     <div
       class="mt-4 flex flex-col items-center rounded-[10px] border border-dashed px-5 py-8 text-center"
@@ -86,8 +118,8 @@ async function logout() {
       </p>
       <button
         type="button"
-        class="mt-4 rounded-lg border px-3 py-1.5 text-[0.90625rem] transition-colors"
-        :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
+        class="mt-4 h-8 rounded-lg border px-3 text-[0.90625rem] transition-colors"
+        :style="{ borderColor: 'var(--border-strong)', background: 'var(--surface-2)', color: 'var(--text)' }"
         @click="auth.refresh()"
       >
         重新整理
@@ -96,16 +128,21 @@ async function logout() {
   </div>
 
   <!-- ── 組織清單 ────────────────────────────────────────────────── -->
-  <div v-else class="ac-card w-[560px] max-w-full overflow-hidden">
+  <div v-else-if="showList" class="ac-card w-[560px] max-w-full overflow-hidden">
     <header class="border-b px-[22px] pb-4 pt-5" :style="{ borderColor: 'var(--border)' }">
       <div class="flex items-center justify-between">
-        <span class="ac-eyebrow">選擇組織</span>
+        <span class="ac-eyebrow py-1">選擇組織</span>
         <span class="ac-mono text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
           {{ auth.me?.email }}
         </span>
       </div>
       <p class="ac-subtitle mt-2">
-        你隸屬於 {{ auth.organizations.length }} 個組織。選擇要進入的組織，之後可從右上角切換。
+        <!--
+          ⚠️ 畫布 1b 寫的是「右上角」，但畫布**自己的 1c 頂列**把組織名放在左邊
+             （AGENTCOPILOT 徽章之後）。是畫布內部矛盾，實作跟著 1c ——
+             文案要描述使用者真的看得到的位置。2026-08-29 由使用者指出。
+        -->
+        你隸屬於 {{ auth.organizations.length }} 個組織。選擇要進入的組織，之後可從左上角切換。
       </p>
     </header>
 
@@ -123,13 +160,13 @@ async function logout() {
           @click="choose(org.id)"
         >
           <span
-            class="flex size-[38px] shrink-0 items-center justify-center rounded-[9px] text-[0.96875rem] font-medium"
+            class="ac-mono flex size-[38px] shrink-0 items-center justify-center rounded-[9px] text-[0.96875rem] font-bold"
             :style="{ background: 'var(--surface-3)', color: 'var(--text-2)' }"
           >{{ initialsOf(org) }}</span>
 
           <span class="min-w-0 flex-1">
             <span class="block truncate text-[1.03125rem] font-medium">{{ org.name }}</span>
-            <span class="ac-mono block truncate text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
+            <span class="ac-mono block truncate text-[0.875rem]" :style="{ color: 'var(--text-2)' }">
               {{ org.id }}<template v-if="org.role"> · {{ org.role }}</template>
             </span>
           </span>
