@@ -275,13 +275,36 @@ export async function recoverColdStart(
  * 程序重啟後全部中斷重來也無妨。
  *
  * ⚠️ **2026-09-02 訂正**：原註解寫著「globalThis-keyed 是為了比照既有單例的 HMR 安全模式」，
- *    但這一行從來就是普通的 `new Set()` —— 註解描述的是一個不存在的性質。
+ *    但這一行從來就只是一個普通的行程內容器（當時是 `new Set()`，2026-09-03 改為 refcount
+ *    的 `new Map()`，兩者都沒有掛 `globalThis`）—— 註解描述的是一個不存在的性質。
  *    它與本管線其餘七份執行期狀態一樣是 **process-local**，多副本下上限會變成 N × 10
  *    而不報錯（docs/ARCHITECTURE.md §18 M2「分析管線拆檔」的 📌 註記已把八份逐一盤點，
  *    §18 M4 有對應的驗收項）。**MUST NOT 據原說法認定它已經跨副本安全。**
  */
 const BACKGROUND_CONCURRENCY_LIMIT = 10
-const backgroundInFlight = new Set<string>()
+/**
+ * 背景分析的名額登記 —— **key 是對話 id，value 是「這個對話目前有幾份背景分析在飛」**。
+ *
+ * ⚠️ **MUST 是 refcount（`Map<string, number>`），MUST NOT 退回 `Set<string>`**（2026-09-03 修）：
+ *    下方的門檻刻意放行「本對話已佔名額」的第二份（debounce 計時器與 `stream.get.ts` 重連那條
+ *    `void runIncremental()` 會對同一個對話同時進來）。用 `Set` 時兩份共用唯一那一格，
+ *    **先完成的那份會在 `finally` 裡把名額整個還掉**，另一份明明還在飛卻已不佔名額 ——
+ *    `size` 少算，`BACKGROUND_CONCURRENCY_LIMIT` 被悄悄突破，而且不會有任何錯誤或型別警告。
+ *    名額數要看 `.size`（有幾個**對話**在飛），不是所有 value 的總和 —— 上限的語意是對話數。
+ */
+const backgroundInFlight = new Map<string, number>()
+
+/** 佔用一格背景名額（同一個對話重入時只增計數，不多佔一格）。 */
+function acquireBackgroundSlot(conversationId: string): void {
+  backgroundInFlight.set(conversationId, (backgroundInFlight.get(conversationId) ?? 0) + 1)
+}
+
+/** 歸還一格背景名額 —— 計數歸零時才真正釋出那一格（見 `backgroundInFlight` 的說明）。 */
+function releaseBackgroundSlot(conversationId: string): void {
+  const next = (backgroundInFlight.get(conversationId) ?? 1) - 1
+  if (next <= 0) backgroundInFlight.delete(conversationId)
+  else backgroundInFlight.set(conversationId, next)
+}
 
 /**
  * 新客戶發言的增量觸發（T019，session-manager.ts 的 debounce 之後呼叫）。
@@ -329,7 +352,7 @@ export async function runIncremental(
       scheduleIncremental(conversationId, newCustomerMessages, priority, aiReplies)
       return
     }
-    backgroundInFlight.add(conversationId)
+    acquireBackgroundSlot(conversationId)
     try {
       await Promise.all([
         // 005 US2：只有情緒帶 backfill —— 補算只擴充情緒的輸入（research.md #11），建議卡照舊只吃這一批
@@ -341,7 +364,7 @@ export async function runIncremental(
       ])
     }
     finally {
-      backgroundInFlight.delete(conversationId)
+      releaseBackgroundSlot(conversationId)
     }
     return
   }

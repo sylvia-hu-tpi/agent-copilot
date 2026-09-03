@@ -829,6 +829,65 @@ describe('背景並行與 debounce（US4）', () => {
     releaseGate?.()
     await Promise.all(inFlight)
   })
+
+  /**
+   * 名額登記 MUST 是 refcount —— 同一個對話兩份背景分析重疊時，先結束的那份
+   * **MUST NOT** 把名額整個還掉（2026-09-03 迴歸）。
+   *
+   * ⚠️ 這條路是設計上刻意存在的：上方門檻的 `&& !backgroundInFlight.has(conversationId)`
+   *    放行「本對話已佔名額」的第二份（debounce 計時器與 `stream.get.ts` 重連的
+   *    `void runIncremental()` 會對同一個對話同時進來）。而第二份的
+   *    `runBlockDeduped()` 遇到同鍵在飛時是**立即 return**（登記成 rerun 就走），
+   *    所以它**先結束** —— 用 `Set` 時它的 `finally` 會把還在飛的第一份的名額一併還掉。
+   *
+   * ⚠️ 後果是上限被悄悄突破：沒有錯誤、沒有型別警告，只是背景同時打出去的 AI 呼叫
+   *    比 `BACKGROUND_CONCURRENCY_LIMIT` 承諾的多。憲法 6.2 的成本節流從這裡漏掉。
+   */
+  it('同對話兩份背景分析重疊：先結束的那份 MUST NOT 釋出名額（refcount，非 Set）', async () => {
+    const busy = Array.from({ length: 9 }, (_, i) => convId(`bg-rc-busy-${i}`))
+    const dual = convId('bg-rc-dual')
+    const extra = convId('bg-rc-extra')
+    for (const id of [...busy, dual, extra]) await runColdStart(id, [customerText(id, '第一句', 10)], false)
+
+    let callCount = 0
+    let releaseGate: (() => void) | undefined
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve })
+    setAIProvider(new (class extends MockAIProvider {
+      override async analyzeSentiment(input: Parameters<MockAIProvider['analyzeSentiment']>[0]) {
+        callCount++
+        await gate
+        return super.analyzeSentiment(input)
+      }
+    })())
+
+    // 9 個對話各佔一格，皆卡在 gate 上
+    const inFlight = busy.map(id => runIncremental(id, [customerText(id, '背景訊息', 1)], 'background', false))
+    await vi.waitFor(() => expect(callCount).toBe(9))
+
+    // 第 10 格：dual 的第一份，同樣卡在 gate 上 —— 此刻名額剛好滿（9 + 1 = 10）
+    const dualFirst = runIncremental(dual, [customerText(dual, '第一批', 1)], 'background', false)
+    await vi.waitFor(() => expect(callCount).toBe(10))
+
+    /**
+     * dual 的第二份：門檻放行（本對話已佔名額），但它的 runBlockDeduped() 立即 return，
+     * 因此**先於第一份結束**。這一 await 正是缺陷的觸發點。
+     */
+    await runIncremental(dual, [customerText(dual, '第二批', 2)], 'background', false)
+    expect(callCount).toBe(10) // 第二份沒有自己打 AI（被合併成 rerun）
+
+    /**
+     * 此刻仍有 10 個對話在飛（9 個 busy ＋ dual 的第一份），名額 MUST 仍是滿的。
+     * 用 `Set` 時 dual 的第二份已經把 dual 那一格還掉 → 這裡會被放行 → callCount 變 11。
+     */
+    void runIncremental(extra, [customerText(extra, '第 11 個對話', 1)], 'background', false)
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(callCount).toBe(10)
+
+    // 被擋下時會重排一次背景 debounce（8 秒）——清掉，不要留計時器給後面的測試
+    cancelPendingAnalysis(extra)
+    releaseGate?.()
+    await Promise.all([...inFlight, dualFirst])
+  })
 })
 
 // ── FR-009：同區塊併發去重（specs/003-analysis-trigger-policy T014）────────
@@ -1426,6 +1485,56 @@ describe('兩段式（004 US1）', () => {
     expect(block.citation).toBe('none')
     // 重試確實重新生成了卡，不是 no-op
     expect(block.cards.length).toBeGreaterThan(0)
+  })
+
+  /**
+   * ⑰ ⑯ 的反面 —— **檢索「失敗」MUST NOT 被當成「命中 0 筆」記進備忘**（2026-09-03 迴歸）。
+   *
+   * ⚠️ 這兩條測試是一對，改動 FR-005 判準時 MUST 一起看：
+   *    ⑯ 說「真的 0 筆」要沿用備忘、不再檢索（省下 9.4～20.1 秒）；
+   *    本條說「失敗」相反，MUST 重新檢索。分不出兩者的實作會讓一次短暫的知識庫故障
+   *    把那批訊息的引用**永久**釘死在「沒有」—— 而狀態是 `ready`、`knowledgeSearch.ran`
+   *    是 `true`、沒有任何錯誤，客服與日誌都看不出少了什麼。
+   *
+   * ⚠️ 判準的差別在於 2026-08-29 裁決的理由：「重查幾乎必然仍是 0 筆」對真的 0 筆成立，
+   *    對失敗不成立（失敗的下一次很可能會成功）。憲法 6.2 v3.0.2 要求重新生成 MUST 建立在
+   *    那次檢索的**真實結果**上，而失敗沒有結果。
+   */
+  it('⑰ 檢索失敗不寫備忘：手動重試 MUST 重新發檢索，並補回引用（憲法 6.2 v3.0.2）', async () => {
+    vi.useFakeTimers()
+    const id = convId('two-stage-memo-failed')
+    const history = [customerText(id, '我要退貨')]
+    // plan 物件刻意留在手上：第一輪檢索失敗，重試前改成會成功
+    const plan = { hits: STUB_HITS, delayMs: 100, fail: true }
+    const knowledge = new StubKnowledgeProvider(plan)
+    let stage1ShouldFail = true
+    const ai = new StageAIProvider({
+      failure: () => (stage1ShouldFail ? new AIProviderHttpError('bad request', 400) : null),
+    })
+    setKnowledgeProvider(knowledge)
+    setAIProvider(ai)
+
+    const running = runColdStart(id, history, false)
+    await vi.advanceTimersByTimeAsync(200)
+    await running
+    await awaitSuggestionTail(id)
+    expect((await suggestionState(id)).status).toBe('error')
+    expect(knowledge.calls).toBe(1)
+
+    stage1ShouldFail = false
+    plan.fail = false
+    const retry = retryBlock(id, 'suggestions', history, false)
+    await vi.advanceTimersByTimeAsync(200)
+    await retry
+    await awaitSuggestionTail(id)
+
+    // ⚠️ 本條的重點：第二次檢索真的發出去了（⑯ 在這裡會是 1）
+    expect(knowledge.calls).toBe(2)
+    const block = await suggestionState(id)
+    expect(block.status).toBe('ready')
+    // 檢索恢復後拿得到命中 → 引用補得回來，而不是永久停在 'none'
+    expect(block.citation).toBe('cited')
+    expect(block.knowledgeSearch).toEqual({ ran: true, hitCount: STUB_HITS.length })
   })
 })
 

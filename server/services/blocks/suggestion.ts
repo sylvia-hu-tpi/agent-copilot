@@ -545,6 +545,12 @@ async function analyzeSuggestionsOnce(
    *    且該批的重新生成 MUST 建立在那次檢索的真實結果上」——錨點相同保證是同一批，
    *    備忘就是那次檢索的結果。（條文原本寫「每一次生成」，兩段式與本路徑都會違反其
    *    字面，已於 2026-08-29 因本規格澄清為 v3.0.2，見憲法附錄 C。）
+   *
+   * ⚠️ **上述裁決只涵蓋「檢索成功但 0 筆」，不涵蓋「檢索失敗」**（2026-09-03 界定）：
+   *    「重查幾乎必然仍是 0 筆」這個理由對失敗不成立（失敗的下一次很可能會成功），
+   *    而「備忘就是那次檢索的結果」對失敗也不成立（失敗沒有結果）。因此
+   *    `runSuggestionTail()` 在檢索失敗時**不寫備忘**，本判準自然就走不到 —— 即
+   *    `memo` 存在即代表那一輪的檢索真的成功過。裁決文字未改，只是把適用範圍講明白。
    */
   const hitsInHand = strategy === 'progressive' && memo && memo.anchor === anchor ? memo.hits : undefined
 
@@ -571,6 +577,16 @@ async function analyzeSuggestionsOnce(
  * ⚠️ **鎖內只等第一段**（`runBlockDeduped()` 的鎖，research.md #2）。把尾巴留在鎖內不會
  *    報錯，但新一批客戶發言的分析會被舊尾巴拖慢最多 50 秒 —— 正是 FR-006 要避免的方向。
  */
+/**
+ * 檢索失敗的哨兵 —— **不是**「命中 0 筆」。
+ *
+ * ⚠️ 兩者在畫面上刻意一模一樣（FR-004 誠實降級），但在 `lastRetrieval` 備忘上
+ *    **MUST 分得出來**：備忘的用途是讓手動重試沿用「上一輪對這一批做過的檢索」，
+ *    而失敗那一輪根本沒有檢索結果可沿用。混為一談的後果見 `runSuggestionTail()` 的寫入處。
+ */
+const RETRIEVAL_FAILED = Symbol('retrieval-failed')
+type RetrievalOutcome = KnowledgeHit[] | typeof RETRIEVAL_FAILED
+
 async function runProgressive(
   conversationId: string,
   input: { history: Message[], aiReplies: boolean },
@@ -579,10 +595,10 @@ async function runProgressive(
 ): Promise<void> {
   const retrieval = useKnowledgeProvider()
     .search(ctx.query, { topK: 5, timeoutMs: KNOWLEDGE_SEARCH_TIMEOUT_MS })
-    .catch((err): KnowledgeHit[] => {
+    .catch((err): RetrievalOutcome => {
       // FR-004：檢索失敗以空集合續行（誠實降級，非整塊轉 error）
       console.error(`[copilot-analysis] ${conversationId} 知識庫檢索失敗，改以無引用續行:`, err instanceof Error ? err.message : String(err))
-      return []
+      return RETRIEVAL_FAILED
     })
 
   // ⚠️ MUST NOT `await` —— 尾巴刻意留在鎖外（見本函式的說明）
@@ -638,14 +654,30 @@ async function runSuggestionTail(
   input: { history: Message[], aiReplies: boolean },
   tail: SuggestionTail,
   ctx: { anchor: string | null, query: string },
-  retrieval: Promise<KnowledgeHit[]>,
+  retrieval: Promise<RetrievalOutcome>,
 ): Promise<void> {
   try {
-    const hits = await retrieval
+    const outcome = await retrieval
     if (!isCurrentGeneration(conversationId, tail)) return
 
-    // FR-005 的備忘 —— 手動重試時據此走單段，不再發第二次檢索
-    tail.lastRetrieval = { anchor: ctx.anchor, hits, at: nowIso() }
+    // 失敗時以空集合續行（FR-004），下游的落定路徑與「真的 0 筆」完全相同 —— 這是刻意的
+    const hits = outcome === RETRIEVAL_FAILED ? [] : outcome
+
+    /**
+     * FR-005 的備忘 —— 手動重試時據此走單段，不再發第二次檢索。
+     *
+     * ⚠️ **檢索失敗時 MUST NOT 寫入**（2026-09-03 修）：原本無條件寫，於是失敗被記成
+     *    「這一批檢索過、命中 0 筆」。手動重試時錨點相同 → `hitsInHand = []` →
+     *    `runSingleStage()` 走 `presetHits` 那條路徑而**完全不發檢索**（見該函式），
+     *    一次短暫的知識庫故障就讓那批訊息**永久拿不到引用**，而狀態仍是 `ready`、
+     *    `knowledgeSearch.ran` 仍是 `true` —— 不報錯、型別也對。
+     *    下方 2026-08-29 裁決的理由（「重查幾乎必然仍是 0 筆」）只對**真的** 0 筆成立；
+     *    對失敗不成立，而憲法 6.2 v3.0.2 要求重新生成 MUST 建立在那次檢索的**真實結果**上，
+     *    失敗不是真實結果。不寫備忘 → 手動重試時 `hitsInHand` 為 `undefined` → 重新走兩段式檢索。
+     */
+    if (outcome !== RETRIEVAL_FAILED) {
+      tail.lastRetrieval = { anchor: ctx.anchor, hits, at: nowIso() }
+    }
 
     if (hits.length === 0) {
       // 落定 ①：知識庫本次未命中 —— 沒有第二段可跑，模型回卡數記 0

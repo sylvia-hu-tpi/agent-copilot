@@ -222,8 +222,13 @@ export interface KnowledgeSearchResponse {
 //    因此它與分析管線其餘七份執行期狀態一樣是 process-local，多副本下上限會變成 N × 10
 //    而不報錯。本行保留原文以存記錄，但 MUST NOT 據它認定該狀態已跨副本安全。
 //    正典敘述在 docs/ARCHITECTURE.md §18 M2「分析管線拆檔」的 📌 註記，§18 M4 有對應驗收項。
+// ⚠️ 2026-09-03 訂正（第二次）：`Set` 會少算名額，實作已改為 refcount 的 `Map`。
+//    下方 `runIncremental()` 的門檻刻意放行「本對話已佔名額」的第二份（debounce 計時器與
+//    stream.get.ts 重連的 void runIncremental 會對同一個對話同時進來），而 `Set` 下兩份共用
+//    唯一那一格 —— 先完成的那份在 finally 裡把名額整個還掉，另一份仍在飛卻已不佔名額，
+//    上限被悄悄突破且不報錯。名額數仍看 `.size`（有幾個**對話**在飛），不是 value 總和。
 const BACKGROUND_CONCURRENCY_LIMIT = 10
-const backgroundInFlight = new Set<string>() // conversationId
+const backgroundInFlight = new Map<string, number>() // conversationId -> 在飛份數
 ```
 
 不持久化的理由：這是「此時此刻正在執行哪些背景 AI 呼叫」的執行期狀態，程序重啟後所有進行中的
