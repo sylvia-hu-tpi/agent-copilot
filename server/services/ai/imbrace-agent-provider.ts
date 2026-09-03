@@ -170,6 +170,60 @@ export function buildSuggestionPrompt(input: {
 }
 
 /**
+ * 結案摘要的 prompt —— `specs/006-closure-handoff-summary` FR-015、FR-020a、憲法 4.5／4.6。
+ *
+ * ⚠️ **受控詞彙的清單寫在這裡（user prompt），不寫在後台的 system prompt 裡。**
+ *    寫死在後台的話，`config/categories.ts` 改一個值就得回後台改 prompt ——
+ *    而漏改不會報錯，只會讓那個新分類永遠選不到。四個消費者共用同一份來源是本專案的規則
+ *    （見 `config/categories.ts` 檔頭），這裡是其中一個消費者。
+ *
+ * ⚠️ **`history` 是「涵蓋區間內」的訊息，不是全對話。** 切分由呼叫端負責。
+ *    傳全對話會讓摘要涵蓋前幾輪服務，而那不會報錯（FR-021、`ARCHITECTURE.md` §13.4 ④）。
+ *
+ * ⚠️ **輸出刻意不含 `citedSopIds`。** 「這次服務引用過哪些 SOP」是歷史事實，
+ *    而建議卡的 `sopId` 只活在當下那批 `suggestionBlock.cards` 裡，跨不了整個涵蓋區間 ——
+ *    我們從來沒有持久化過它。要模型產它只有兩條路：從對話文字猜（憲法 4.5 禁止），
+ *    或當場重跑檢索再把「相關的 SOP」寫成「引用過的 SOP」（那是說謊，且不會報錯）。
+ *    正解是 FR-020a：**留空並於面板標示原因**，由客服自己填。
+ *    同理 `confidence` 全程為 `null` —— 結案摘要沒有檢索分數可依據（憲法 4.4）。
+ *
+ * ⚠️ **匯出是為了讓 `scripts/spike/31-closure-agent-shape.ts` 量到與正式路徑同一份 prompt**
+ *    （與 `buildSuggestionPrompt()` 同一個理由）。受控詞彙清單的長度本身就是被量的變數
+ *    —— 手抄一份的話，量出來的「白名單命中率」不代表正式路徑。
+ */
+export function buildClosurePrompt(input: {
+  history: Message[]
+  vocabulary: {
+    categories: readonly string[]
+    resolutions: readonly string[]
+    actionsTaken: readonly string[]
+    sentimentOutcomes: readonly string[]
+  }
+}): string {
+  const transcript = input.history.map(transcriptLine).join('\n')
+  const v = input.vocabulary
+
+  return '請針對以下這一段**已結束的客服服務**產出結案報告（輸出 JSON 物件）。\n\n'
+    + `對話內容（已由系統切為本次服務的完整範圍）：\n${transcript}\n\n`
+    + `【可選分類】（category 只能挑一個，逐字複製）：\n${v.categories.join('、')}\n\n`
+    + `【可選處理結果】（resolution 只能挑一個）：\n${v.resolutions.join('、')}\n\n`
+    + `【可選行動】（actionsTaken 可多選）：\n${v.actionsTaken.join('、')}\n\n`
+    + `【可選情緒結果】（sentimentOutcome 只能挑一個）：\n${v.sentimentOutcomes.join('、')}\n\n`
+    + '規則（務必遵守）：\n'
+    + '① 四個受控詞彙欄位的值會被後端逐字比對白名單，不在清單內的值會被整個丟棄、'
+    + '該欄位變成空的，客服得自己重選。**挑不到就給空字串或空陣列，不要挑相近的、不要自創。**\n'
+    + '② 不得編造工單編號、時間、金額、政策內容、客戶未說過的話；對話裡沒有的就留白。\n'
+    + '③ followUps 的 action 必須是對話中明確承諾過或明確待辦的事項，'
+    + '不得補上「建議之後可以…」這類你自己想到的建議。\n'
+    + '④ 不要提及、也不要推測這段範圍之外可能發生過什麼。\n\n'
+    + '需包含欄位：summary（120–250 字的一段連貫敘述，不分行不條列）、intent（一句話）、'
+    + 'category（字串）、resolution（字串）、actionsTaken（字串陣列）、'
+    + 'sentimentOutcome（字串）、followUps（物件陣列，每個為 '
+    + '{ "action": "...", "owner": "選填", "dueHint": "選填" }）。\n\n'
+    + LANGUAGE_RULE
+}
+
+/**
  * 模型偶爾會在 JSON **前面**加一句開場白（如「Okay, I will...」），也可能在**後面**
  * 加一句自我總結（如「我已完成摘要...」）——兩種都實測遇過，且都是即使 prompt 明確禁止
  * 也還是會出現的穩定行為，逼 prompt 100% 守規矩不可靠。因此策略是：先找到文字中第一個
