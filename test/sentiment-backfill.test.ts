@@ -552,3 +552,71 @@ describe('併發：補算在飛時再來一批新發言 → 同一則只送進 A
     expect((await stateOf(id))?.sentimentGap).toBe(false)
   })
 })
+
+// ── 取歷史失敗：旗標 MUST 保留（2026-09-03 迴歸）─────────────────────
+
+/**
+ * ⚠️ 這是 `resolveSentimentInput()` 的 catch 分支，先前**沒有任何測試覆蓋**，
+ *    而它剛好是最不能出錯的一條：取歷史失敗時若把 `sentimentGap` 清掉，
+ *    缺口從此永遠補不回來 —— 分析仍然成功、狀態仍是 `ready`、沒有任何錯誤，
+ *    客服看到的只是一條中間斷掉的走勢。整個失效過程沒有一處會亮紅燈。
+ *
+ * `copilot-runtime.ts` 的裝配註解與 catch 自己的註解都寫著「旗標維持 true」，
+ * 這兩條測試是那句話的執行版本。
+ */
+describe('補算取歷史失敗（憲法 3.1 的降級路徑）', () => {
+  it('取歷史拋錯 → 這一輪只分析新發言，但 sentimentGap 維持 true', async () => {
+    const id = convId('history-throw')
+    const A = range(id, 1, 6)
+    const C = range(id, 13, 18)
+    probeAI()
+    await seedMiddleGap(id, A, C)
+    expect((await stateOf(id))?.sentimentGap).toBe(true)
+
+    const probe = probeAI()
+    // copilot-runtime.ts 的「多組織下找不到擁有這個對話的 runtime」正是這條路徑
+    setHistoryResolver(async () => {
+      throw new Error('找不到擁有對話的 runtime')
+    })
+
+    const D = [customer(id, 19)]
+    await runIncremental(id, D, 'foreground', false)
+
+    // 新發言照常分析（故障不擴散）
+    expect(probe.seen().sort(byNumber)).toEqual(ids(D))
+    expect(timelineIds(await stateOf(id))).toEqual(ids([...A, ...C, ...D]))
+    expect((await stateOf(id))?.sentimentBlock.status).toBe('ready')
+    // ⚠️ 本條的重點：分析成功**沒有**把旗標清掉
+    expect((await stateOf(id))?.sentimentGap).toBe(true)
+  })
+
+  it('取歷史恢復後，下一次自然觸發仍補得到缺口（旗標沒有被前一輪抹掉）', async () => {
+    const id = convId('history-recover')
+    const A = range(id, 1, 6)
+    const B = range(id, 7, 12)
+    const C = range(id, 13, 18)
+    const all = [...A, ...B, ...C]
+    probeAI()
+    await seedMiddleGap(id, A, C)
+
+    probeAI()
+    setHistoryResolver(async () => {
+      throw new Error('暫時性故障')
+    })
+    const D1 = [customer(id, 19)]
+    all.push(...D1)
+    await runIncremental(id, D1, 'foreground', false)
+    expect((await stateOf(id))?.sentimentGap).toBe(true)
+
+    // 解析器恢復 → 下一次自然觸發把中段缺口 B 補回來
+    const probe = probeAI()
+    historyResolver(() => all)
+    const D2 = [customer(id, 20)]
+    all.push(...D2)
+    await runIncremental(id, D2, 'foreground', false)
+
+    expect(probe.seen().sort(byNumber)).toEqual(ids([...B, ...D2]))
+    expect(timelineIds(await stateOf(id))).toEqual(ids(all))
+    expect((await stateOf(id))?.sentimentGap).toBe(false)
+  })
+})

@@ -274,6 +274,11 @@ async function mergeMarkersOnly(conversationId: string, markers: Message[]): Pro
  * @param gapRemaining 這一輪補算之後**還有沒有**未涵蓋的客戶發言（超過每輪 18 則上限的部分）。
  *   冷啟動與手動重試不傳（＝`false`）：兩者的輸入都是 `fetchLatest()` 的完整視窗，成功即必然涵蓋，
  *   不需另判「是否涵蓋到最新」（data-model.md §3 生命週期表）。
+ *
+ *   ⚠️ **這個參數是「無條件寫入」的**（下方 `sentimentGap: gapRemaining`），沒有「不要動旗標」
+ *      這個選項。因此呼叫端在「這一輪其實沒有判斷過缺口」的路徑上 MUST NOT 順手傳 `false`
+ *      —— 那不是「不知道」，那是「明確宣告缺口已清空」，會讓補算永遠停擺且不留任何痕跡。
+ *      `resolveSentimentInput()` 取歷史失敗時回 `true` 正是為了這件事（見該函式的 catch）。
  */
 async function finishSentimentSuccess(
   conversationId: string,
@@ -409,9 +414,16 @@ async function resolveSentimentInput(
      *    AI 呼叫的 try/catch 之外，拋出去會讓 `void runIncremental()` 變成 unhandled rejection ——
      *    Copilot 的故障拖垮主線（憲法 3.1）。降級為「這一輪不補、只分析新發言」，旗標維持 true，
      *    下一次自然觸發再試。只記 id 與錯誤類別（憲法 1.5）。
+     *
+     * ⚠️ **`gapRemaining` MUST 是 `true`，不是 `false`** —— 它是「旗標維持 true」這句話的唯一實作。
+     *    `finishSentimentSuccess()` 無條件寫 `sentimentGap: gapRemaining`，回 `false` 會讓這一輪
+     *    新發言分析成功後把旗標**清掉**：缺口從此永遠補不回來，而且不報錯、狀態仍是 `ready`。
+     *    （2026-09-03 修：原本回 `false`，與本註解自己的敘述及 `copilot-runtime.ts` 的裝配註解都相反。）
+     *    語意上也精確 —— 走到這裡代表上方 `state.sentimentGap === true` 已成立且這一輪什麼都沒補到，
+     *    缺口確實「還有剩」。因此不需要第三種「不要動旗標」的狀態。
      */
     console.error(`[copilot-analysis] ${conversationId} 補算取歷史失敗，這一輪只分析新發言：${err instanceof Error ? err.constructor.name : typeof err}`)
-    return { input: fresh, gapChecked: false, gapRemaining: false }
+    return { input: fresh, gapChecked: false, gapRemaining: true }
   }
   // 歷史依 fetchSince() 的約定由舊到新，取前 18 則就是時間最早的 18 則
   const gap = newCustomerMessagesSince(state, history).filter(m => !freshIds.has(m.id))
