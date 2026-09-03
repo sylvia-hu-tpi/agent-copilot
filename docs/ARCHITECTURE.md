@@ -56,7 +56,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | AI 語意即時建議 | 依對話上下文產生可直接送出的回覆建議，引用具體 SOP 條目與信心度 |
 | 知識庫自然語言快查 | 客服以自然語言詢問，即時檢索 SOP 與知識庫 |
 | 一鍵帶入 | 建議回覆一鍵填入輸入框，送出前做撞單檢查 |
-| 交接／結案摘要 | LEAVE 或結案時自動產生摘要，人審後寫入 Data Board |
+| 結案摘要 | 結案時產生摘要，**經客服編輯確認**後寫入 Data Board。⚠️ 不是「自動產生後寫入」——人審是規則本身（憲法 5.1）。交接摘要已於 `specs/006-closure-handoff-summary` 確認不實作 |
 
 ### 1.3 產品形態
 
@@ -272,7 +272,7 @@ AgentCopilot/
 │   │   ├── copilot/
 │   │   │   ├── analyze.post.ts      # 手動重新分析
 │   │   │   ├── knowledge.post.ts    # 自然語言快查
-│   │   │   ├── handover.post.ts     # 交接摘要
+│   │   │   ├── handover.post.ts     # 交接摘要（⚠️ 規劃中、未實作，見 §13.4 ②）
 │   │   │   └── closure.post.ts      # 結案摘要（產生 / 確認寫入）
 │   │   ├── presence.post.ts         # 上報 viewing / composing
 │   │   ├── stream.get.ts            # SSE
@@ -1856,7 +1856,7 @@ export interface SuggestionCard {
   requiresData: string[]        // 需客服補上的實際資料，如「工單編號」
 }
 
-/** 交接摘要（LEAVE 觸發，對話仍進行中） */
+/** 交接摘要（LEAVE 觸發，對話仍進行中）—— ⚠️ 規劃中、未實作，見 §13.4 ② */
 export interface HandoverSummary {
   conversationId: string
   operatorId: string
@@ -1870,7 +1870,11 @@ export interface HandoverSummary {
 
 /** 結案摘要（updateStatus → resolved 或手動觸發，寫入 Data Board） */
 export interface ClosureSummary {
-  conversationId: string
+  recordId: string              // 主鍵（獨立識別碼）——⚠️ v4.0.0 起主鍵不是 conversationId
+  draftId: string               // 產生本筆的摘要草稿 id，冪等寫入的依據（憲法 5.3）
+  conversationId: string        // ⚠️ 可重複的索引，不是唯一鍵——同一對話會有多筆
+  periodStart: string           // 本次涵蓋區間的起點（§13.4 ④）
+  periodMessageCount: number    // 本次涵蓋的訊息則數
   channel: string
   contactId: string
   operators: string[]
@@ -1890,7 +1894,7 @@ export interface ClosureSummary {
   // ── 數值供報表統計使用，不直接顯示於介面 ──
   sentimentStart: number
   sentimentEnd: number
-  sentimentTrough: number       // 全程最低點——需以全量評分點計算，不可只取 sparkline 繪出的最近 N 點（§14.6）
+  sentimentTrough: number       // 本次涵蓋區間內的最低點——不可只取 sparkline 繪出的最近 N 點，也不可跨越區間邊界取到前幾輪服務的谷底（§13.4 ④、§14.6）
 
   citedSopIds: string[]
   followUps: Array<{ action: string; owner?: string; dueHint?: string }>
@@ -1931,12 +1935,12 @@ export interface ClosureSummary {
 
 | # | 是什麼 | 處置 |
 |---|---|---|
-| ① 冷啟動只看最新 50 則 | 功能缺口（與 FR-001「完整歷史」的字面有落差） | **與 ③ 合併立案，歸「M3 開工前決策」** |
+| ① 冷啟動只看最新 50 則 | 功能缺口（與 FR-001「完整歷史」的字面有落差） | **與 ③ 合併立案**。⚠️ 2026-09-03 起不再綁「M3 開工前」，改為獨立追蹤 |
 | ② 情緒批次大小是機率賭注 | **不是待辦** —— 使用者早已拍板接受 | **已接受的取捨**，見下方 |
 | ③ 分析結果沒有真正持久化 | 需要先拍板保留期限（隱私姿態） | 同 ① |
 
 ⚠️ ①③ 歸在**決策批次**而非驗收清單，因此與 `CONSTITUTION.md` 5.3 的待修憲事項
-（註明 MUST 在 M3 開工前完成）**並列、同進同出** —— 兩者性質相同（都要先拍板才動得了），
+**原本並列、同進同出** —— 兩者性質相同（都要先拍板才動得了），
 分開追會有一項掉下去。
 
 **① 冷啟動只看得到最新 50 則訊息，未涵蓋「完整歷史」**——`join.post.ts` 的 `fetchLatest()`
@@ -1966,7 +1970,7 @@ messageId 為粒度都是重算，不是只算真正新增的部分。
 > ⚠️ 伺服器重啟後的空白面板是**另一件事，且已修**（`sendAnalysisSnapshotAndResume()` 對已 JOIN
 > 的連線補跑 `recoverColdStart()`，見 §18 M2「已修的缺陷」）。本項是持久化，不是復原。
 
-**①③ 的立案內容**（「M3 開工前決策」的一部分，與憲法 5.3 的待修憲並列）：
+**①③ 的立案內容**（⚠️ 2026-09-03 起已與憲法 5.3 的修憲脫鉤，改為獨立追蹤、不阻擋里程碑開工）：
 把情緒評分點（含摘要所依賴的歷史）以 messageId 為 key 做真正的持久化快取，會同時讓
 「冷啟動不受 50 則上限限制」（未涵蓋的舊訊息判斷為「尚未分析過」即可依需要補做分析，
 而非整段重來）與「跨客服／跨重啟不必重算已分析過的訊息」一起成立。範圍不小——需要新的
@@ -2096,7 +2100,7 @@ MVP 做法是把限定檔案後拿到的所有片段依序串接顯示，並誠�
 |---|---|---|
 | Session 狀態、輪詢游標、presence | 記憶體 → Redis | 高頻讀寫、可重建、重啟即棄無妨 |
 | 情緒逐輪分數（進行中） | 記憶體 → Redis | 每則訊息都在變，寫 Board 會打爆 API |
-| **結案／交接摘要** | **Data Board** | 業務資產，需可查詢與製作報表 |
+| **結案摘要** | **Data Board** | 業務資產，需可查詢與製作報表。⚠️ v4.0.0 前本列寫的是「結案／交接摘要」；交接摘要不寫入 Board（且未實作），見 §13.4 ② |
 | 建議採納紀錄、SOP 命中 | Data Board（可延後至 M4+） | 供後續模型優化回饋 |
 
 ### 13.2 可用的 Board API
@@ -2114,7 +2118,11 @@ boards.linkItems()                                      # 關聯至 Contact
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
-| `conversation_id` | text（**唯一鍵**） | 冪等寫入的依據 |
+| `record_id` | text（**主鍵**） | 獨立識別碼。⚠️ v4.0.0 起主鍵**不是** `conversation_id` |
+| `draft_id` | text | 產生本筆的摘要草稿 id，**冪等寫入的依據**（同一份草稿至多一筆） |
+| `conversation_id` | text（**可重複的索引**） | 用途是查出「這通對話歷來的所有結案紀錄」，不是唯一鍵 |
+| `period_start` | datetime | 本筆涵蓋區間的起點 |
+| `period_message_count` | number | 本筆涵蓋的訊息則數。⚠️ 與 `period_start` 一起，是事後唯一能看出「這份報告涵蓋了什麼」的依據 |
 | `channel` | text | LINE / Web / WhatsApp… |
 | `contact_id` | text | 可 `linkItems()` 關聯至 Contact board |
 | `operators` | text[] | 參與過的所有客服 |
@@ -2138,22 +2146,45 @@ boards.linkItems()                                      # 關聯至 Contact
 
 **欄位對照**：`operators`／`summary`／`intent`／`category`／`resolution`／`actions_taken`／`sentiment_outcome`／`sentiment_start|end|trough`／`cited_sops`／`follow_ups`／`confidence`／`reviewed_by|at` 一一對應 `ClosureSummary` 的同名欄位（camelCase → snake_case）；`joined_at`／`closed_at` 對應 `joinedAt`／`closedAt`。
 
-### 13.4 三個設計陷阱
+⚠️ `record_id`／`draft_id`／`period_start`／`period_message_count` 是 v4.0.0（2026-09-03 修憲）新增的四欄，對應 `ClosureSummary`（§11.5）的 `recordId`／`draftId`／`periodStart`／`periodMessageCount`，兩處已同步。**少建一欄不會報錯**，只會讓冪等或涵蓋區間在事後無從稽核——這正是 setup script 需要驗證模式的理由。
 
-**① AI 產物寫入正式 CRM，必須經人審。** 摘要生成後先進入可編輯的確認面板（`ClosurePanel.vue`），客服修改確認後才 `createItem()`。若確實需要「LEAVE 自動觸發寫入」，必須標記 `reviewed_by = null`，使其可於事後被稽核篩出。
+### 13.4 四個設計陷阱
 
-**② LEAVE ≠ 結案。** 多客服情境下，你 LEAVE 了但其他人仍在，因此拆成兩種產出：
+**① AI 產物寫入正式 CRM，必須經人審。** 摘要生成後先進入可編輯的確認面板，客服修改確認後才 `createItem()`（憲法 5.1）。若確實需要自動寫入，必須標記 `reviewed_by = null`，使其可於事後被稽核篩出（憲法 5.2）。⚠️ **目前沒有任何自動寫入路徑**，`specs/006-closure-handoff-summary` 不交付這種路徑。
 
-| 類型 | 觸發 | 內容 |
-|---|---|---|
-| **交接摘要** `HandoverSummary` | LEAVE | 我這段處理了什麼、下一位要接什麼——對話仍進行中 |
-| **結案摘要** `ClosureSummary` | `updateStatus()` → resolved，或手動按鈕 | 完整的意圖／分類／處理結果／情緒起訖／後續動作 |
+**② LEAVE ≠ 結案 —— 但交接摘要目前不實作。** 立論仍然成立：多客服情境下，你 LEAVE 了但其他人仍在，那一段服務值得留點東西給下一位。原本因此規劃兩種產出：
 
-兩者 schema 不同，不可混用。
+| 類型 | 觸發 | 內容 | 狀態 |
+|---|---|---|---|
+| **交接摘要** `HandoverSummary` | LEAVE | 我這段處理了什麼、下一位要接什麼——對話仍進行中 | ⚠️ **規劃中、未實作** |
+| **結案摘要** `ClosureSummary` | `updateStatus()` → resolved，或手動按鈕 | 完整的意圖／分類／處理結果／情緒起訖／後續動作 | ✅ 由 `specs/006-closure-handoff-summary` 交付 |
 
-> 「手動按鈕」不限於獨立的結案按鈕——也可以是 LEAVE 流程中「同時結束對話」的選項（例如客服按下 LEAVE 時，UI 詢問是否一併結案）。無論哪種 UI 呈現，只要目的是把該對話標記為已結束，就走同一條 `updateStatus() → resolved` 路徑與同一份 `ClosureSummary` schema；若設計成緊跟著 LEAVE 自動觸發（不經額外詢問），仍必須依①標記 `reviewed_by = null` 供事後稽核。
+> ⚠️ **2026-09-03：交接摘要確認不實作**（`specs/006-closure-handoff-summary`）。理由是**它沒有設計落點** ——
+> 畫布 artboard 2a／`DESIGN_TOKENS.md` §7.2 的右欄六個區塊沒有它，結案流程的三張設計稿沒有它，
+> i18n 與元件裡沒有任何「交接／轉接」字串。它只存在於本文件的紙上規劃。
+> `PLATFORM_CAPABILITY.md` §2 那列「AI 轉接摘要／左欄」是 **demo 畫面上 iMBrace 平台自己的功能**，不是我方的 Copilot 面板。
+> **重啟條件**：畫布補上該區塊，或出現實際的多客服交接需求。
+> 在那之前「離開對話」＝純粹退出，不產生摘要、不寫入任何紀錄。
 
-**③ 冪等。** 同一對話重複產生摘要必須覆蓋而非新增。以 `conversation_id` 為唯一鍵，寫入前先 `search()`，再決定 `createItem` 或 `updateItem`。
+> 「手動按鈕」不限於獨立的結案按鈕——也可以是 LEAVE 流程中「同時結束對話」的選項。無論哪種 UI 呈現，只要目的是把該對話標記為已結束，就走同一條 `updateStatus() → resolved` 路徑與同一份 `ClosureSummary` schema。
+
+**③ 冪等的單位是「摘要草稿」，不是對話（憲法 5.3，v4.0.0）。** 同一份草稿寫入幾次都只對應一筆（防的是「寫入逾時後客服重按」）；除此之外的每一次結案各自**並存**。主鍵是 `record_id`，`conversation_id` 是可重複的索引。
+
+平台不保證唯一鍵約束（實測 5 個 board 未見唯一鍵欄位型別，`scripts/spike/out/09-board-field-types.json`），因此流程是：**寫入前以 `draft_id` 查詢 → 決定 `createItem` / `updateItem` → 寫入後回查確認該筆確實存在**。⚠️ 最後那一步不可省——收到 200 不等於紀錄真的建立了，而「畫面顯示成功、Board 上其實沒有」是不會報錯的。
+
+> **同一通對話有多筆結案紀錄是正常的**，成因有兩種：① 不同時間的多次服務（同一位 LINE@ 客戶的聊天室長期存在）；② 同一次服務、多位客服交叉服務或中途轉手，各自寫一份。⚠️ v4.0.0 前本節寫的是「必須覆蓋而非新增」——那會在①銷毀服務歷史、在②洗掉同事的工作成果。
+
+**④ 一筆結案紀錄只描述「一次服務」，區間 MUST 隨紀錄寫入。** 一個對話（例如 LINE@ 的一位客戶）是長期存在的，可能被服務過很多次。`summary`／`intent`／`sentiment_start|end|trough` 全部只在同一個涵蓋區間內才有意義。
+
+該區間**由客服在人審面板上選定**，候選是該對話最近 5 筆結案紀錄的 `closed_at`（每一筆代表「上一輪服務在此結束」），外加墊底的「從第一則對話起算」。⚠️ **三種自動推導方式都試過、都會出錯**，不要重新提案：
+
+| 推導方式 | 反例 |
+|---|---|
+| 客服自己的 JOIN 時間 | 同一次服務的多位客服 JOIN 時間不同，會產出不同區間；且客戶通常在客服 JOIN 前就已把訴求講完 |
+| 時間間隔（gap）門檻 | 客戶昨天 17:35 發言、今天 10:15 才有客服接手（空檔 16 小時 40 分）仍是同一區間。門檻訂 24 小時對、訂 12 小時錯，而該值無法從證據推導 |
+| 客戶那一輪發言的第一則 | 客服回過話但**沒有結案**時，客戶隔天追問仍屬同一輪，此規則會誤切成新一輪 |
+
+`closed_at` 之所以是對的：**「有沒有結案」本身就是「上一輪有沒有結束」的定義**，是事實而非推測。詳細行為見 `specs/006-closure-handoff-summary` FR-021 系列。
 
 ---
 
@@ -2185,14 +2216,14 @@ boards.linkItems()                                      # 關聯至 Contact
 
 > 右欄的六個區塊以 §14.1.1 為準，本圖與該節必須一致。**「AI 轉接摘要」不在右欄**——依 demo 對照它屬於左欄（見 `PLATFORM_CAPABILITY.md` §2）。
 >
-> 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 **420px**（可拖曳 320–720px）、五區塊皆可折疊、支援載入骨架與「準備結案」收合態。
+> 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 **420px**（可拖曳 320–720px）、支援載入骨架與「準備結案」態。⚠️ **一般狀態是五個區塊**（①～⑤）；第六區塊「結案摘要自動填入」只在結案流程中出現，見 §14.1.1。
 >
 > ⚠️ **右欄的可見性不是「永遠都在」。**
 > 依 `specs/003-analysis-trigger-policy`，**客服未 JOIN 該對話時右欄整欄不呈現**（連收合鈕一起消失），
 > 中欄延伸至可用寬度；JOIN 時自動展開並提供收合鈕，收合狀態以「每位客服、每個對話」為粒度
 > 存 `localStorage`。伺服器端亦不把三個分析事件推給未 JOIN 的連線。
-> 規則見該規格 FR-016～FR-017b，視覺見 `docs/wireframe/03-workspace_assignment01.png`
-> （未接手）與 `03-workspace_toggleCopilot.png`（收合態）。
+> 規則見該規格 FR-016～FR-017b，視覺見畫布 artboard **1c** 的「未接手」與「Copilot 面板收合」兩個狀態
+> （`DESIGN_TOKENS.md` §0 的 1c 狀態表）。⚠️ 備存截圖已於 2026-09-03 刪除，不要再用檔名引用畫面。
 
 ### 14.1.1 右欄的區塊與捲動
 
@@ -2202,11 +2233,17 @@ boards.linkItems()                                      # 關聯至 Contact
 > 兩個理由：① 常駐會讓「這個區塊」與「結案按鈕」的關係曖昧不明；② 區塊若常駐就得在某個時機
 > 產生內容，等於每個對話都多跑一次 AI 呼叫，而絕大多數對話不會在那一刻結案。
 > 結案流程本身屬 M3，行為定案見 `specs/003-analysis-trigger-policy` 的「Session 2026-08-28 補充」
-> 與 `tasks.md` 附錄；視覺見 `docs/wireframe/03-workspace_close*.png` 四張。
+> 與 `tasks.md` 附錄；視覺見畫布 artboard **1c** 的「結案中」狀態與 artboard **2b**（結案摘要區塊的狀態矩陣）。
 
 **摺疊行為**：畫布採「區塊可折疊」**加**「階段感知」的組合，不是兩者擇一 —— 各區塊平時各自可
-折疊；一旦偵測到「準備結案」，其餘區塊自動收合成單行，只留 ⑥ 維持展開可編輯（**是收合其他
-區塊讓 ⑥ 顯眼，不是把 ⑥ 置頂**）。逐項行為見 `DESIGN_TOKENS.md` §7.4。
+折疊；一旦進入結案流程，⑥ **移到面板最上方**並展開可編輯，其餘區塊**全部**收合成單行。
+逐項行為見 `DESIGN_TOKENS.md` §7.4。
+
+> ⚠️ **2026-09-03 訂正**：本段原文寫的是「是收合其他區塊讓 ⑥ 顯眼，**不是**把 ⑥ 置頂」，
+> 與 `DESIGN_TOKENS.md` §7.2 逐字擷取的「`order` 由階段決定（結案階段會被提前）」直接矛盾。
+> 使用者已裁示採**置頂**。理由與 ⑥ 的可見性規則互為因果：既然 ⑥ 平時**完全不呈現**，
+> 它出現時對客服而言就是一個憑空冒出來的新元素 —— 置頂才不會讓人在面板中間找它。
+> 「靠收合其他區塊讓它顯眼」那個做法預設了 ⑥ 本來就在原位，而那個前提已經不成立。
 折疊狀態是否記憶到 `localStorage` 設計稿未規範，仍是開發端判斷。
 
 ### 14.1.2 AI 階段完整對話紀錄
@@ -2311,7 +2348,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 訊息流使用虛擬滾動（`useVirtualList`）；建議卡數量上限 3–5 張，超過需捲動；情緒 sparkline 僅**繪製**最近 50 點（specs/001-sentiment-panel FR-015 已定案，非僅建議值）。
 
-> ⚠️ 「只畫 50 點」不等於「只留 50 點」。評分點本身必須全數保留——`ClosureSummary.sentimentTrough` 要的是**全程**最低點，若只留最近 50 點，它會安靜地算成「近期最低點」，而且要到 M3 寫進 Data Board 之後才會被發現。保留成本極低（每點只有分數、標籤與幾個關鍵詞），真正昂貴的是產生它的 AI 呼叫，那筆錢已經花了。詳見 `specs/001-sentiment-panel/spec.md` FR-015。
+> ⚠️ 「只畫 50 點」不等於「只留 50 點」。評分點本身必須全數保留——`ClosureSummary.sentimentTrough` 要的是**本次涵蓋區間內**的最低點，若只留最近 50 點，它會安靜地算成「近期最低點」，而且要到寫進 Data Board 之後才會被發現。保留成本極低（每點只有分數、標籤與幾個關鍵詞），真正昂貴的是產生它的 AI 呼叫，那筆錢已經花了。詳見 `specs/001-sentiment-panel/spec.md` FR-015。
 
 #### ⚠️ 虛擬滾動的高度契約 —— 一個沒有任何自動檢查看得見的地雷
 
@@ -2834,7 +2871,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M3 — 知識庫與結案
 
-**內容**：依 #19 RAG 品質的回覆結果，視情況將知識庫來源由 `AgentKnowledgeProvider` 換上 `VikiKnowledgeProvider`（見 §8.2、§12.2 —— ⚠️ **本項僅指「換 provider」這個決策，快查功能本身已隨 M2 落地**，兩者是兩件事）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11 —— 平台已確認無內建 OCR，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已列為排除範圍）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前一律讓 429 直接轉錯誤狀態，見 §15.2）。
+**內容**：依 #19 RAG 品質的回覆結果，視情況將知識庫來源由 `AgentKnowledgeProvider` 換上 `VikiKnowledgeProvider`（見 §8.2、§12.2 —— ⚠️ **本項僅指「換 provider」這個決策，快查功能本身已隨 M2 落地**，兩者是兩件事）；結案摘要 ＋ 人審面板（⚠️ **交接摘要已於 2026-09-03 確認不實作**，見 §13.4 ②）；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11 —— 平台已確認無內建 OCR，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已列為排除範圍）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前一律讓 429 直接轉錯誤狀態，見 §15.2）。
 
 **驗收**：
 - [ ] 若換上 `VikiKnowledgeProvider`：知識庫快查與建議卡的 `score`／`confidence` 欄位開始出現真實數值（不再恆為 `null`），且 UI 不需改動即可正確顯示（**本項只驗換 provider 後分數欄位的行為**，快查本身的功能驗收在 M2）
@@ -2849,13 +2886,17 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       不會看到任何摘要編輯畫面，這是已知落差而非缺陷。⚠️ 連帶：`specs/003-analysis-trigger-policy`
       的 SC-007（找未參與者驗證這行文案可讀性）也因此**被決定結案而非驗證通過**，
       若 PM／SA 的文案審查未涵蓋兩個出口的可讀性，該項要重新提出
-- [ ] 重複觸發摘要為覆蓋而非新增
-- [ ] LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用
+- [ ] **同一份草稿重複寫入只留一筆；同一對話的多次結案各自並存** —— ⚠️ **本條於 2026-09-03 隨憲法 v4.0.0 訂正**，原文寫的是「重複觸發摘要為覆蓋而非新增」，那個方向是錯的：覆蓋會在「同一客戶被服務過多次」時銷毀服務歷史，也會在「同一次服務多位客服各自結案」時洗掉同事的工作成果。冪等的單位改為**摘要草稿**（憲法 5.3、§13.4 ③）
+- [ ] **resolved 產生結案摘要** —— 由 `specs/006-closure-handoff-summary` 交付
+- [ ] ~~LEAVE 產生交接摘要，兩者不混用~~ —— **延後（2026-09-03）**。交接摘要沒有設計落點（畫布、i18n、元件皆無），已確認不實作，理由與重啟條件見 §13.4 ②。⚠️ 「兩者不混用」在只有一種摘要時自動成立卻什麼都沒驗到，因此標為**不適用**而非勾起 —— 勾起會讓下一個人以為驗過了
+- [ ] **結案摘要的涵蓋區間由客服選定，且區間與則數隨紀錄寫入** —— 2026-09-03 新增（§13.4 ④）。⚠️ 三種自動推導方式都會出錯，該節已列反例，不要重新提案
 - [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）
 - [ ] 圖片／PDF 的描述不得依賴 `caption` 欄位
 - [ ] **429 由全域退避佇列統一處理**，摘要／情緒分析與輪詢等呼叫端不再各自重試；`classifyFailure()` 的 `'rate-limited'` 分類改接佇列，並回頭修訂 `specs/001-sentiment-panel/spec.md` FR-014 的 429 分支與 Assumptions
 
-**外部依賴**：Data Board schema 需先建立；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格
+**外部依賴**：Data Board schema 需先建立；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格；涵蓋區間選擇器需先進 Design 畫布（阻塞 UI，不阻塞行為與後端）
+
+> ✅ **憲法 5.3 的 MAJOR 修憲已於 2026-09-03 完成**（v4.0.0），M3 的開工前提已解除。
 
 ---
 
@@ -2967,8 +3008,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 | 類別 | 項目 | 正典位置 |
 |---|---|---|
-| 待拍板（M3 開工前） | 分析結果的持久化 ＋ 冷啟動的 50 則上限（同一個立案，涉及隱私姿態） | §11.8 ①③ |
-| 待拍板（M3 開工前） | 憲法 5.3 的待修憲事項（與上一項**同進同出**） | `CONSTITUTION.md` 5.3 |
+| 待拍板（**已與里程碑脫鉤**） | 分析結果的持久化 ＋ 冷啟動的 50 則上限（同一個立案，涉及隱私姿態）。2026-09-03 起不再阻擋 M3 開工——`specs/006` 證明評分點不齊時留空並標示涵蓋範圍即可，日後拍板後欄位自然開始有值 | §11.8 ①③、`CONSTITUTION.md` 5.3 下方註記 |
+| ✅ 已完成 | 憲法 5.3 的修憲（冪等單位改為摘要草稿、主鍵改為獨立識別碼）——2026-09-03 發布為 **v4.0.0** | `CONSTITUTION.md` 5.3 與附錄 C |
 | 未達標·已安置（**不是未決**） | 摘要 10 秒、建議卡第一段 20 秒、情緒 15 秒 —— 三項皆未達 90%，門檻一律**不放寬**。**2026-09-03 已完成安置**：成因定位為平台側 agent 推論延遲、我方槓桿已用盡（並行度經 n=45 三檔位掃描證明是負槓桿）、已對外回報 `IMBRACE_QUESTIONS.md` **0-4**、後續判定歸屬 **M4** 的「三條時效門檻已在生產環境重新量測」。⚠️ 單輪 n=15 判不動（相隔 30 分鐘的兩輪結論相反）；情緒 2026-09-03 量到 41/45＝91% 但**經裁決不改判**，要翻案須第二次獨立時段的 n=45 也通過 | §18 M2、§18 M4、§8.2b、`IMBRACE_QUESTIONS.md` 0-4 |
 | 量測規程 | 兩輪之間 MUST 留 ≥30 分鐘冷卻且跨時段；隔離單次量測 MUST NOT 用來預測驗收 | §8.2b |
 | 已關閉的缺陷（留作對照） | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次，**皆於 2026-09-02 由 `specs/005-m2-residual-defects` 關閉**（US1／US2）；順帶修掉 `runBlockDeduped()` rerun 重跑第一次閉包的既有缺陷。**三段真實環境量測與封閉清單的 prompt 改動已於 2026-09-03 全部完成**（杜撰率 21% → 21% 零改善但查出成因；並行度 4／5 兩列同時變差）。**兩項裁決已於 2026-09-03 由使用者拍板：並行度維持 3、情緒 15 秒門檻不改判**；**T058 手動驗收同日全數通過，005 已 65/65 完成** | §18 M2、§8.2b |
@@ -3017,7 +3058,7 @@ docs/CONSTITUTION.md
 M0 / M1  地基     → 直接開發，不走 Spec Kit（避免儀式成本）
 M2 起的功能單元   → 走 /specify → /clarify → /plan → /tasks → /implement
                     · 情緒面板     · 建議卡與一鍵帶入
-                    · 知識庫快查   · 交接／結案摘要
+                    · 知識庫快查   · 結案摘要與人審面板
 ```
 
 **為何適合**：Spec Kit 的 `/clarify` 階段會強制把規格缺口顯性標記出來。本專案天生就有大量未定規格（見 §19），而每個未定的外部依賴剛好對應一個 provider 介面——很乾淨的切分。
