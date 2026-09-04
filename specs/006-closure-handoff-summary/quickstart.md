@@ -76,7 +76,12 @@ npx vitest run test/closure-write-failures.test.ts
 ```
 
 四種各注入 10 次（逾時、4xx、5xx、200 但回查不存在）。每一種斷言：
-端點回非 2xx、前端 store 回到 `ready`、`draft` 內容逐欄未變、`panelOpen` 仍為 true。
+端點回非 2xx、前端 store 回到 `ready`、`draft` 內容逐欄未變、`panelOpen` 仍為 true、
+回應帶 `reqId`（FR-035a）。
+
+另斷言 `failKind` 的分派（FR-032c）：前三種為 `failed`（畫布 B7），
+第四種為 `unverified`（畫布 B8）。⚠️ 但四種的 **store 狀態轉移必須完全相同** ——
+`failKind` 只切文案與按鈕；若測試發現 `unverified` 走了不同的狀態路徑，那就是 FR-032c 要防的事。
 
 ⚠️ **第四種是本規格最重要的一條測試**（契約 R3.5）。假 gateway 的 `createItem` 回 200，
 `getItem` 回 404。少了這條，「Board 上其實沒有」永遠不會被發現。
