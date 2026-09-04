@@ -77,6 +77,27 @@ backend which returned the full Board)」—— **那句是錯的**，它回的�
 
 ⚠️ 另注意平台回應**一律包一層 `{ data: ... }`**，SDK 型別沒有反映。
 
+### ⚠️ 選項的送法：`data: [{ value }]`，不是 `options`（2026-09-04 真實環境實測）
+
+`npm run board:setup` 首跑時發現的第四條 SDK 落差，與上面三條同一個家族：
+
+- SDK 的 `CreateFieldInput` 宣告的是 `options?: unknown[]` —— **平台不吃這個 key，
+  而且是靜默忽略**：回 200、欄位建起來了、**就是沒有選項**。
+- 正確的是 `data: [{ value: '…' }]`。物件的 key 是 **`value`**；
+  送 `{ name }` 或 `{ name, color }` 會 400（`ZodError: expected string, path data.N.value`）。
+- 這樣建立的欄位，`boards.get()` **會**回選項，放在 `data: [{ id, _id, value }]` 裡。
+
+⚠️ **這一條同時訂正了 `spike:board-write`（29）留下的一個錯誤推論。**
+那支 spike 送的是 `options`，回讀時讀不到選項，於是結論被寫成「平台不回選項」——
+**真正的原因是它送錯 key，那個欄位根本沒有選項。**
+兩者的差別很重要：前者會讓 `--verify` 的選項比對變成一項驗不了的事（B4 失效），
+後者則是一個**修得掉**的落差。
+症狀是「分類欄位在 Board 上是個沒有選項的下拉選單」，而寫入照樣成功
+（實測平台會照收清單外的值，006-E5）—— 又一條不報錯的靜默失效。
+
+✅ 2026-09-04 已於正式環境驗證：26 欄以 `data: [{ value }]` 建立後，
+`npm run board:verify` 的選項比對通過（`optionMismatch` 與 `optionsEmpty` 皆為 0）。
+
 ⚠️ **本表與 `ARCHITECTURE.md` §13.3、`shared/types/copilot.ts` 的 `ClosureSummary` 是同一份事實的三個副本。**
 依 FR-052 與 CLAUDE.md 的規則，改任一處 MUST 三處同步。驗法：
 

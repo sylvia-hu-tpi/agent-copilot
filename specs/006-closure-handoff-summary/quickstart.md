@@ -261,7 +261,7 @@ npm run dev
 | **SC-006** LEAVE 不寫入 | ✅ 自動化通過 | `test/closure-leave-no-write.test.ts`：LEAVE 20 次 → Board `create`／`update`／`search` 皆 0 次、`summarizeClosure()` 0 次；003 SC-002 重跑 20/20 |
 | **SC-006a** 涵蓋區間四情境各 5 次 | ✅ 自動化通過 | `test/closure-scope-selection.test.ts`：含「跨夜同一段服務不得被切開」的**反例**與「截斷是逐個候選」的斷言 |
 | **SC-006b** 區間內情緒數值 | ✅ 自動化通過 | `test/closure-sentiment-range.test.ts`：`trough` ≠ 全局最低；「部分有值」窮舉 25 個起點皆不可能出現；`null` 不進 body 而 `0` 進 body |
-| **SC-007** setup script 指得出缺漏 | 🟡 **自動化通過，真實環境待執行** | `test/closure-board-verify.test.ts`：**逐欄窮舉** 26 欄，移除任一欄都被指出；型別不符、選項缺漏、選項多出各一條。真實環境的三次執行見 6.4 |
+| **SC-007** setup script 指得出缺漏 | ✅ **自動化 ＋ 真實環境皆通過** | `test/closure-board-verify.test.ts`：**逐欄窮舉** 26 欄，移除任一欄都被指出。真實環境的執行紀錄見 6.4 |
 | **SC-008** 文案與行為落差為 0 | ✅ 已對照（見 6.3） | |
 
 ### 6.3 FR-002／SC-008 的文案對照結論（T033）
@@ -278,15 +278,47 @@ npm run dev
 
 ### 6.4 人工驗收（⬜ 全部待執行）
 
-> ⚠️ 這四項**無法自動化**，而且三項會動到 `IMBRACE_ENV=stable`（正式環境、真實客戶資料）。
-> 執行前 MUST 讓使用者知情（`CLAUDE.md` 環境章節）。
+> ⚠️ **T046 已於 2026-09-04 執行完畢（使用者知情後），紀錄見 6.4.1。**
+> 其餘三項**無法自動化**：它們驗的是「人讀不讀得懂」「一條不存在的路徑真的不存在」
+> 與「真實瀏覽器 ＋ 真實 AI 的整段流程」。
 
 | 任務 | 內容 | 為什麼不能自動化 |
 |---|---|---|
-| **T046** | 在 stable 跑 `board:setup` ×2、`board:verify` ×1，把印出的 id 寫進 `.env.local`；手動刪一欄後 verify 要非零離開並逐欄列出；補回該欄 | 會在**正式組織**建立 Board 與欄位 |
 | **T052**（SC-005） | 找 **3 位未參與本專案**的人，只給看兩顆按鈕與 `conversation.exitHint`，**在按下之前**請他們說出「哪一個會留下紀錄」；3/3 才算過 | 驗的是「沒看過規格的人讀不讀得懂」，任何自動化都會偷看到答案 |
 | **T053**（US1 AC#3） | 開啟結案面板後**完全不操作**放置 10 分鐘，確認 Board 上沒有任何紀錄 | 驗的是「沒有閒置自動寫入路徑」—— 一條不存在的路徑無法用測試證明不存在，只能實際等 |
 | **T054** | 走查 §3 步驟 1～8 ＋「中途要驗的三件事」 | 需要真實瀏覽器與真實 AI |
+
+#### 6.4.1　T046 執行紀錄（✅ 2026-09-04，`IMBRACE_ENV=stable`，使用者知情後執行）
+
+`IMBRACE_CLOSURE_BOARD_ID=265c78a1-4840-4c49-a12b-b5b2903c5c11`（已寫進 `.env.local`）
+
+| 步驟 | 輸出 | 離開碼 |
+|---|---|---|
+| ① `board:setup` 首跑 | **失敗** —— 建 board 成功、建到第 6 欄（`period_origin`，第一個 SingleSelection）時 400。見下方「首跑抓到的事」 | 1 |
+| ② 修正後 `board:setup` | 補建 21 欄 → `✅ 26 個欄位齊全`／`結果：通過` | 0 |
+| ③ `board:setup` 再跑一次（驗 B1 冪等） | **一欄都沒補**，直接 `✅ 26 個欄位齊全` | 0 |
+| ④ `board:verify` | `✅ 26 個欄位齊全`／`結果：通過` | 0 |
+| ⑤ 刪掉 `sentiment_trough` 後 `board:verify` | `❌ 缺少 1 個欄位：- sentiment_trough (Number)`／`結果：不通過（缺 1、型別不符 0、選項不符 0、無選項 0，共 1 項）` | **1** |
+| ⑥ `board:setup` 補回該欄 → `board:verify` | `✅ 26 個欄位齊全`／`結果：通過` | 0 |
+
+⑤ 就是 SC-007 的驗收證據：**逐欄指名**（不是只說「不通過」）＋ **非零離開碼**。
+④ 的通過同時代表選項比對是有效的 —— `optionMismatch` 與 `optionsEmpty` 都是 0，
+表示 26 欄的選項讀得回來且與 `config/categories.ts` 逐字相符。
+
+**首跑抓到的事（第四條 SDK 落差，已寫進契約 §2）**：
+SDK 的 `CreateFieldInput` 宣告 `options?: unknown[]`，但**平台不吃這個 key，且是靜默忽略**
+（回 200、欄位建起來了、就是沒有選項）。正確的是 `data: [{ value: '…' }]`。
+
+⚠️ 這同時**訂正了 spike 29 留下的一個錯誤推論**：它送 `options`、回讀時讀不到選項，
+結論被寫成「平台不回選項」。真正的原因是它送錯 key。兩者的差別很重要 ——
+前者會讓 `--verify` 的選項比對變成一項「驗不了的事」（B4 就此失效），
+後者是一個**修得掉**的落差。`diffBoardFields()` 的 `optionsUnreadable`（不計入不通過）
+因此改名為 `optionsEmpty` 並**計入不通過**。
+
+⚠️ 順帶修掉的第二件事：首跑失敗時 board 已經建好，但 id 還沒印出來 ——
+執行的人手上沒有它，只能回平台 UI 翻。這與 `spike:board-write` 那次留下孤兒 board
+是**同一個形狀**（「印出 id 的前提是後面每一步都成功」）。
+setup script 現在**建立成功就立刻印出 id**。
 
 ⚠️ **走查期間 MUST NOT 編輯 `server/**`** —— Nitro 熱重啟會清空 process-local session，
 所有分頁跳回登入頁，症狀酷似產品缺陷。
@@ -307,7 +339,12 @@ npm run dev
    「CRM 未收到，可直接重試」，但事實正好相反：`createItem` 已經回了 200，紀錄可能真的在。
    照那個提示重試會在正式 CRM 上產生第二筆。**由 SC-003 的第四種形態抓到。**
 
-2. **`hangMs` 注入讓假 gateway 關不掉。**
+2. **受控詞彙的選項用錯 key，而且是靜默失效。** 見 6.4.1 —— 由 T046 在真實環境抓到，
+   同時訂正了 spike 29 的一個錯誤推論。**自動化測試抓不到這一條**：假 gateway 是照
+   我方的假設寫的，兩邊一起錯就一起通過。這是「spike 的結論要以原始產出為準」
+   （`CLAUDE.md`）之外的另一半 —— **spike 自己也可能問錯問題**。
+
+3. **`hangMs` 注入讓假 gateway 關不掉。**
    `close()` 原本只 destroy 連線、沒有 `clearTimeout`，`server.close()` 因此要等到
    60 秒後才回。症狀是「`afterEach` 卡住」，與「被測程式碼真的沒落定」在紅字上一模一樣。
 
