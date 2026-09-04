@@ -20,6 +20,8 @@ import type { ImbraceClient } from '@imbrace/sdk'
 import type { Message } from '../../../shared/types/conversation.js'
 import type {
   AIProvider,
+  ClosureDraftAiPart,
+  ClosureVocabulary,
   ConversationSummary,
   SentimentNarrative,
   SentimentPoint,
@@ -265,6 +267,13 @@ export class ImbraceAgentProvider implements AIProvider {
     private readonly summaryAgentId: string,
     private readonly sentimentAgentId: string,
     private readonly suggestionAgentId: string,
+    /**
+     * specs/006 的第五個 agent。⚠️ 允許 `null` 是刻意的 ——
+     * 其餘四個 agent 齊全時（`server/services/ai/index.ts` 的判定不因本項改變）
+     * 就會用真 provider；缺這一支只讓**結案摘要**壞掉，MUST NOT 讓整個 Copilot
+     * 退回 mock。壞的範圍要與缺的東西一致。
+     */
+    private readonly closureAgentId: string | null = null,
   ) {}
 
   async summarize(input: {
@@ -362,6 +371,56 @@ export class ImbraceAgentProvider implements AIProvider {
         supersededBy: null,
       } as SuggestionCard
     })
+  }
+
+  /**
+   * 結案摘要（specs/006-closure-handoff-summary，第五個 agent）。
+   *
+   * ⚠️ **`closureAgentId` 為 `null` 時拋錯，MUST NOT 靜默退回 mock。**
+   *    其餘四個 agent 齊全時 `server/services/ai/index.ts` 會用真 provider ——
+   *    這一支若在那條路徑上退回 mock，正式環境會把一份固定的假摘要寫進 CRM，
+   *    而且不會有任何錯誤訊息。缺 agent 要在按下結案時當場失敗（route 回 502、
+   *    面板顯示錯誤與重試），那是看得見的壞掉。
+   *
+   * ⚠️ **本方法刻意不經 `withRetry()`。** 不是漏掉：`withRetry` 的 `CALL_TIMEOUT_MS`
+   *    是 15 秒，而結案摘要的耗時由涵蓋區間長度決定（實測短區間中位數 9.4 秒，
+   *    長區間逾 1 分鐘可接受，契約 R2.9／SC-004）。套上去的話，長區間會在 15 秒
+   *    被判逾時 → 歸為 transient → 再重試兩次 → 客服等了 45 秒拿到一個錯誤，
+   *    而錯誤訊息會說「逾時」，看不出真正的原因是我方自己訂了一個不該有的門檻。
+   *    ⚠️ 這與寫入路徑的 30 秒硬逾時（FR-032a）是**兩個性質相反的預算**，
+   *    MUST NOT 互相污染 —— 寫入的工作量固定為三次 Board 呼叫，正是該有門檻的那一類。
+   *    本方法仍使用 retry-policy 的**錯誤分類**（`AIProviderHttpError`／
+   *    `AIOutputValidationError` 由 `callAgent()` 與呼叫端的 parse 拋出）。
+   *
+   * ⚠️ `signal` 的取消力道與 `withRetry` 的 `signal` 相同：**只在送出前檢查**。
+   *    SDK 的 `streamChat()` 沒有暴露 `AbortSignal`（004 research #2），
+   *    已經在飛的呼叫取消不了。這裡誠實地做到能做的那一半 ——
+   *    送出前 abort 就不送、回來後 abort 就不解析。
+   */
+  async summarizeClosure(input: {
+    history: Message[]
+    vocabulary: ClosureVocabulary
+    knowledgeHits: KnowledgeHit[]
+    signal?: AbortSignal
+  }): Promise<ClosureDraftAiPart> {
+    if (!this.closureAgentId) {
+      throw new Error(
+        'IMBRACE_CLOSURE_AGENT_ID 未設定 —— 結案摘要 agent（AgentCopilot_結案摘要_agent）'
+        + '是在 iMBrace 後台手動建立的，assistant_id 因環境而異。'
+        + '請把它填進 .env.local（或部署環境的 NUXT_IMBRACE_CLOSURE_AGENT_ID）。',
+      )
+    }
+    throwIfAborted(input.signal)
+
+    const text = await this.callAgent(
+      this.closureAgentId,
+      buildClosurePrompt({ history: input.history, vocabulary: input.vocabulary }),
+    )
+    throwIfAborted(input.signal)
+
+    // 格式驗證與白名單後驗交給呼叫端的 `parseClosureDraftAiPart()`（憲法 4.2／4.6），
+    // 這一層只負責取回原樣輸出 —— 與 `narrateSentiment()` 同一個分工。
+    return extractLeadingJson(text) as ClosureDraftAiPart
   }
 
   /**
@@ -463,4 +522,18 @@ function warnIfSimplified(assistantId: string, text: string): void {
     `[ai] agent ${assistantId} 的輸出含簡體字（命中 ${hits.length} 處）——`
     + ' prompt 已要求繁體，請確認該 agent 後台的 system prompt 是否也有相同指示',
   )
+}
+
+/**
+ * ⚠️ `AbortError` 的 `name` 逐字是 `'AbortError'` —— `draft.post.ts` 以它分辨
+ *    「客服取消了」與「AI 真的失敗了」。改成別的名字不會有型別錯誤，
+ *    只會讓取消被記成一次失敗並回 502，而客服已經不在看了。
+ *    ⚠️ 與 `MockAIProvider` 的同名函式刻意各留一份：兩個 provider 之間沒有共用模組，
+ *    為了三行拉一條相依進來不划算（比照 `imbrace.ts` 對 `unwrapPaged` 的處置）。
+ */
+function throwIfAborted(signal?: AbortSignal): void {
+  if (!signal?.aborted) return
+  const err = new Error('結案摘要產生已取消')
+  err.name = 'AbortError'
+  throw err
 }

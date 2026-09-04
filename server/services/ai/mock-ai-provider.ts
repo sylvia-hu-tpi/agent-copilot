@@ -8,6 +8,8 @@
 
 import type {
   AIProvider,
+  ClosureDraftAiPart,
+  ClosureVocabulary,
   ConversationSummary,
   SentimentNarrative,
   SentimentPoint,
@@ -34,10 +36,21 @@ export interface MockAIProviderOptions {
   /** 只給 trend、不給 advice —— schema 應該擋下來（見 SentimentNarrativeSchema） */
   invalidNarrativeOutput?: boolean
   invalidSuggestOutput?: boolean
+  /**
+   * 結案摘要（specs/006）。⚠️ `closureDelayMs` **不是**效能旋鈕 ——
+   * SC-004 的「等待期間 100% 誠實」要把它拉長，才驗得到「完成前 status 從未是 ready」。
+   */
+  closureDelayMs?: number
+  closureFailure?: () => Error | null
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms))
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve() }, ms)
+    const onAbort = (): void => { clearTimeout(timer); reject(abortError()) }
+    if (signal?.aborted) { clearTimeout(timer); reject(abortError()); return }
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 export class MockAIProvider implements AIProvider {
@@ -145,4 +158,63 @@ export class MockAIProvider implements AIProvider {
       },
     ]
   }
+
+  /**
+   * 結案摘要（specs/006-closure-handoff-summary）。
+   *
+   * ⚠️ **US1～US3 的整條路徑（面板、編輯、冪等、四種失敗形態）靠這一支驗收** ——
+   *    真正的第五個 agent 只影響摘要內容品質，不影響任何一條狀態機路徑。
+   *    因此這裡回的必須是**固定但合法**的值：受控詞彙一律取 `vocabulary` 的第一個，
+   *    MUST NOT 回白名單外的值（那會讓 mock 路徑與真 provider 走不同的後驗分支）。
+   */
+  async summarizeClosure(input: {
+    history: Message[]
+    vocabulary: ClosureVocabulary
+    knowledgeHits: KnowledgeHit[]
+    signal?: AbortSignal
+  }): Promise<ClosureDraftAiPart> {
+    // ⚠️ 延遲期間也要能被取消 —— 契約 R2.9 要求「取消 MUST 真的中止在途呼叫」，
+    //    只在延遲**之後**檢查 signal 的話，SC-004 的取消測試會等滿整段延遲才生效，
+    //    而那與「只是把畫面關掉」在測試上分不出來。
+    if (this.opts.closureDelayMs) await sleep(this.opts.closureDelayMs, input.signal)
+    throwIfAborted(input.signal)
+
+    const failure = this.opts.closureFailure?.()
+    if (failure) throw failure
+
+    const first = <T>(list: readonly T[]): T | undefined => list[0]
+    const last = input.history[input.history.length - 1]
+
+    return {
+      summary: `客戶就本次議題來訊，已完成說明與後續安排（mock；本區間共 ${input.history.length} 則訊息${
+        last ? `，最後一則 ${last.id}` : ''
+      }）。`,
+      intent: '客戶詢問訂單相關問題',
+      category: first(input.vocabulary.categories) ?? '',
+      resolution: (first(input.vocabulary.resolutions) ?? '') as ClosureDraftAiPart['resolution'],
+      actionsTaken: input.vocabulary.actionsTaken.slice(0, 1) as string[],
+      sentimentOutcome: (first(input.vocabulary.sentimentOutcomes) ?? '') as ClosureDraftAiPart['sentimentOutcome'],
+      // 前兩筆命中 —— 白名單後驗（憲法 4.3）在真 provider 與 mock 都會跑到，
+      // 取命中集合內的值才驗得到「有引用時不被丟棄」那一半
+      citedSopIds: input.knowledgeHits.slice(0, 2).map(h => h.id),
+      followUps: [],
+      confidence: null,
+    }
+  }
 }
+
+/**
+ * ⚠️ `AbortError` 的 `name` 逐字是 `'AbortError'` —— 上層（`draft.post.ts`）以它
+ *    分辨「客服取消了」與「AI 真的失敗了」。改成別的名字不會有型別錯誤，
+ *    只會讓取消被記成一次失敗並回 502，而客服已經不在看了。
+ */
+function abortError(): Error {
+  const err = new Error('結案摘要產生已取消')
+  err.name = 'AbortError'
+  return err
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError()
+}
+

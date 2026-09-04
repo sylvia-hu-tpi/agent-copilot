@@ -259,6 +259,9 @@ function instrumentProviders(startedAt: () => number) {
 
   const ai: AIProvider = {
     summarize: input => realAI.summarize(input),
+    // specs/006 新增的第五個方法。本 spike 量的是建議卡的漸進引用，
+    // 結案摘要不在量測範圍內 —— 原樣轉發即可，不必包計時。
+    summarizeClosure: input => realAI.summarizeClosure(input),
     async analyzeSentiment(input) {
       sentimentInFlight++
       sentimentPeakInFlight = Math.max(sentimentPeakInFlight, sentimentInFlight)

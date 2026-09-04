@@ -34,6 +34,16 @@ function createProvider(): AIProvider {
   const summaryAgentId = envVar('NUXT_IMBRACE_SUMMARY_AGENT_ID', 'IMBRACE_SUMMARY_AGENT_ID')
   const sentimentAgentId = envVar('NUXT_IMBRACE_SENTIMENT_AGENT_ID', 'IMBRACE_SENTIMENT_AGENT_ID')
   const suggestionAgentId = envVar('NUXT_IMBRACE_SUGGESTION_AGENT_ID', 'IMBRACE_SUGGESTION_AGENT_ID')
+  /*
+    specs/006 的第五個 agent（結案摘要）。
+
+    ⚠️ **刻意不加進下面那個「缺一即退回 Mock」的判定。** 加進去的話，
+       還沒設定結案 agent 的環境會連摘要、情緒、建議卡一起退回假資料 ——
+       壞的範圍要與缺的東西一致。缺這一支只讓結案摘要在按下時當場失敗
+       （`ImbraceAgentProvider.summarizeClosure()` 拋錯 → route 回 502 → 面板顯示重試），
+       那是看得見的壞掉；靜默退回 mock 會把一份固定的假摘要寫進正式 CRM。
+  */
+  const closureAgentId = envVar('NUXT_IMBRACE_CLOSURE_AGENT_ID', 'IMBRACE_CLOSURE_AGENT_ID')
 
   if (!apiKey || !orgId || !summaryAgentId || !sentimentAgentId || !suggestionAgentId) {
     console.warn(
@@ -56,7 +66,13 @@ function createProvider(): AIProvider {
     baseUrl,
     env: env as Environment,
   })
-  return new ImbraceAgentProvider(client, summaryAgentId, sentimentAgentId, suggestionAgentId)
+  return new ImbraceAgentProvider(
+    client,
+    summaryAgentId,
+    sentimentAgentId,
+    suggestionAgentId,
+    closureAgentId || null,
+  )
 }
 
 export function useAIProvider(): AIProvider {
