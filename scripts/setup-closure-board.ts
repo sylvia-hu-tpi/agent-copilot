@@ -54,15 +54,18 @@ export interface BoardDiff {
   /** 受控詞彙的選項與 `config/categories.ts` 不一致。⚠️ 只報不改 */
   optionMismatch: Array<{ name: string, missing: string[], extra: string[] }>
   /**
-   * **讀不到選項**，因此無法比對 —— 與「選項不符」是兩件事。
+   * 欄位在、型別對，但**一個選項都沒有**。
    *
-   * ⚠️ 2026-09-04 實測（`scripts/spike/out/29-board-detail.json`）：以 `options`
-   *    建立的 `SingleSelection` 欄位，`boards.get()` 回讀時**沒有任何選項欄位**。
-   *    把這種情況報成「全部選項都缺」的話，`--verify` 會每一次都非零離開，
-   *    而 B2 的離開碼從此失去意義 —— 那比不檢查更糟。
-   *    因此獨立成一格：報出來讓人知道「這一項我方驗不了」，但不計入不通過。
+   * ⚠️ **2026-09-04 訂正**：這一格原本叫「讀不到選項」，前提是「平台不回選項」——
+   *    那個前提是錯的。真相是欄位以被平台**靜默忽略**的 key（`options`）建立，
+   *    因此它真的沒有選項（見 `imbrace.ts` 的 `createBoardField()`）。
+   *
+   * ⚠️ 因此它**計入不通過**：一個沒有選項的下拉選單在 Board 上仍然收得下值
+   *    （實測平台會照收清單外的值，006-E5），但**報表的篩選器裡看不到它們** ——
+   *    那正是 B4 要防的事。獨立成一格只是為了讓輸出讀得懂
+   *    （「這一欄整組沒有選項」比「缺少 12 個選項」清楚）。
    */
-  optionsUnreadable: string[]
+  optionsEmpty: string[]
 }
 
 /**
@@ -76,7 +79,7 @@ export function diffBoardFields(
 ): BoardDiff {
   const byName = new Map(actual.map(f => [f.name, f]))
   const diff: BoardDiff = {
-    missing: [], typeMismatch: [], optionMismatch: [], optionsUnreadable: [],
+    missing: [], typeMismatch: [], optionMismatch: [], optionsEmpty: [],
   }
 
   for (const spec of expected) {
@@ -88,7 +91,7 @@ export function diffBoardFields(
       continue
     }
     if (!spec.options) continue
-    if (!found.options) { diff.optionsUnreadable.push(spec.name); continue }
+    if (!found.options || found.options.length === 0) { diff.optionsEmpty.push(spec.name); continue }
 
     const have = new Set(found.options)
     const want = new Set(spec.options)
@@ -103,11 +106,12 @@ export function diffBoardFields(
   return diff
 }
 
-/** 有落差就非零離開（B2）。⚠️ `optionsUnreadable` **不**計入 —— 那是我方驗不了，不是不通過 */
+/** 有落差就非零離開（B2）。⚠️ 四格**都**計入 —— 見 `optionsEmpty` 的說明 */
 export function isDiffClean(diff: BoardDiff): boolean {
   return diff.missing.length === 0
     && diff.typeMismatch.length === 0
     && diff.optionMismatch.length === 0
+    && diff.optionsEmpty.length === 0
 }
 
 // ── 輸出（逐字比照契約 §4）──────────────────────────────────────────────
@@ -146,18 +150,19 @@ function report(boardName: string, boardId: string, total: number, diff: BoardDi
       }
     }
   }
-  if (diff.optionsUnreadable.length > 0) {
-    console.log(`ℹ️ 讀不到選項、無法比對 ${diff.optionsUnreadable.length} 個：${diff.optionsUnreadable.join('、')}`)
-    console.log('   （實測 boards.get() 目前不回選項清單，見 scripts/spike/out/29-board-detail.json；')
-    console.log('    這一項不計入不通過 —— 否則 --verify 會每次都失敗而失去意義）')
+  if (diff.optionsEmpty.length > 0) {
+    console.log(`⚠️ 完全沒有選項 ${diff.optionsEmpty.length} 個：${diff.optionsEmpty.join('、')}`)
+    console.log('   （值仍寫得進去，但 Board 的篩選器裡看不到它們。')
+    console.log('    最可能的成因：欄位是以 `options` 這個被平台靜默忽略的 key 建立的）')
   }
 
-  const problems = diff.missing.length + diff.typeMismatch.length + diff.optionMismatch.length
+  const problems = diff.missing.length + diff.typeMismatch.length
+    + diff.optionMismatch.length + diff.optionsEmpty.length
   console.log(
     isDiffClean(diff)
       ? '\n結果：通過'
       : `\n結果：不通過（缺 ${diff.missing.length}、型別不符 ${diff.typeMismatch.length}、`
-        + `選項不符 ${diff.optionMismatch.length}，共 ${problems} 項）`,
+        + `選項不符 ${diff.optionMismatch.length}、無選項 ${diff.optionsEmpty.length}，共 ${problems} 項）`,
   )
 }
 
@@ -198,6 +203,15 @@ async function main(): Promise<number> {
     }
     console.log(`\n📋 IMBRACE_CLOSURE_BOARD_ID 未設定，建立新的 Board「${CLOSURE_BOARD_NAME}」…`)
     boardId = await createBoard(client, CLOSURE_BOARD_NAME, CLOSURE_BOARD_DESCRIPTION)
+    /*
+      ⚠️ **建立成功就立刻印出 id**，不等跑到最後那一行。
+
+      這是 `scripts/spike/29-board-write-path.ts` 用一個正式環境的孤兒 board 換來的教訓：
+      「印出 id 的前提是後面每一步都成功」是個很爛的前提 —— 後面失敗時 board 已經建好了，
+      而執行的人手上沒有它的 id，只能回平台 UI 翻。
+      2026-09-04 本腳本首跑就是這樣（建欄位時 400，board 留在正式組織裡）。
+    */
+    console.log(`   ✅ 已建立。IMBRACE_CLOSURE_BOARD_ID=${boardId}`)
   }
 
   // ── ② 讀現有欄位（⚠️ 不吃快取 —— 驗證的整個意義就是不信任任何副本）──
@@ -239,11 +253,18 @@ async function main(): Promise<number> {
 // ⚠️ 只在直接執行時跑 —— `test/closure-board-verify.test.ts` 會 import
 //    `diffBoardFields()`，那時不該連上任何平台
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('setup-closure-board.ts')) {
+  /*
+    ⚠️ 用 `process.exitCode` 而不是 `process.exit()`：後者在 Windows ＋ tsx 下會在
+       SDK 的 socket 還在關閉時強制結束，印出
+       `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` 這行 libuv 噪音。
+       離開碼仍然正確，但那行看起來像崩潰 —— 而這支腳本的**離開碼就是它的產出**
+       （B2），任何讓人懷疑它是不是壞了的輸出都要清掉。
+  */
   main()
-    .then(code => process.exit(code))
+    .then((code) => { process.exitCode = code })
     .catch((err) => {
       // ⚠️ 只印訊息，不印 stack、不印請求內容 —— 憑證可能在裡面
       console.error(`\n💥 ${err instanceof Error ? err.message : String(err)}\n`)
-      process.exit(1)
+      process.exitCode = 1
     })
 }

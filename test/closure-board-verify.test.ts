@@ -19,8 +19,8 @@ import type { BoardFieldInfo } from '../server/services/imbrace.js'
 
 /**
  * 由欄位表造一份「Board 上實際長這樣」的 fixture。
- * ⚠️ 預設**帶上選項** —— 平台目前不回選項（見 `optionsUnreadable` 的測試），
- *    但比對邏輯本身必須在選項讀得到時是對的，否則平台哪天開始回選項就沒人發現它壞了。
+ * ⚠️ 預設**帶上選項** —— 以 `data: [{ value }]` 建立的欄位，`boards.get()` 讀得到選項
+ *    （2026-09-04 真實環境實測）。`dropOptions` 造的才是「這一欄整組沒有選項」那種落差。
  */
 function actualFields(
   over: { omit?: string[], retype?: Record<string, string>, options?: Record<string, string[]>, dropOptions?: string[] } = {},
@@ -45,7 +45,7 @@ describe('B2：齊全時空差集、離開碼 0', () => {
     expect(diff.missing).toEqual([])
     expect(diff.typeMismatch).toEqual([])
     expect(diff.optionMismatch).toEqual([])
-    expect(diff.optionsUnreadable).toEqual([])
+    expect(diff.optionsEmpty).toEqual([])
     expect(isDiffClean(diff)).toBe(true)
   })
 
@@ -112,19 +112,30 @@ describe('B4：受控詞彙的選項也 MUST 比對', () => {
   })
 })
 
-describe('⚠️ 「讀不到選項」與「選項不符」是兩件事', () => {
-  it('平台不回選項時進 optionsUnreadable，且**不**計入不通過', () => {
+describe('⚠️ 「整組沒有選項」與「選項不符」分開報，但兩者都算不通過', () => {
+  it('受控詞彙欄位一個選項都沒有 → 進 optionsEmpty 且**計入不通過**', () => {
     /*
-      ⚠️ 2026-09-04 實測：`boards.get()` 對以 options 建立的 SingleSelection 欄位
-         **不回任何選項欄位**（`scripts/spike/out/29-board-detail.json`）。
-         把它報成「全部選項都缺」的話，`--verify` 會每次都非零離開，
-         B2 的離開碼從此失去意義 —— 那比不檢查更糟。
+      ⚠️ **2026-09-04 訂正**：這一格原本的前提是「平台不回選項」，那是錯的。
+         真相是 spike 29 送錯 key（`options`，被平台**靜默忽略**），
+         所以那些欄位**真的**沒有選項。正確的送法是 `data: [{ value }]`，
+         而那樣建立的欄位 `boards.get()` 是讀得到選項的。
+
+         因此這裡驗的是：欄位在、型別對，但沒有選項 —— 那是一個要修的落差。
+         值仍寫得進去（實測平台會照收清單外的值，006-E5），
+         但 **Board 的篩選器裡看不到它們**，正是 B4 要防的事。
+         獨立成一格只是為了讓輸出讀得懂（「這一欄整組沒有選項」比「缺少 12 個選項」清楚）。
     */
     const selectionFields = CLOSURE_BOARD_FIELDS.filter(f => f.options).map(f => f.name)
     const diff = diffBoardFields(actualFields({ dropOptions: selectionFields }))
 
-    expect(diff.optionsUnreadable.sort()).toEqual([...selectionFields].sort())
+    expect(diff.optionsEmpty.sort()).toEqual([...selectionFields].sort())
+    // 不重複報成「缺少 N 個選項」—— 那會讓輸出被淹沒
     expect(diff.optionMismatch).toEqual([])
-    expect(isDiffClean(diff), '讀不到選項不算不通過').toBe(true)
+    expect(isDiffClean(diff), '整組沒有選項 MUST 算不通過').toBe(false)
+  })
+
+  it('空陣列與 undefined 同義 —— 兩種都是「沒有選項」', () => {
+    const diff = diffBoardFields(actualFields({ options: { category: [] } }))
+    expect(diff.optionsEmpty).toEqual(['category'])
   })
 })

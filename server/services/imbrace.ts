@@ -544,11 +544,17 @@ export interface BoardFieldInfo {
   name: string
   type: string
   /**
-   * ⚠️ **實測 `boards.get()` 目前不回選項**（`out/29-board-detail.json`：以 `options`
-   *    建立的 `SingleSelection` 欄位，回讀時沒有任何選項欄位）。因此本欄常為
-   *    `undefined`，而那**不等於「Board 上沒有選項」**。
-   *    `diffBoardFields()` 據此把「讀不到選項」與「選項不符」分成兩種結果 ——
-   *    混為一談會讓 `--verify` 每次都非零離開，B2 的離開碼就失去意義。
+   * 受控詞彙欄位的選項。
+   *
+   * ⚠️ **2026-09-04 訂正（真實環境實測，`npm run board:setup` 首跑）**：
+   *    先前依 `out/29-board-detail.json` 記為「平台不回選項」，**那個推論是錯的**。
+   *    真相是 spike 29 **送錯了 key** —— 它送 `options: [string]`，而平台
+   *    **靜默忽略**那個欄位（回 200、欄位建起來了、就是沒有選項）。
+   *    正確的送法是 `data: [{ value: '…' }]`；這樣建立的欄位，`boards.get()`
+   *    **會**回選項，放在 `data: [{ id, _id, value }]` 裡。
+   *
+   * ⚠️ 因此 `undefined` 現在的意思是「**這個欄位真的沒有選項**」，
+   *    而不是「我方讀不到」—— 那是一個要修的落差（報表的篩選器裡看不到那些值）。
    */
   options?: string[]
 }
@@ -567,8 +573,10 @@ export interface BoardItemRecord {
 }
 
 /**
- * 從欄位定義物件裡把選項撈出來 —— 擺法未知，四種常見 key 都試。
- * 全部落空回 `undefined`（＝「讀不到」），MUST NOT 回空陣列（那是「沒有選項」）。
+ * 從欄位定義物件裡把選項撈出來。
+ *
+ * ⚠️ 實測平台放在 **`data: [{ id, _id, value }]`**（2026-09-04，真實環境）。
+ *    其餘三個 key 是保險 —— 平台換擺法時要能繼續運作，而不是安靜地回一張空表。
  */
 function optionsOf(raw: Record<string, unknown>): string[] | undefined {
   for (const key of ['options', 'data', 'selections', 'selection_options']) {
@@ -656,10 +664,19 @@ export async function createBoard(
  *    呼叫端 MUST 在建完之後以 `getBoard()` 重新反查。把回傳值拿掉是讓那條規則
  *    「不可能被忘記」的唯一方式：文件與註解都會被跳過，型別不會。
  *
- * ⚠️ 選項同時以 `options` 與 `data` 兩個 key 送出：SDK 的 `CreateFieldInput` 用
- *    `options`，而同一份 d.ts 的 `CreateBoardFieldInput`（board 建立時內嵌欄位用）
- *    用的是 `data`，哪一個是平台真正吃的並未實測。平台對不認得的 key 一律靜默忽略
- *    （filter／sort 兩條實測都是這個行為），因此兩個都送是安全的。
+ * ⚠️⚠️ **選項 MUST 以 `data: [{ value: '…' }]` 送出**（2026-09-04 真實環境實測）。
+ *
+ *      SDK 的 `CreateFieldInput` 宣告的是 `options?: unknown[]` —— **那個 key 平台不吃**，
+ *      而且是**靜默忽略**：回 200、欄位建起來了、就是沒有選項。
+ *      這是本規格找到的第四條「不報錯但做錯事」的 SDK 落差，
+ *      症狀是「分類欄位在 Board 上是個沒有選項的下拉選單」，而寫入照樣成功
+ *      （實測平台會照收選項清單外的值，006-E5）。
+ *
+ *      ⚠️ 物件的 key 是 **`value`**，不是 `name`：送 `{ name }` 會 400
+ *      （`ZodError: expected string, path data.0.value`）。`{ label, value }` 也可以，
+ *      多出來的 `label` 被忽略 —— 因此只送 `value`，不送我方無法驗證的欄位。
+ *      ⚠️ **MUST NOT 再同時送 `options`**：它不會生效，只會讓下一個讀這段的人
+ *      以為那才是正解。
  */
 export async function createBoardField(
   client: ImbraceClient,
@@ -670,7 +687,7 @@ export async function createBoardField(
     name: spec.name,
     type: spec.type,
     ...(spec.description ? { description: spec.description } : {}),
-    ...(spec.options ? { options: [...spec.options], data: [...spec.options] } : {}),
+    ...(spec.options ? { data: spec.options.map(value => ({ value })) } : {}),
   })
 }
 

@@ -209,10 +209,13 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
     name: f.name,
     type: f.type,
     order: i,
-    // ⚠️ 刻意**不**回 `options` —— 實測 `boards.get()` 就是不回選項
-    //    （`scripts/spike/out/29-board-detail.json`：以 options 建立的 SingleSelection
-    //    欄位，回讀時沒有任何選項欄位）。這裡若補上，`diffBoardFields()` 對
-    //    「讀不到選項」那條分支就永遠測不到。
+    /*
+      受控詞彙欄位的選項 —— 平台放在 `data: [{ id, _id, value }]`
+      （2026-09-04 真實環境實測；**不是** `options`，那個 key 被平台靜默忽略）。
+      ⚠️ 忠實重現這個擺法，`server/services/imbrace.ts` 的 `optionsOf()` 才有東西可讀；
+         若這裡回 `options: [...]`，那支函式就會走到它的保險分支而不是實際分支。
+    */
+    ...(f.options ? { data: f.options.map(value => ({ id: `opt_${value}`, _id: `opt_${value}`, value })) } : {}),
   }))
   const fieldIdByName = new Map(boardFields.map(f => [f.name, f.id]))
   const boardItems: Array<{ id: string, fields: Record<string, unknown>, created_at: string }> = []
