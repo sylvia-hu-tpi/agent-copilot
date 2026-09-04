@@ -24,8 +24,9 @@
  *    `fetchLatest()` 的 `.reverse()` 就會被測成「正確」，而實際上是反的。
  */
 
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type ServerResponse } from 'node:http'
 import { AddressInfo } from 'node:net'
+import { CLOSURE_BOARD_FIELDS, CLOSURE_BOARD_NAME } from '../server/services/closure/board-schema.js'
 
 export interface RecordedRequest {
   method: string
@@ -50,8 +51,61 @@ export interface MockGateway {
   currentMode(): string | null
   /** 已送出的訊息（驗證送出路徑真的打到平台）*/
   sentMessages(): Array<Record<string, unknown>>
+
+  // ── Data Board（specs/006-closure-handoff-summary）────────────────
+  /** 這個假 gateway 上那個 board 的 id —— 測試把它當 `IMBRACE_CLOSURE_BOARD_ID` 用 */
+  boardId(): string
+  /**
+   * 目前 board 上的全部紀錄，**key 換成欄位名**（不是欄位 id）。
+   *
+   * ⚠️ 換成欄位名純粹是為了讓斷言讀得懂。**平台真正吃的是欄位 id**（實測 006-E3），
+   *    那一層由 `board-repository.ts` 的 name→id 對照負責，且假 gateway 這邊
+   *    也是以 id 為 key 儲存 —— 若哪天有人把 repository 改成送欄位名，
+   *    這裡會查不到欄位而寫出一筆空紀錄，測試會紅。
+   */
+  boardItems(): Array<Record<string, unknown>>
+  /** 某個 Board 操作被打了幾次 —— SC-003 靠它證明「重試耗盡後仍是失敗」而非被吞成成功 */
+  boardCallCount(op: BoardOp): number
+  /**
+   * 直接塞一筆紀錄（不經寫入路徑），key 用**欄位名**。
+   * 供 US2 造出「別人的結案紀錄」與「建立順序與 closed_at 相反」的情境。
+   */
+  seedBoardItem(fieldsByName: Record<string, unknown>): { id: string }
   close(): Promise<void>
 }
+
+/** Board 的四種操作 —— 故障注入與計次都以它為鍵 */
+export type BoardOp = 'search' | 'create' | 'update' | 'get'
+
+export interface BoardMockOptions {
+  /**
+   * 指定操作要回的 HTTP 狀態碼。
+   *
+   * ⚠️ **Board 路徑允許 5xx**，與本檔上方 `failWith` 的「不要用 5xx」不同。
+   *    SC-003 明列「平台 5xx」是四種失敗形態之一，用 4xx 或 `hangMs` 代替
+   *    會讓那一格從未被驗到。代價是 SDK 的退避重試寫死在
+   *    `node_modules/@imbrace/sdk/dist/http.js`（`maxRetries = 3`，1s→2s→4s，不可設定），
+   *    一次 5xx 要花約 7 秒 —— 由 `test/closure-write-failures.test.ts` 以
+   *    **並行 ＋ 拉長該組 timeout** 承擔，那不是例外，是已知成本。
+   */
+  failWith?: Partial<Record<BoardOp, number>>
+  /** 指定操作延遲多久才回應（ms）—— 逾時測試用 */
+  hangMs?: Partial<Record<BoardOp, number>>
+  /**
+   * `getItem` 一律回 404 —— 重現「寫入回 200 但回查不存在」（`failKind: 'unverified'`）。
+   * ⚠️ 這是本規格最重要的一條測試（契約 R3.5）：少了它，
+   *    「Board 上其實沒有」永遠不會被發現。
+   */
+  createButHideFromGet?: boolean
+  /**
+   * 前 N 次 `createItem` **實際建立紀錄但不回應**（連線掛著）——
+   * SC-002「逾時後重試」的注入形態。⚠️ 刻意不是「不建立也不回應」：
+   * 真正危險的情境正是「平台其實寫進去了，只是我方沒收到回應」，
+   * 冪等要擋的就是這一種。
+   */
+  createButTimeout?: { times: number }
+}
+
 
 export interface MockGatewayOptions {
   /** authenticate 回傳的組織清單 */
@@ -59,12 +113,17 @@ export interface MockGatewayOptions {
   /** exchange 是否回傳 refresh_token（用來驗證 F-2 與 §5.1 ③） */
   withRefreshToken?: boolean
   /** 指定路徑要回傳的 HTTP 狀態碼，用來測失敗路徑。
-   *  ⚠️ 不要用 5xx／429：SDK 會自動指數退避重試（1s→2s→4s），測試會逾時。 */
+   *  ⚠️ 不要用 5xx／429：SDK 會自動指數退避重試（1s→2s→4s），測試會逾時。
+   *  ⚠️ **Board 路徑（`board.failWith`）是例外，那裡允許 5xx** —— specs/006 的 SC-003
+   *     明列 5xx 是四種失敗形態之一。約 7 秒的退避由 `test/closure-write-failures.test.ts`
+   *     以並行 ＋ 拉長該組 timeout 承擔，那不是例外，是已知成本。 */
   failWith?: Record<string, number>
   /** authenticate 回 200 但不帶 token —— 測防腐層有沒有把這種「假成功」擋下來 */
   omitLoginToken?: boolean
   /** 對話的初始服務模式（§10.6）。`null` 代表從未 JOIN */
   mode?: 'manual' | 'hybrid' | 'automation' | null
+  /** Data Board 的故障注入（specs/006）。省略即一切正常 */
+  board?: BoardMockOptions
 }
 
 const DEFAULT_ORGS = [
@@ -128,6 +187,59 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
 
   addMessage('con_1', '你好，我的訂單還沒到')
   addMessage('pub_bot', '您好，我幫您查詢一下')
+
+  // ── Data Board 的記憶體狀態（specs/006）──────────────────────────
+  //
+  // ⚠️ **這裡忠實重現三件實測到的平台行為，因為它們都是「不報錯但做錯事」：**
+  //   ① 回應一律包一層 `{ data: ... }`（唯 `/search/` 例外，回 Meilisearch 信封）
+  //   ② `search` **只依 `q` 做子字串比對，`filter` 與 `sort` 一律忽略**
+  //      —— 讓「誤信平台過濾／排序」的實作在測試裡就會錯，而不是上線後才錯
+  //   ③ 欄位以**欄位 id** 為 key，不是欄位名
+  const BOARD_ID = 'bd_closure_test'
+  const boardFields = CLOSURE_BOARD_FIELDS.map((f, i) => ({
+    id: `fld_${String(i).padStart(2, '0')}_${f.name}`,
+    _id: `fld_${String(i).padStart(2, '0')}_${f.name}`,
+    name: f.name,
+    type: f.type,
+    order: i,
+    // ⚠️ 刻意**不**回 `options` —— 實測 `boards.get()` 就是不回選項
+    //    （`scripts/spike/out/29-board-detail.json`：以 options 建立的 SingleSelection
+    //    欄位，回讀時沒有任何選項欄位）。這裡若補上，`diffBoardFields()` 對
+    //    「讀不到選項」那條分支就永遠測不到。
+  }))
+  const fieldIdByName = new Map(boardFields.map(f => [f.name, f.id]))
+  const boardItems: Array<{ id: string, fields: Record<string, unknown>, created_at: string }> = []
+  const boardOpts = opts.board ?? {}
+  const boardCalls: Record<BoardOp, number> = { search: 0, create: 0, update: 0, get: 0 }
+  let boardItemSeq = 0
+  let createTimeoutsLeft = boardOpts.createButTimeout?.times ?? 0
+  /** 掛住不回應的連線 —— `close()` 時要一併結束，否則 server 關不掉 */
+  const hungResponses: ServerResponse[] = []
+
+  function seedBoardItem(fieldsByName: Record<string, unknown>): { id: string } {
+    const byId: Record<string, unknown> = {}
+    for (const [name, value] of Object.entries(fieldsByName)) {
+      const fid = fieldIdByName.get(name)
+      if (fid) byId[fid] = value
+    }
+    const id = `bi_${++boardItemSeq}`
+    boardItems.push({ id, fields: byId, created_at: new Date(Date.UTC(2026, 8, 1, 0, boardItemSeq, 0)).toISOString() })
+    return { id }
+  }
+
+  function itemByName(item: { id: string, fields: Record<string, unknown> }): Record<string, unknown> {
+    const out: Record<string, unknown> = { record_id: item.id }
+    for (const f of boardFields) {
+      if (f.id in item.fields) out[f.name] = item.fields[f.id]
+    }
+    return out
+  }
+
+  /** `q` 的比對：把該筆所有欄位值串起來做子字串比對 —— 全文檢索的最小忠實模型 */
+  function matchesQuery(item: { fields: Record<string, unknown> }, q: string): boolean {
+    if (!q) return true
+    return Object.values(item.fields).some(v => JSON.stringify(v ?? '').includes(q))
+  }
 
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = []
@@ -260,6 +372,96 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
         return send(200, { data: newestFirst.slice(skip, skip + limit), total: messages.length })
       }
 
+      // ── specs/006：Data Board ────────────────────────────────
+      // SDK 的路徑（`node_modules/@imbrace/sdk/dist/resources/boards.js`）：
+      //   GET    {gw}/data-board/boards/{id}
+      //   POST   {gw}/data-board/boards/{id}/items
+      //   GET    {gw}/data-board/boards/{id}/items/{itemId}
+      //   PATCH  {gw}/data-board/boards/{id}/items/{itemId}
+      //   POST   {gw}/data-board/search/{id}
+      if (path.includes('/data-board/')) {
+        const boardOp: BoardOp | null = path.includes('/data-board/search/')
+          ? 'search'
+          : /\/items\/[^/?]+$/.test(path)
+            ? (req.method === 'PATCH' ? 'update' : 'get')
+            : /\/items$/.test(path) && req.method === 'POST'
+              ? 'create'
+              : null
+
+        // ⚠️ 計次在故障注入**之前** —— SC-003 要證明「SDK 重試耗盡後仍是失敗」，
+        //    而那個證明就是「create 被打了 40 次（10 × 4 次嘗試）」。
+        //    放到成功分支之後計次的話，那個斷言會永遠是 0 而看起來像通過。
+        if (boardOp) boardCalls[boardOp]++
+
+        const respond = (status: number, payload: unknown): void => {
+          const delay = boardOp ? boardOpts.hangMs?.[boardOp] : undefined
+          if (delay) { setTimeout(() => send(status, payload), delay); return }
+          send(status, payload)
+        }
+
+        const failStatusForOp = boardOp ? boardOpts.failWith?.[boardOp] : undefined
+        if (failStatusForOp) return respond(failStatusForOp, { message: `mock board failure (${boardOp})` })
+
+        // 全文檢索：⚠️ **只看 `q`**。body 裡的 filter／sort 一律忽略（實測 006-E7／E8）
+        const searchMatch = /\/data-board\/search\/([^/?]+)$/.exec(path)
+        if (searchMatch) {
+          const body = (requests.at(-1)?.body ?? {}) as { q?: string, limit?: number }
+          const q = String(body.q ?? '')
+          const hits = boardItems.filter(it => matchesQuery(it, q))
+          return respond(200, {
+            success: true,
+            message: {
+              // ⚠️ 依**建立順序**回，不依任何欄位排序 —— 平台就是這樣（006-E8）。
+              //    回傳順序若在這裡先排好，「本地排序」那段程式碼刪掉也不會有測試變紅。
+              hits: hits.slice(0, body.limit ?? 50).map(it => ({ ...it, _id: it.id })),
+              query: q,
+              estimatedTotalHits: hits.length,
+            },
+          })
+        }
+
+        const itemMatch = /\/data-board\/boards\/([^/?]+)\/items\/([^/?]+)$/.exec(path)
+        if (itemMatch) {
+          const itemId = decodeURIComponent(itemMatch[2] ?? '')
+          const found = boardItems.find(it => it.id === itemId)
+          if (req.method === 'PATCH') {
+            if (!found) return respond(404, { message: 'item not found' })
+            const body = (requests.at(-1)?.body ?? {}) as { fields?: Record<string, unknown> }
+            // ⚠️ **部分更新**（未送的欄位保留），實測 006-E9。整筆覆蓋會讓
+            //    「只送有改的欄位」那種寫法在測試裡也通過，而正式環境不會。
+            Object.assign(found.fields, body.fields ?? {})
+            return respond(200, { data: { ...found, _id: found.id } })
+          }
+          if (boardOpts.createButHideFromGet) return respond(404, { message: 'item not found' })
+          if (!found) return respond(404, { message: 'item not found' })
+          return respond(200, { data: { ...found, _id: found.id } })
+        }
+
+        if (/\/data-board\/boards\/[^/?]+\/items$/.test(path) && req.method === 'POST') {
+          const body = (requests.at(-1)?.body ?? {}) as { fields?: Record<string, unknown> }
+          const id = `bi_${++boardItemSeq}`
+          boardItems.push({
+            id,
+            fields: { ...(body.fields ?? {}) },
+            created_at: new Date(Date.UTC(2026, 8, 1, 1, boardItemSeq, 0)).toISOString(),
+          })
+          // ⚠️ **紀錄已經建立了，只是不回應** —— 「平台其實寫進去了，我方沒收到回應」
+          //    正是冪等要擋的那一種。不建立就不回應的話，重試產生第二筆這個 bug
+          //    在測試裡永遠不會出現。
+          if (createTimeoutsLeft > 0) { createTimeoutsLeft--; hungResponses.push(res); return }
+          return respond(200, { data: { _id: id, id, fields: boardItems.at(-1)!.fields } })
+        }
+
+        const boardMatch = /\/data-board\/boards\/([^/?]+)$/.exec(path)
+        if (boardMatch && req.method === 'GET') {
+          return respond(200, {
+            data: { _id: BOARD_ID, id: BOARD_ID, name: CLOSURE_BOARD_NAME, fields: boardFields },
+          })
+        }
+
+        return send(404, { message: `mock gateway: 未實作的 data-board 路徑 ${path}` })
+      }
+
       if (path.endsWith('/access/_exchange_access_token')) {
         return send(200, {
           token: 'acc_TESTTOKEN',
@@ -282,7 +484,17 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
     messageCount: () => messages.length,
     currentMode: () => mode,
     sentMessages: () => sent,
+    boardId: () => BOARD_ID,
+    boardItems: () => boardItems.map(itemByName),
+    boardCallCount: (op: BoardOp) => boardCalls[op],
+    seedBoardItem,
     close: () => new Promise<void>((resolve, reject) => {
+      // ⚠️ 先結束掛住的連線，否則 `server.close()` 會等它們，測試會逾時 ——
+      //    而 `createButTimeout` 的存在理由就是製造這種連線。
+      for (const hung of hungResponses.splice(0)) {
+        try { hung.destroy() }
+        catch { /* 已經關掉就算了 */ }
+      }
       server.close(err => (err ? reject(err) : resolve()))
     }),
   }
