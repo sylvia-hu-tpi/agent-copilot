@@ -509,6 +509,94 @@ async function runWrites(p: Probe, client: ImbraceClient, boardName: string): Pr
     })
   }
 
+  // ── ⑨ 索引延遲：建立之後多久才搜尋得到？───────────────────
+  //
+  // ⚠️ **這一段直接決定冪等在最危險情境下成不成立**（specs/006 US3 AC#3 ／畫布 B8
+  //    「回報成功但紀錄不存在」）。冪等的第一步是 `q: draftId` 搜尋，
+  //    而**搜尋與 `getItem` 是兩條不同的路徑**：
+  //      · `getItem(id)` 直接以 id 取，回查（第三步）用它
+  //      · `q` 是全文檢索，寫入前的「有沒有既有紀錄」用它
+  //    若建立之後索引要一段時間才跟上，那麼「逾時後重試」會查不到既有那筆 →
+  //    走 createItem → **產生第二筆**，而且不會報錯。
+  //    這裡量的就是那段時間窗有多大。
+  const LAG_RUNS = 3
+  const LAG_TIMEOUT_MS = 20_000
+  const lagResults: Array<{ getItemOk: boolean, foundAfterMs: number | null }> = []
+
+  for (let r = 0; r < LAG_RUNS; r++) {
+    const probeDraftId = `lag-${Date.now()}-${r}`
+    const body = writeShape === 'fields-by-id'
+      ? { fields: { [fid('p_short')]: probeDraftId } }
+      : { p_short: probeDraftId }
+
+    const created = await client.boards.createItem(boardId, body)
+    const newId = idOf(created)
+    if (!newId) { lagResults.push({ getItemOk: false, foundAfterMs: null }); continue }
+
+    // (a) 立刻以 id 直接取 —— 這是回查（第三步）走的路徑
+    let getItemOk = false
+    try {
+      const back = await client.boards.getItem(boardId, newId)
+      getItemOk = String(valueOf(back, fid('p_short'), 'p_short') ?? '') === probeDraftId
+    }
+    catch { /* 保持 false */ }
+
+    // (b) 輪詢全文檢索，直到搜得到為止 —— 這是冪等第一步走的路徑
+    const started = Date.now()
+    let foundAfterMs: number | null = null
+    while (Date.now() - started < LAG_TIMEOUT_MS) {
+      try {
+        const res = await client.boards.search(boardId, { q: probeDraftId, limit: 20 })
+        const hit = (res?.message?.hits ?? []).some(
+          h => String(valueOf(h, fid('p_short'), 'p_short') ?? '') === probeDraftId,
+        )
+        if (hit) { foundAfterMs = Date.now() - started; break }
+      }
+      catch { /* 忽略單次失敗，繼續輪詢 */ }
+      await new Promise(res => setTimeout(res, 400))
+    }
+
+    lagResults.push({ getItemOk, foundAfterMs })
+    console.log(`       run ${r + 1}: getItem 立即可取=${getItemOk}、`
+      + `搜尋於 ${foundAfterMs === null ? `> ${LAG_TIMEOUT_MS}ms（逾時未找到）` : `${foundAfterMs}ms`} 後找到`)
+  }
+
+  p.fixture('index-lag', lagResults, true)
+
+  const allGetOk = lagResults.every(x => x.getItemOk)
+  const lags = lagResults.map(x => x.foundAfterMs)
+  const worst = lags.some(v => v === null) ? null : Math.max(...(lags as number[]))
+
+  p.record({
+    question: '006-E10',
+    claim: '建立後可立即以 `q` 搜尋到（＝ 冪等第一步在重試時查得到既有紀錄）',
+    verdict: worst !== null && worst < 1000 ? 'yes' : worst !== null ? 'partial' : 'no',
+    evidence: `n=${LAG_RUNS}。getItem 立即可取：${allGetOk ? '3/3' : lagResults.filter(x => x.getItemOk).length + `/${LAG_RUNS}`}；`
+      + `搜尋延遲：${lags.map(v => v === null ? '逾時' : `${v}ms`).join('、')}`,
+    impact: worst !== null && worst < 1000
+      ? '✅ 索引即時。「逾時後重試」時第一步查得到既有紀錄 → 走 updateItem，不會產生第二筆。'
+        + '畫布 B8 的警語「重試可能產生重複紀錄」可作為保險保留，但實務上風險很低。'
+      : worst !== null
+        ? `⚠️ 索引最慢 ${worst}ms 才跟上。**在這段時間窗內重試會產生第二筆紀錄**（第一步查不到 → createItem）。`
+          + '對策：① 依畫布 B8 的設計，把重試綁在人工查驗之後（那段時間足以讓索引追上）；'
+          + '② 或在 createItem 之後把 item id 留在草稿裡，重試時先用 `getItem(id)` 確認，查不到才走搜尋。'
+        : '⚠️ **逾時仍搜尋不到**。冪等的第一步在這種情況下形同無效 —— '
+          + '重試必然走 createItem，必然產生重複。MUST 改用「把 item id 記在草稿裡、重試時直接 getItem」的作法，'
+          + '並記進 IMBRACE_QUESTIONS.md 詢問索引的一致性保證。',
+  })
+
+  if (!allGetOk) {
+    p.record({
+      question: '006-E11',
+      claim: '`getItem(id)` 在建立後立即可取（＝ 回查這一步本身可信）',
+      verdict: 'no',
+      evidence: `${lagResults.filter(x => x.getItemOk).length}/${LAG_RUNS} 立即可取`,
+      impact: '⚠️ **回查（FR-031）本身會誤判**：紀錄其實建立了，但回查當下取不到 → '
+        + '我方會判定為失敗（畫布 B8）。這代表 B8 不是罕見情境，而是常態 —— '
+        + '回查 MUST 加上短暫重試（例如 3 次 × 300ms）才可信，否則會把成功寫入報成失敗。',
+    })
+  }
+
   // ── ⑧ updateItem 的覆蓋語意（FR-030c）──────────────────────
   if (itemId) {
     try {
