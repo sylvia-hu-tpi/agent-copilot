@@ -491,3 +491,257 @@ export function resetAiClientUserIdCache(): void {
 function withConvPrefix(conversationId: string): string {
   return conversationId.startsWith('conv_') ? conversationId : `conv_${conversationId}`
 }
+
+// ── Data Board 的防腐層（specs/006-closure-handoff-summary）─────────────
+//
+// ⚠️⚠️ **本區塊的每一行都是在補 SDK 型別與實際 API 的落差**（CLAUDE.md 地雷 3）。
+//      2026-09-03 由 `npm run spike:board-write` 實測，三項假設被推翻，
+//      **三項全部是不報錯的靜默失效**。逐字記在這裡，因為它們無法從症狀反推：
+//
+//   ① **`createField()` 回的是整個 board，不是欄位。** SDK 的註解逐字寫著
+//      「data-board returns the field directly (unlike legacy backend which returned
+//      the full Board)」—— **那句是錯的**，`_id` 是 board id。照它做的話，
+//      每個欄位都拿到同一把 id、六次寫入疊在同一把 key 上（last-write-wins），
+//      而**平台照樣回 200**：只有最後一個欄位有值，其餘全 null，沒有任何錯誤訊息。
+//      → 因此 `createBoardField()` **不回傳 id**，欄位 id 一律由 `getBoard()` 反查。
+//
+//   ② **`search(filter:)` 被靜默忽略。** 三種寫法（欄位 id、欄位名、冒號語法）
+//      全部回整批 3 筆而不是 1 筆，且不報錯。→ 過濾一律用 `q` 粗篩後**本地**逐字比對。
+//
+//   ③ **`search(sort:)` 的欄位被忽略。** 拿一個不存在的欄位去排會得到與 `p_date:desc`
+//      **完全相同**的順序（決定性證據），實際是依建立時間排、`:desc`／`:asc` 只控制方向。
+//      → 排序一律本地做。這一條特別危險，因為它在多數情況下看起來是對的：
+//        結案紀錄的建立順序通常等於 closed_at 順序，要到有人補登或時鐘不同步才分岔。
+//
+// ⚠️ **本檔因此 MUST NOT 提供 `filter`／`sort` 參數** —— 讓上層根本沒得用，
+//    而不是寫在文件裡叫人不要用。契約守衛 G4 掃的是 `server/services/closure/**`，
+//    但真正讓那條守衛不可能被繞過的是這裡的簽章。
+//
+// ⚠️ 另注意平台回應**一律包一層 `{ data: ... }`**，SDK 的 `Promise<Board>`／
+//    `Promise<BoardItem>` 型別沒有反映。2026-09-03 首跑漏了這一層，`getItem()` 的
+//    每個欄位都讀成 `undefined`，差點把「我自己沒解開外層」寫成「平台會靜默丟棄值」——
+//    那會變成一條寫進正典文件的假結論。**唯一的例外是 `search()`**：它回的是
+//    Meilisearch 信封 `{ success, message: { hits, estimatedTotalHits } }`，不包 `data`。
+
+/** 平台回應的 `{ data: ... }` 外層，SDK 型別沒說 */
+function unwrapData(res: unknown): Record<string, unknown> {
+  const r = res as Record<string, unknown> | null | undefined
+  if (r?.data && typeof r.data === 'object' && !Array.isArray(r.data)) {
+    return r.data as Record<string, unknown>
+  }
+  return (r ?? {}) as Record<string, unknown>
+}
+
+function idOf(res: unknown): string | null {
+  const inner = unwrapData(res)
+  const v = inner._id ?? inner.id
+  return typeof v === 'string' && v ? v : null
+}
+
+/** Board 上的一個欄位定義（`getBoard()` 回的形狀，實測見 `out/29-board-detail.json`） */
+export interface BoardFieldInfo {
+  id: string
+  name: string
+  type: string
+  /**
+   * ⚠️ **實測 `boards.get()` 目前不回選項**（`out/29-board-detail.json`：以 `options`
+   *    建立的 `SingleSelection` 欄位，回讀時沒有任何選項欄位）。因此本欄常為
+   *    `undefined`，而那**不等於「Board 上沒有選項」**。
+   *    `diffBoardFields()` 據此把「讀不到選項」與「選項不符」分成兩種結果 ——
+   *    混為一談會讓 `--verify` 每次都非零離開，B2 的離開碼就失去意義。
+   */
+  options?: string[]
+}
+
+export interface BoardInfo {
+  id: string
+  name: string
+  fields: BoardFieldInfo[]
+}
+
+/** Board 上的一筆紀錄。`fields` 的 key 是**欄位 id**，不是欄位名（實測 006-E3） */
+export interface BoardItemRecord {
+  id: string
+  fields: Record<string, unknown>
+  createdAt: string | null
+}
+
+/**
+ * 從欄位定義物件裡把選項撈出來 —— 擺法未知，四種常見 key 都試。
+ * 全部落空回 `undefined`（＝「讀不到」），MUST NOT 回空陣列（那是「沒有選項」）。
+ */
+function optionsOf(raw: Record<string, unknown>): string[] | undefined {
+  for (const key of ['options', 'data', 'selections', 'selection_options']) {
+    const v = raw[key]
+    if (!Array.isArray(v)) continue
+    const out = v.map((o) => {
+      if (typeof o === 'string') return o
+      const r = o as Record<string, unknown> | null
+      const name = r?.name ?? r?.value ?? r?.label
+      return typeof name === 'string' ? name : null
+    }).filter((x): x is string => !!x)
+    if (out.length > 0) return out
+  }
+  return undefined
+}
+
+function toFieldInfo(raw: unknown): BoardFieldInfo | null {
+  const r = raw as Record<string, unknown> | null
+  const name = typeof r?.name === 'string' ? r.name : null
+  const id = typeof r?._id === 'string' ? r._id : typeof r?.id === 'string' ? r.id : null
+  const type = typeof r?.type === 'string' ? r.type : null
+  if (!name || !id || !type) return null
+  return { id, name, type, options: optionsOf(r as Record<string, unknown>) }
+}
+
+/**
+ * 取 board 詳情（**含欄位清單與欄位 id**）。
+ *
+ * ⚠️ 這是取得欄位 id 的**唯一正當途徑**（見本區塊開頭 ①）。
+ *    欄位清單以 `fields` 為主，但仍掃描所有陣列作為退路 ——
+ *    平台換 key 名時要能繼續運作，而不是安靜地回一張空表。
+ */
+export async function getBoard(
+  client: ImbraceClient,
+  boardId: string,
+): Promise<BoardInfo | null> {
+  const detail = unwrapData(await client.boards.get(boardId))
+  const id = typeof detail._id === 'string'
+    ? detail._id
+    : typeof detail.id === 'string' ? detail.id : null
+  if (!id) return null
+
+  const fields: BoardFieldInfo[] = []
+  const seen = new Set<string>()
+  const arrays: unknown[][] = Array.isArray(detail.fields)
+    ? [detail.fields as unknown[]]
+    : Object.values(detail).filter(v => Array.isArray(v)) as unknown[][]
+  for (const arr of arrays) {
+    for (const el of arr) {
+      const f = toFieldInfo(el)
+      if (f && !seen.has(f.name)) { seen.add(f.name); fields.push(f) }
+    }
+  }
+
+  return { id, name: typeof detail.name === 'string' ? detail.name : '', fields }
+}
+
+export async function listBoards(
+  client: ImbraceClient,
+  limit = 200,
+): Promise<Array<{ id: string, name: string }>> {
+  const res = await client.boards.list({ limit }) as unknown as { data?: unknown[] }
+  return (res?.data ?? []).flatMap((b) => {
+    const r = b as Record<string, unknown>
+    const id = typeof r._id === 'string' ? r._id : typeof r.id === 'string' ? r.id : null
+    return id ? [{ id, name: typeof r.name === 'string' ? r.name : '' }] : []
+  })
+}
+
+/** @returns 新 board 的 id。⚠️ 回應包在 `{ data }` 裡，SDK 的 `Promise<Board>` 沒說 */
+export async function createBoard(
+  client: ImbraceClient,
+  name: string,
+  description?: string,
+): Promise<string> {
+  const id = idOf(await client.boards.create({ name, ...(description ? { description } : {}) }))
+  if (!id) throw new Error('boards.create() 的回應中找不到 board id')
+  return id
+}
+
+/**
+ * 新增一個欄位。
+ *
+ * ⚠️ **刻意不回傳 field id** —— `createField()` 回的是整個 board（見本區塊開頭 ①）。
+ *    呼叫端 MUST 在建完之後以 `getBoard()` 重新反查。把回傳值拿掉是讓那條規則
+ *    「不可能被忘記」的唯一方式：文件與註解都會被跳過，型別不會。
+ *
+ * ⚠️ 選項同時以 `options` 與 `data` 兩個 key 送出：SDK 的 `CreateFieldInput` 用
+ *    `options`，而同一份 d.ts 的 `CreateBoardFieldInput`（board 建立時內嵌欄位用）
+ *    用的是 `data`，哪一個是平台真正吃的並未實測。平台對不認得的 key 一律靜默忽略
+ *    （filter／sort 兩條實測都是這個行為），因此兩個都送是安全的。
+ */
+export async function createBoardField(
+  client: ImbraceClient,
+  boardId: string,
+  spec: { name: string, type: string, options?: readonly string[], description?: string },
+): Promise<void> {
+  await client.boards.createField(boardId, {
+    name: spec.name,
+    type: spec.type,
+    ...(spec.description ? { description: spec.description } : {}),
+    ...(spec.options ? { options: [...spec.options], data: [...spec.options] } : {}),
+  })
+}
+
+/**
+ * 全文檢索一個 board。
+ *
+ * ⚠️ **簽章刻意只有 `q` 與 `limit`。** `filter` 與 `sort` 實測都被靜默忽略
+ *    （見本區塊開頭 ②③），提供它們等於留一條會回 200 而結果是錯的路。
+ * ⚠️ 回的是 **Meilisearch 信封**（`{ success, message: { hits, estimatedTotalHits } }`），
+ *    與 `listItems()` 的 `PagedResponse` **不可互換**。
+ * ⚠️ `estimatedTotalHits` 是 `q` 的命中數，**不是**「符合條件的紀錄數」——
+ *    上層要算數量 MUST 在本地比對後自己數（契約 R1.6）。
+ */
+export async function searchBoardItems(
+  client: ImbraceClient,
+  boardId: string,
+  q: string,
+  limit = 50,
+): Promise<{ hits: BoardItemRecord[], estimatedTotalHits: number }> {
+  const res = await client.boards.search(boardId, { q, limit })
+  const message = (res as unknown as { message?: Record<string, unknown> })?.message ?? {}
+  const rawHits: unknown[] = Array.isArray(message.hits) ? message.hits : []
+  const estimated = typeof message.estimatedTotalHits === 'number'
+    ? message.estimatedTotalHits
+    : rawHits.length
+  return { hits: rawHits.map(toItemRecord), estimatedTotalHits: estimated }
+}
+
+function toItemRecord(raw: unknown): BoardItemRecord {
+  const r = unwrapData(raw)
+  const id = typeof r._id === 'string' ? r._id : typeof r.id === 'string' ? r.id : ''
+  return {
+    id,
+    fields: (r.fields && typeof r.fields === 'object' && !Array.isArray(r.fields))
+      ? r.fields as Record<string, unknown>
+      : {},
+    createdAt: typeof r.created_at === 'string' ? r.created_at : null,
+  }
+}
+
+/** @param fieldsById key 是**欄位 id**（實測 006-E3：欄位名不通） */
+export async function createBoardItem(
+  client: ImbraceClient,
+  boardId: string,
+  fieldsById: Record<string, unknown>,
+): Promise<string> {
+  const id = idOf(await client.boards.createItem(boardId, { fields: fieldsById }))
+  if (!id) throw new Error('boards.createItem() 的回應中找不到 item id')
+  return id
+}
+
+/**
+ * ⚠️ 實測是**部分更新**（未送的欄位保留，006-E9），不是整筆覆蓋。
+ *    因此「更新為當下草稿內容」（FR-030c）MUST 把整份 `fieldsById` 都送出，
+ *    只送有改的欄位會讓上一次寫入的舊值留在紀錄上，而且不會報錯。
+ */
+export async function updateBoardItem(
+  client: ImbraceClient,
+  boardId: string,
+  itemId: string,
+  fieldsById: Record<string, unknown>,
+): Promise<void> {
+  await client.boards.updateItem(boardId, itemId, { fields: fieldsById })
+}
+
+/** 以 id 直接回查 —— 與 `searchBoardItems()` 是**兩條不同的路徑**（search 走全文索引） */
+export async function getBoardItem(
+  client: ImbraceClient,
+  boardId: string,
+  itemId: string,
+): Promise<BoardItemRecord | null> {
+  const item = toItemRecord(await client.boards.getItem(boardId, itemId))
+  return item.id ? item : null
+}

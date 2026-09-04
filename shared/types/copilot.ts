@@ -9,6 +9,12 @@
 
 import type { Message } from './conversation.js'
 import type { KnowledgeHit } from './knowledge.js'
+// ⚠️ 受控詞彙的型別由 `config/categories.ts` **推導**，本檔 MUST NOT 自己再寫一份
+//    字面聯集 —— 自己寫一份的那一刻，那個檔案就從「唯一來源」退化成「其中一份副本」
+//    （見該檔末段）。這是 specs/006 對憲法 4.6 的落點。
+import type { ClosureResolution, ClosureSentimentOutcome } from '../../config/categories.js'
+
+export type { ClosureResolution, ClosureSentimentOutcome }
 
 // ── 區塊狀態 ──────────────────────────────────────────────────────────
 
@@ -309,4 +315,208 @@ export interface AIProvider {
     /** Hybrid 模式下 AI 也在自動回覆（FR-016），prompt 需知悉並以補位性質為優先 */
     aiReplies: boolean
   }): Promise<SuggestionCard[]>
+  /**
+   * 結案摘要（`AgentCopilot_結案摘要_agent`，specs/006 FR-010）。
+   *
+   * ⚠️ `history` 是**涵蓋區間內的訊息**，不是全對話 —— 呼叫端已依 `period` 切好。
+   *    傳全對話會讓摘要涵蓋前幾輪服務，而那不會報錯（FR-021、§13.4 ④）。
+   * ⚠️ `vocabulary` 由呼叫端傳入，agent 只能從中選擇；後端另有白名單後驗（憲法 4.6）。
+   * ⚠️ `signal` 是契約 R2.9 的落點：**取消 MUST 真的中止在途的 AI 呼叫**，
+   *    MUST NOT 只是把畫面關掉 —— 後者的呼叫照送、錢照付、結果無人看，且不會報錯。
+   */
+  summarizeClosure(input: {
+    history: Message[]
+    vocabulary: ClosureVocabulary
+    knowledgeHits: KnowledgeHit[]
+    signal?: AbortSignal
+  }): Promise<ClosureDraftAiPart>
+}
+
+// ── 結案摘要（specs/006-closure-handoff-summary/data-model.md §1～§4.2）────
+//
+// ⚠️ **這一族與上面的 SummaryBlock／SentimentBlock／SuggestionBlock 不是同一家族。**
+//    那三個由分析管線產生、經 SSE 推播、存在 `CopilotAnalysisState` 裡；
+//    結案草稿一項都不是（data-model §0）。MUST NOT 為了「一致性」把 `ClosureDraft`
+//    加進 `CopilotAnalysisState` —— 那三個 Block 的 SSE 事件送的是整個 Block，
+//    加進去等於把草稿推播給每一條連線，而型別檢查不會響。
+
+/**
+ * 這一份結案報告描述的那一段服務（§13.4 ④、FR-021 系列）。
+ *
+ * ⚠️ `messageCount` 有三種值且**三者 MUST 可區分**（data-model §1）：
+ *      `0`／`false`      → 這個候選之後真的沒有新訊息 → 該列**不可選**
+ *      `n > 0`／`false`  → 確切則數
+ *      `null`／`true`    → 超過掃描上限，數不完 → 「超過 500 則」，**仍可選**
+ *    把 `null` 當成 0 會讓長期客戶完全結不了案，而畫面上只會顯示一個灰掉的選項。
+ */
+export interface ClosurePeriod {
+  /** 區間起點的時間戳（ISO8601）。實際起點是「此時點之後的第一則訊息」 */
+  start: string
+  /**
+   * 這個 start 是怎麼來的 —— ⚠️ 光靠 `start` 這個時間戳事後分不出來，
+   * 而「客服選了某次結案」與「客服自己打了一個時間」是完全不同的兩件事（FR-021e-1）。
+   */
+  origin: ClosurePeriodOrigin
+  /** 區間內的訊息則數。⚠️ 掃描上限（500）內數得完才有值；數不完為 null */
+  messageCount: number | null
+  /** 掃描上限截斷時為 true —— UI 逐字呈現「超過 500 則」（憲法 4.5：不猜） */
+  truncated: boolean
+}
+
+export type ClosurePeriodOrigin = 'closure' | 'first' | 'custom'
+
+/** 訊息則數的掃描上限（FR-021c、憲法 6.4）。超過即 `messageCount: null` ＋ `truncated: true` */
+export const CLOSURE_SCAN_LIMIT = 500
+
+/**
+ * 草稿的唯讀欄位 —— 由系統計算，客服 MUST NOT 能改（FR-010a）。
+ *
+ * ⚠️ **刻意收在一個巢狀物件裡，不與可編輯欄位平鋪。**
+ *    平鋪的話，「哪些可改」只存在於 UI 元件的判斷式裡 —— 少寫一個 disabled
+ *    不會報錯，只會讓客服改掉一個他不該改的值，而 SC-006b 的重算驗證
+ *    從此永遠對不起來。收成一個物件後，寫入端點只要「整個 readonly 重新由 server 算」即可
+ *    （契約 R3.7），前端送什麼都不影響結果。
+ */
+export interface ClosureDraftReadonly {
+  operators: string[]
+  joinedAt: string
+  /** 寫入當下才有值 */
+  closedAt: string | null
+  /**
+   * 區間內的情緒三數值（FR-022）。
+   *
+   * ⚠️ 三者 MUST **同時**有值或**同時**為 `null`（FR-022b）—— 部分有值是實作錯誤。
+   * ⚠️ `sentimentTrough` 是**區間內**的最低點，MUST NOT 取
+   *    `SentimentBlock.stats.lowestScore`（那是整條時間軸的最低點，FR-022a）。
+   *    兩者都是 `number`，取錯不會有任何型別錯誤 —— 契約守衛 G2 是唯一會紅的地方。
+   */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null
+  /** 情緒留空的原因與實際涵蓋範圍（FR-022b）。有值即代表上面三個是 null */
+  sentimentNote: string | null
+  channel: string
+  contactId: string
+  /** 0–100；無真實依據時為 null（憲法 4.4），UI 留空不顯示 */
+  confidence: number | null
+}
+
+/**
+ * 模型只產內容欄位，其餘一律由系統填 —— 比照 `analyzeSentiment()` 不信任模型給的
+ * `messageId`／`at`、`suggest()` 不信任模型給的 `id`，是同一條既有原則。
+ *
+ * ＝ `ClosureDraft` 去掉 `draftId`／`conversationId`／`period`／`readonly`，
+ * 另加 `confidence`（模型自陳的把握度，經 Zod 轉成 `number | null`）。
+ */
+export interface ClosureDraftAiPart {
+  summary: string
+  intent: string
+  /** 受控詞彙；白名單外 → **留空字串**（FR-015、憲法 4.6），MUST NOT 保留模型的值 */
+  category: string
+  /** 受控詞彙；白名單外 → 空字串（因此型別比 `ClosureSummary` 多一個 `''`） */
+  resolution: ClosureResolution | ''
+  /** 受控詞彙（多選）；白名單外的值逐一丟棄 */
+  actionsTaken: string[]
+  /** 受控詞彙；白名單外 → 空字串 */
+  sentimentOutcome: ClosureSentimentOutcome | ''
+  /** 白名單後驗（憲法 4.3）：不在本次 `knowledgeHits` 內者丟棄該 id，不丟棄整份草稿 */
+  citedSopIds: string[]
+  followUps: ClosureFollowUp[]
+  confidence: number | null
+}
+
+export interface ClosureFollowUp {
+  action: string
+  owner?: string
+  dueHint?: string
+}
+
+/**
+ * 結案摘要草稿 —— **人審的標的**，也是**冪等寫入的單位**（憲法 5.3）。
+ *
+ * ⚠️ 住在**瀏覽器分頁的 Pinia store**，MUST NOT 出現在 server 端的任何儲存
+ *    （`StateStore`、process-local Map、`CopilotAnalysisState` 都不行）。
+ *    三支端點全部無狀態 —— 這不是效能取捨，是 FR-040「重新整理等同取消」的實作方式：
+ *    只要 server 端存了一份，那條規則就得靠額外的清理邏輯成立，而清理漏掉時不會報錯。
+ */
+export interface ClosureDraft {
+  /**
+   * 冪等鍵。**由 server 在產生草稿時以 `crypto.randomUUID()` 產生**，前端只負責帶回來。
+   *
+   * ⚠️ 「重新產生」MUST 得到新的 `draftId`（那是一份新草稿，US2 AC#2）；
+   *    「寫入逾時後重試」MUST 沿用同一個（那是同一份草稿，US2 AC#1）。
+   *    兩者的差別完全由 draftId 承載 —— 前端若自己產生，這條規則就散在前端各處。
+   */
+  draftId: string
+  conversationId: string
+  period: ClosurePeriod
+
+  // ── 可編輯欄位（FR-010a）────────────────────────────────────
+  summary: string
+  intent: string
+  category: string
+  resolution: ClosureResolution | ''
+  actionsTaken: string[]
+  sentimentOutcome: ClosureSentimentOutcome | ''
+  citedSopIds: string[]
+  followUps: ClosureFollowUp[]
+
+  // ── 唯讀欄位（FR-010a）—— 由系統計算 ─────────────────────────
+  readonly: ClosureDraftReadonly
+}
+
+/**
+ * 正式結案紀錄 —— 住在 Data Board（`AgentCopilot_ClosureSummary`），永久、全組織可見。
+ * 對應 `docs/ARCHITECTURE.md` §11.5 與 `contracts/closure-board-schema.md` §2 的欄位表。
+ *
+ * ⚠️ **本型別、§13.3 的欄位表、`server/services/closure/board-schema.ts` 是同一份事實的三個副本**
+ *    （FR-052）。改任一處 MUST 三處同步 —— 少一欄不會報錯，只會讓該維度在報表裡永遠是空的。
+ * ⚠️ `conversationId` 是**可重複的索引，不是唯一鍵**：同一通對話有多筆結案紀錄是正常的
+ *    （多次服務、多位客服各自結案）。冪等以 `draftId` 比對，MUST NOT 以 `conversationId`。
+ */
+export interface ClosureSummary {
+  recordId: string
+  draftId: string
+  /** ⚠️ 可重複的索引，不是唯一鍵 */
+  conversationId: string
+  periodStart: string
+  periodMessageCount: number | null
+  periodOrigin: ClosurePeriodOrigin
+  channel: string
+  contactId: string
+  operators: string[]
+  joinedAt: string
+  closedAt: string
+  summary: string
+  intent: string
+  category: string
+  /** ⚠️ MUST 取自 `config/categories.ts`，MUST NOT 自己再寫一份字面聯集 */
+  resolution: ClosureResolution | ''
+  actionsTaken: string[]
+  sentimentOutcome: ClosureSentimentOutcome | ''
+  /**
+   * ⚠️ 四個數值欄一律 `number | null`（本規格對 §11.5 的訂正）——
+   *    非 nullable 的型別會逼實作者填 0，而 FR-022b 逐字禁止那件事，
+   *    且填了 0 之後**不會有任何錯誤**，只會讓報表把留空當成最低分。
+   */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null
+  /** 情緒留空的原因與實際涵蓋範圍（Board 欄位 `period_sentiment_note`） */
+  sentimentNote: string | null
+  citedSopIds: string[]
+  followUps: ClosureFollowUp[]
+  confidence: number | null
+  /** ⚠️ 由 server 依 session 填，MUST NOT 取自 request body（契約 R3.6、憲法 7.5）。
+   *  留空 ＝ 未經人審（憲法 5.2；本規格不交付任何自動寫入路徑） */
+  reviewedBy: string | null
+  reviewedAt: string | null
+}
+
+/** `summarizeClosure()` 的受控詞彙輸入 —— 由呼叫端傳入，agent 只能從中選擇 */
+export interface ClosureVocabulary {
+  categories: readonly string[]
+  resolutions: readonly string[]
+  actionsTaken: readonly string[]
+  sentimentOutcomes: readonly string[]
 }
