@@ -52,11 +52,59 @@ function safeWrite(conversationId: string, collapsed: boolean): void {
   }
 }
 
-export function useCopilotPanel(conversationId: Ref<string>, viewerJoined: Ref<boolean>) {
+/**
+ * 進入結案時保存的五塊狀態（`docs/DESIGN_TOKENS.md` §7.4「五塊的來回」）。
+ *
+ * ⚠️ **刻意不持久化**（與上面的 `collapsed` 不同）：它跟著結案狀態同生共死。
+ *    存進 `localStorage` 的話，重新整理後結案已經被取消（FR-040），
+ *    卻還留著一份「結案時的收合組合」等著被還原 —— 那份資料再也沒有主人。
+ */
+export interface PanelSavedLayout {
+  /** 進入結案前各區塊的展開組合（由 page 提供，key 為區塊 id） */
+  open: Record<string, boolean>
+  scroll: number
+}
+
+export function useCopilotPanel(
+  conversationId: Ref<string>,
+  viewerJoined: Ref<boolean>,
+  /** `true` ＝ 這個對話正在結案（由 `useClosureStore().isClosing()` 提供） */
+  closing?: Ref<boolean>,
+) {
   const collapsed = ref(false)
 
   /** FR-016：未 JOIN → 整欄不存在。MUST NOT 用變灰／空狀態／骨架代替 */
   const visible = computed(() => viewerJoined.value)
+
+  /**
+   * 面板的兩種版面（`docs/DESIGN_TOKENS.md` §7.4）。
+   *
+   * `closing`：第 6 區塊**置頂**展開可編輯，其餘五塊全部收合成單行。
+   * ⚠️ **不在畫面上解釋「為什麼其他區塊收合了」** —— 收合與還原是可預期的模式切換，
+   *    不需要每次結案都說明一次（畫布 2b 的裁示）。
+   */
+  const variant = computed<'expanded' | 'closing'>(() =>
+    (closing?.value ? 'closing' : 'expanded'))
+
+  /**
+   * 進入結案前的五塊狀態。⚠️ **取消結案與寫入成功都原樣還原** ——
+   * 結案成功後接著按「離開」會關掉整個面板，下次接手時打開的必須是乾淨的原狀。
+   */
+  const saved = ref<PanelSavedLayout | null>(null)
+
+  /** 結案面板本身一律從頂端開始捲（畫布逐字：`scrollTop = 0`） */
+  const scrollTop = ref(0)
+
+  watch(variant, (next, prev) => {
+    if (next === 'closing' && prev !== 'closing') {
+      saved.value = { open: {}, scroll: scrollTop.value }
+      scrollTop.value = 0
+    }
+    else if (next === 'expanded' && prev === 'closing') {
+      scrollTop.value = saved.value?.scroll ?? 0
+      saved.value = null
+    }
+  })
 
   // 切換對話時重讀該對話自己的偏好（未存過 → 展開）
   watch(conversationId, (id) => {
@@ -76,5 +124,10 @@ export function useCopilotPanel(conversationId: Ref<string>, viewerJoined: Ref<b
     collapsed.value = !collapsed.value
   }
 
-  return { visible, collapsed, toggle }
+  /** 由 page 在進入結案前把各區塊的展開組合交進來（見 `PanelSavedLayout`） */
+  function rememberOpenState(open: Record<string, boolean>): void {
+    if (saved.value) saved.value = { ...saved.value, open }
+  }
+
+  return { visible, collapsed, toggle, variant, saved, scrollTop, rememberOpenState }
 }

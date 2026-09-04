@@ -59,6 +59,7 @@ interface SendErrorData {
 
 export function useConversationView(conversationId: Ref<string>) {
   const stream = useStreamStore()
+  const closure = useClosureStore()
 
   const messages = ref<Message[]>([])
   const detail = ref<ConversationDetailResponse['conversation'] | null>(null)
@@ -175,6 +176,12 @@ export function useConversationView(conversationId: Ref<string>) {
     switch (evt.type) {
       case 'messages.appended':
         merge(evt.messages)
+        /*
+          ⚠️ 結案期間有新訊息**只標記過期，MUST NOT 自動重新產生摘要**（FR-020／FR-044）。
+             自動重產會讓客服正在編輯的內容被無聲蓋掉，而且每一則新訊息都多跑一次 AI。
+             「要不要把它納入摘要」是客服的決定，畫面上只提供那個提示。
+        */
+        if (evt.conversationId) closure.markStale(evt.conversationId)
         break
       case 'presence.updated':
         presence.value = evt.presence
@@ -284,40 +291,61 @@ export function useConversationView(conversationId: Ref<string>) {
   }
 
   /**
-   * 「結案」—— specs/003-analysis-trigger-policy FR-022、FR-022a。
+   * 「結案」—— **只開結案面板**，不 LEAVE、不停止分析、不隱藏面板
+   * （specs/006-closure-handoff-summary FR-004、FR-005、FR-033、research #16）。
    *
-   * ⚠️ **這是刻意獨立的程式碼路徑，MUST NOT 改寫成 `leave()` 的別名或某個參數值。**
-   *    目前它的行為恰好等同「離開對話 → 停止分析 → 隱藏面板」，但那是**階段性行為**，
-   *    不是要保留的語意。整段結案流程屬 M3；寫成別名的話，M3 要插入流程時得先把它拆開，
-   *    而拆的過程中很容易把兩個出口的差異弄丟。
+   * ⚠️ **這是刻意獨立的程式碼路徑，MUST NOT 改寫成 `leave()` 的別名或某個參數值**
+   *    （003 FR-022a）。兩者的差別現在是實質的：`leave()` 立刻退出、不留紀錄；
+   *    這一支開始一段會寫進正式 CRM 的流程。
    *
-   * ── 留給 M3 的銜接（完整定案只在 spec.md「Session 2026-08-28 補充」，此處不重述）──
+   * ── 2026-09-04（006）：LEAVE 從這裡移到「寫入成功之後」 ──────────
    *
-   *   ① **插入點在「停止分析」與「隱藏面板」之間** —— 也就是下面那行 `leave` 呼叫之後、
-   *      `beat('viewing')` 讓面板消失之前。
+   *   舊版是「先 leave → 停止分析 → 隱藏面板」，那是 M2 的**階段性行為**。
+   *   006 把停止分析與隱藏面板**兩件事都移到寫入成功後的 LEAVE**（`finishClosure()`）。
    *
-   *   ② **結案摘要 MUST 經客服編輯確認才寫入（憲法 5.1）。** MUST NOT 做成「按下結案就
-   *      自動產生並寫入」，也 MUST NOT 做成「閒置逾時自動寫入」—— 沒有操作就是沒有確認。
-   *      ⚠️ 不得因為「反正已經有一個結案按鈕」就直接在其後串上自動寫入：
+   *   ⚠️ 這個改動讓 FR-005「結案期間分析照常執行、門檻維持 003 FR-012 的單一條件」
+   *      **靠刪掉一行就自動成立** —— 客服仍是 JOIN 狀態，分析照常跑。
+   *      因此 MUST NOT 為結案在 `server/services/copilot-analysis.ts` 新增
+   *      第二個門檻條件（驗法：`grep -n "closing\|closure" server/services/copilot-analysis.ts`
+   *      零結果）。
+   *
+   *   ⚠️ **MUST NOT 把「按下結案就自動產生並寫入」接回來**（憲法 5.1、FR-011）：
    *      中間那道人審是規則本身，不是流程裝飾。
-   *
-   *   ③ **M3 落地後結案期間分析照常執行（FR-023）**，門檻維持 FR-012 的單一條件。
-   *      現在這裡的「停止分析」是階段性的，M3 接手時 MUST NOT 把那個差異當成 regression
-   *      而回頭「修正」。
    */
   async function closeConversation(): Promise<void> {
-    await act(async () => {
-      const res = await $fetch<{ control: ConversationControl }>(
-        `/api/conversations/${conversationId.value}/leave`,
-        { method: 'POST' },
-      )
-      control.value = res.control
+    if (!conversationId.value) return
+    await closure.open(conversationId.value)
+  }
 
-      // ── M3：整段結案流程（產生摘要 → 客服編輯確認 → 寫入 Data Board）插在這裡 ──
+  /** 取消結案 —— 回到「已接手」狀態，**不會留下任何紀錄**（FR-040） */
+  function cancelClosing(): void {
+    if (!conversationId.value) return
+    closure.cancel(conversationId.value)
+  }
 
-      if (detail.value) detail.value.viewerJoined = false
-      await beat('viewing')
-    })
+  /**
+   * 「一鍵寫入 CRM」成功之後才 LEAVE（FR-033）。
+   *
+   * ⚠️ **LEAVE 失敗 MUST NOT 回退結案**：紀錄已經在 CRM 上了，回退只會讓它變成孤兒。
+   *    改為進入 `writtenLeaveFailed` —— 第 6 區塊消失、頂端出現一條可重試離開的橫幅
+   *    （FR-047b、畫布 C1）。
+   */
+  async function finishClosure(): Promise<void> {
+    const id = conversationId.value
+    if (!id) return
+    try {
+      await leave()
+      if (error.value) throw new Error(error.value)
+      closure.finish(id)
+    }
+    catch (err) {
+      closure.markLeaveFailed(id, messageOf(err))
+    }
+  }
+
+  /** C1 橫幅的「重試離開」 */
+  async function retryLeaveAfterClosure(): Promise<void> {
+    await finishClosure()
   }
 
   async function setMode(mode: 'manual' | 'hybrid' | 'automation'): Promise<void> {
@@ -482,8 +510,11 @@ export function useConversationView(conversationId: Ref<string>) {
     reload: loadAll,
     join,
     leave,
-    /** ⚠️ 獨立於 `leave()` 的出口 —— 兩者的差異是 M3 的插入點，MUST NOT 合併 */
+    /** ⚠️ 獨立於 `leave()` 的出口 —— 兩者的差異是實質的，MUST NOT 合併（003 FR-022a） */
     closeConversation,
+    cancelClosing,
+    finishClosure,
+    retryLeaveAfterClosure,
     setMode,
     send,
     beat,

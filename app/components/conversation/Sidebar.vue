@@ -43,12 +43,16 @@ const collapsedGroups = ref(new Set<string>())
 
 import type { Conversation } from '#shared/types/conversation'
 import { someoneElseCanSend } from '#shared/types/conversation'
+import { useClosureStore } from '~/stores/closure'
 
 /**
  * ⚠️ 頭像／status 色／頻道 icon 一律從 `app/utils/conversation-display.ts` 取，
  *    **不要在這裡另寫一份** —— 中欄標題列用的是同一組規則，兩處長不一樣時
  *    客服點進對話會看到「換了一個對話」的錯覺，而那不會有任何型別錯誤。
  */
+
+/** specs/006 FR-041：「結案未完成」標記。⚠️ 讀的是 tab-local 的結案狀態，不是伺服器狀態 */
+const closure = useClosureStore()
 
 const props = defineProps<{
   items: Conversation[]
@@ -522,6 +526,23 @@ function clockTime(iso?: string): string {
             >
               <span class="size-[7px] shrink-0 rounded-full" :style="{ background: 'var(--navy)' }" aria-hidden="true" />
               {{ $t('sidebar.unreadLabel') }}
+            </span>
+
+            <!--
+              FR-041：有未完成的結案（specs/006）。
+              ⚠️ **不是倒數、不是自動寫入** —— 這一列只是提醒「那邊有一件事沒做完」，
+                 客服切回去繼續或取消都可以。做成倒數會暗示「時間到就會自己寫入」，
+                 而那正是憲法第五條禁止的事。
+              ⚠️ 標記隨 store 條目消失而消失：寫入成功並離開、或取消結案，兩者都會清掉它。
+                 「已寫入但離開失敗」也不再顯示 —— 結案本身已經完成了（FR-047b）。
+            -->
+            <span
+              v-if="closure.hasPending(c.id)"
+              class="flex shrink-0 items-center gap-1"
+              :style="{ color: 'var(--open)' }"
+            >
+              <UIcon name="i-lucide-flag" class="size-3 shrink-0" />
+              {{ $t('closure.sidebarPending') }}
             </span>
           </div>
         </button>

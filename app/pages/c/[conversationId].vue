@@ -63,7 +63,36 @@ const HEADER_COLLAPSED_KEY = 'ac.headerCollapsed'
  * ⚠️ `visible` 直接由 `viewerJoined` 推出，MUST NOT 由 Block 是否 empty 推出 ——
  *    理由見 `useCopilotPanel()` 的檔頭。
  */
-const panel = useCopilotPanel(conversationId, view.viewerJoined)
+const closure = useClosureStore()
+
+/**
+ * 這個對話是否正在結案（specs/006）。⚠️ 這是**唯一**的判定來源 ——
+ * 「結案中」影響五處呈現（右欄版面、標題列、Composer 橫幅、服務模式、左側標記），
+ * 各自推導一次的話，其中一處漏改不會報錯，只會讓畫面自相矛盾。
+ */
+const closing = computed(() => !!conversationId.value && closure.isClosing(conversationId.value))
+const closureSession = computed(() =>
+  (conversationId.value ? closure.get(conversationId.value) ?? null : null))
+/** ⚠️ `writing` 期間「取消結案」鎖住（FR-040a）—— 成立前提是寫入有 30 秒硬上界 */
+const closureWriting = computed(() => closureSession.value?.status === 'writing')
+/** 已寫入但 LEAVE 失敗（FR-047b）：第 6 區塊已消失，右欄回到 expanded */
+const leaveFailed = computed(() => closureSession.value?.status === 'writtenLeaveFailed')
+
+const panel = useCopilotPanel(conversationId, view.viewerJoined, closing)
+
+/** 結案中被收合的五塊裡，客服臨時展開的那一塊（一次一塊） */
+const closingExpanded = ref<string | null>(null)
+
+/**
+ * 結案中收合成單行的五塊 —— 標題與 tag 取既有 i18n，`id` 只用於展開判定。
+ * ⚠️ 順序與展開態一致（畫布 2a 的排序有記載的理由，見下方註解）。
+ */
+const collapsedBlocks = computed(() => [
+  { id: 'sentiment', title: t('copilot.sentiment.title') },
+  { id: 'summary', title: t('copilot.summary.title') },
+  { id: 'suggestions', title: t('copilot.suggestion.title') },
+  { id: 'knowledge', title: t('copilot.knowledgeSearch.title') },
+])
 
 onMounted(() => {
   sidebar.restore()
@@ -449,7 +478,31 @@ const presenceShort = computed(() => {
                   <UIcon name="i-lucide-log-out" class="size-4" />
                   {{ view.busy.value ? $t('conversation.leaving') : $t('conversation.leave') }}
                 </button>
+                <!--
+                  ⚠️ 結案中換成「取消結案」＋「結案中…」（畫布 1c「結案中」狀態）。
+                     `writing` 時這顆 disabled ＋ title —— 寫入請求已送出，此時取消
+                     只會讓畫面與 CRM 分岔（FR-040a）。它之所以可以鎖住，
+                     是因為寫入路徑有 30 秒硬上界（FR-032a）；兩者缺一，
+                     客服會被困在既不能取消也不會自己結束的狀態裡。
+                -->
+                <template v-if="closing">
+                  <button
+                    type="button"
+                    class="flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
+                    :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
+                    :disabled="closureWriting"
+                    :title="closureWriting ? $t('closure.titlebar.cancelLocked') : undefined"
+                    @click="view.cancelClosing()"
+                  >
+                    <UIcon name="i-lucide-x" class="size-4" />
+                    {{ $t('closure.titlebar.cancel') }}
+                  </button>
+                  <span class="flex h-8 items-center gap-1.5 px-1 text-[0.9375rem]" :style="{ color: 'var(--text-2)' }">
+                    {{ $t('closure.titlebar.closing') }}
+                  </span>
+                </template>
                 <button
+                  v-else
                   type="button"
                   class="ac-btn-primary flex h-8 items-center gap-1.5 px-3 text-[0.9375rem]"
                   :disabled="view.busy.value"
@@ -468,7 +521,16 @@ const presenceShort = computed(() => {
             class="mt-1 text-right text-[0.8125rem]"
             :style="{ color: 'var(--text-3)' }"
           >
-            {{ $t('conversation.exitHint') }}
+            {{ closing ? $t('closure.titlebar.cancelHint') : $t('conversation.exitHint') }}
+          </p>
+          <!-- ⚠️ 鎖住的理由要寫出來，不能只是變灰（憲法 8.1：不只靠視覺） -->
+          <p
+            v-if="closureWriting"
+            class="mt-0.5 flex items-center justify-end gap-1 text-[0.7813rem]"
+            :style="{ color: 'var(--text-3)' }"
+          >
+            <UIcon name="i-lucide-lock" class="size-3" />
+            {{ $t('closure.titlebar.cancelLocked') }}
           </p>
         </header>
 
@@ -496,10 +558,18 @@ const presenceShort = computed(() => {
         >
           <ConversationModeSelect
             :mode="view.control.value?.mode ?? null"
-            :disabled="!view.viewerJoined.value || view.busy.value"
+            :disabled="!view.viewerJoined.value || view.busy.value || closing"
             :busy="view.busy.value"
             @change="switchMode"
           />
+          <!--
+            ⚠️ FR-043：服務模式在結案期間唯讀。它是**設定項**，不在憲法 3.1
+               「還能看對話、還能回覆」的保護標的內（2026-08-28 拍板）——
+               Composer 則相反，MUST NOT 鎖（FR-042，見下方橫幅）。
+          -->
+          <p v-if="closing" class="mt-1 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
+            {{ $t('closure.modeLocked') }}
+          </p>
           <button
             type="button"
             class="absolute bottom-2 right-4 flex size-6 items-center justify-center rounded-md border transition-opacity hover:opacity-70"
@@ -515,6 +585,19 @@ const presenceShort = computed(() => {
 
         <ConversationPresenceBar :presence="view.presence.value" />
       </template>
+
+      <!--
+        C1（FR-047b、畫布 §8.5）：已寫入但離開失敗。
+        ⚠️ 此時**結案已經完成** —— 第 6 區塊已消失、右欄回到 expanded、
+           左側「結案未完成」標記也不再顯示。這裡沒有「取消結案」的出路：
+           紀錄已經在 CRM 上，回退只會讓它變成孤兒（FR-033）。
+      -->
+      <ConversationClosureLeaveFailedBanner
+        v-if="leaveFailed"
+        :record-id="closureSession?.error?.reqId ?? ''"
+        :busy="view.busy.value"
+        @retry="view.retryLeaveAfterClosure()"
+      />
 
       <p v-if="view.error.value" class="ac-alert-warn mx-4 flex items-start gap-2 px-3 py-2">
         <UIcon name="i-lucide-alert-circle" class="mt-px size-3.5 shrink-0" />
@@ -579,6 +662,19 @@ const presenceShort = computed(() => {
           </button>
         </span>
       </div>
+
+      <!--
+        FR-042：結案期間的常駐橫幅。⚠️ **輸入框不鎖** —— 憲法 3.1 的保護標的
+        （「還能看對話、還能回覆」）就落在這裡。橫幅說的是「摘要是快照」，
+        不是「你不能說話」。
+      -->
+      <p
+        v-if="closing"
+        class="ac-alert-warn mx-4 mb-2 flex items-start gap-2 px-3 py-2 text-[0.875rem] leading-relaxed"
+      >
+        <UIcon name="i-lucide-camera" class="mt-0.5 size-3.5 shrink-0" />
+        <span>{{ $t('closure.composerBanner') }}</span>
+      </p>
 
       <ConversationComposer
         ref="composer"
@@ -686,18 +782,87 @@ const presenceShort = computed(() => {
                快查「隨時可能用」→ 對話紀錄「偶爾回顧」→ 結案摘要「只在結案時」。
                對話紀錄與結案摘要屬 M3，這裡只有前四塊。
           -->
-          <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
-          <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
-          <CopilotSuggestionList
-            :block="copilot.suggestions.value"
-            :cited-at="copilot.suggestionCitedAt.value"
-            @retry="copilot.retry('suggestions')"
-            @insert="overwriteConfirm.request($event)"
-          />
-          <CopilotKnowledgeSearch
+          <!--
+            ⚠️ **第 6 區塊只在結案流程中存在**（FR-047）—— `v-if` 不是 `v-show`、
+               不是收合、不是骨架。常駐一個空的結案區塊會讓每個對話看起來都
+               「快要結案了」，而 §14.1.1 拒絕讓它常駐的理由也還在。
+            ⚠️ 它**置頂**（在①之前），其餘四塊收合成單行（畫布 §7.4）。
+          -->
+          <CopilotClosureBlock
+            v-if="panel.variant.value === 'closing'"
             :conversation-id="conversationId"
-            @insert="overwriteConfirm.request($event)"
+            @committed="view.finishClosure()"
           />
+
+          <!--
+            結案中：其餘區塊收合成單行（標題 ＋ 展開箭頭）。
+            ⚠️ 憲法 8.2 逐字規格：`role="button"` ＋ `tabIndex` ＋ `aria-expanded`。
+            ⚠️ **不在此處解釋「為什麼其他區塊收合了」** —— 收合與還原是可預期的
+               模式切換，不需要每次結案都說明一次（畫布 2b 的裁示）。
+          -->
+          <template v-if="panel.variant.value === 'closing'">
+            <div
+              v-for="b in collapsedBlocks"
+              :key="b.id"
+              class="ac-card"
+            >
+              <div
+                role="button"
+                :tabindex="0"
+                :aria-expanded="closingExpanded === b.id"
+                class="flex items-center gap-2 px-3 py-2 outline-offset-[-2px] focus-visible:bg-[var(--surface-2)]"
+                @click="closingExpanded = closingExpanded === b.id ? null : b.id"
+                @keydown.enter.prevent="closingExpanded = closingExpanded === b.id ? null : b.id"
+                @keydown.space.prevent="closingExpanded = closingExpanded === b.id ? null : b.id"
+              >
+                <UIcon
+                  :name="closingExpanded === b.id ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                  class="size-3.5 shrink-0"
+                  :style="{ color: 'var(--text-3)' }"
+                />
+                <span class="ac-eyebrow shrink-0 px-[9px]">{{ b.title }}</span>
+              </div>
+              <div v-if="closingExpanded === b.id" class="px-3 pb-3">
+                <CopilotSentimentGauge
+                  v-if="b.id === 'sentiment'"
+                  :block="copilot.sentiment.value"
+                  @retry="copilot.retry('sentiment')"
+                />
+                <CopilotSummaryCard
+                  v-else-if="b.id === 'summary'"
+                  :block="copilot.summary.value"
+                  @retry="copilot.retry('summary')"
+                />
+                <CopilotSuggestionList
+                  v-else-if="b.id === 'suggestions'"
+                  :block="copilot.suggestions.value"
+                  :cited-at="copilot.suggestionCitedAt.value"
+                  @retry="copilot.retry('suggestions')"
+                  @insert="overwriteConfirm.request($event)"
+                />
+                <CopilotKnowledgeSearch
+                  v-else
+                  :conversation-id="conversationId"
+                  @insert="overwriteConfirm.request($event)"
+                />
+              </div>
+            </div>
+          </template>
+
+          <template v-else>
+            <CopilotSentimentGauge :block="copilot.sentiment.value" @retry="copilot.retry('sentiment')" />
+            <CopilotSummaryCard :block="copilot.summary.value" @retry="copilot.retry('summary')" />
+            <CopilotSuggestionList
+              :block="copilot.suggestions.value"
+              :cited-at="copilot.suggestionCitedAt.value"
+              @retry="copilot.retry('suggestions')"
+              @insert="overwriteConfirm.request($event)"
+            />
+            <CopilotKnowledgeSearch
+              :conversation-id="conversationId"
+              @insert="overwriteConfirm.request($event)"
+            />
+          </template>
         </div>
       </div>
     </template>
