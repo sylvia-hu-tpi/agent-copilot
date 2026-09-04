@@ -220,8 +220,15 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
   const boardCalls: Record<BoardOp, number> = { search: 0, create: 0, update: 0, get: 0 }
   let boardItemSeq = 0
   let createTimeoutsLeft = boardOpts.createButTimeout?.times ?? 0
-  /** 掛住不回應的連線 —— `close()` 時要一併結束，否則 server 關不掉 */
+  /**
+   * 掛住不回應的連線與它們的計時器 —— `close()` 時要一併清掉。
+   *
+   * ⚠️ **兩者都要**。只 destroy 連線的話，`hangMs` 的 `setTimeout` 仍在事件迴圈裡，
+   *    `server.close()` 會一直等到它到期（60 秒）——症狀是「測試在 afterEach 卡住」，
+   *    而那與「被測程式碼真的沒有落定」在紅字上長得一模一樣。
+   */
   const hungResponses: ServerResponse[] = []
+  const hangTimers: Array<ReturnType<typeof setTimeout>> = []
 
   function seedBoardItem(fieldsByName: Record<string, unknown>): { id: string } {
     const byId: Record<string, unknown> = {}
@@ -402,7 +409,11 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
 
         const respond = (status: number, payload: unknown): void => {
           const delay = boardOp ? boardOpts.hangMs?.[boardOp] : undefined
-          if (delay) { setTimeout(() => send(status, payload), delay); return }
+          if (delay) {
+            hungResponses.push(res)
+            hangTimers.push(setTimeout(() => send(status, payload), delay))
+            return
+          }
           send(status, payload)
         }
 
@@ -498,6 +509,7 @@ export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<M
     close: () => new Promise<void>((resolve, reject) => {
       // ⚠️ 先結束掛住的連線，否則 `server.close()` 會等它們，測試會逾時 ——
       //    而 `createButTimeout` 的存在理由就是製造這種連線。
+      for (const timer of hangTimers.splice(0)) clearTimeout(timer)
       for (const hung of hungResponses.splice(0)) {
         try { hung.destroy() }
         catch { /* 已經關掉就算了 */ }

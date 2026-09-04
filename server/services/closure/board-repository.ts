@@ -389,7 +389,24 @@ export async function commitClosure(
       + `draft=${summary.draftId} record=${recordId} item=${itemId}`)
 
     // ── ③ 回查 ──────────────────────────────────────────────
-    const back = await getBoardItem(client, boardId, itemId)
+    /*
+      ⚠️ **回查這一步的任何失敗都算 `unverified`，不算 `failed`。**
+
+      平台對「查不到」回的是 404，而 SDK 把非 2xx 一律拋成例外 —— 讓它逸出到
+      外層的 catch 會被歸成 `failed`（＝「CRM 未收到，可直接重試」），
+      但事實正好相反：`createItem` 已經回了 200，紀錄**可能真的在**。
+      告訴客服「可直接重試」而他直接按下去，就會產生第二筆。
+
+      這一格是 B7 與 B8 的分界，而分錯的代價是**在正式 CRM 上多一筆**。
+    */
+    let back: Awaited<ReturnType<typeof getBoardItem>> = null
+    let readbackError: unknown = null
+    try {
+      back = await getBoardItem(client, boardId, itemId)
+    }
+    catch (err) {
+      readbackError = err
+    }
     const backDraftId = back ? str(readField(back.fields, fieldIds, 'draft_id')) : ''
     const verified = !!back && backDraftId === summary.draftId
     log.info(`[closure] req=${reqId} step=verify draft=${summary.draftId} `
@@ -410,6 +427,7 @@ export async function commitClosure(
         'unverified',
         502,
         reqId,
+        readbackError ?? undefined,
       )
     }
 

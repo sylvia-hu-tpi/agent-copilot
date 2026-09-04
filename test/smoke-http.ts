@@ -21,9 +21,14 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
 import { startMockGateway, type MockGateway } from './mock-gateway.js'
+import { MOCK_SECRETS } from './redact-assert.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const SECRETS = ['acc_TESTTOKEN', 'login_acc_TESTTOKEN', 'refresh_TESTTOKEN']
+/**
+ * ⚠️ 自 2026-09-04（specs/006）起與 `test/redact-assert.ts` 共用同一份清單 ——
+ *    寫入失敗路徑的憑證掃描在 vitest 那邊，兩份清單分岔的話會有一邊掃不到東西。
+ */
+const SECRETS = MOCK_SECRETS
 /** 假 gateway 的探測用對話（與 `test/mock-gateway.ts` 的 `MOCK_CONV_BARE` 同一個） */
 const CONV_ID = '68e39cf1-68df-47a0-9e68-6e19c72eff8a'
 
