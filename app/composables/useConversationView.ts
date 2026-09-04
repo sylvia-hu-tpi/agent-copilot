@@ -244,6 +244,13 @@ export function useConversationView(conversationId: Ref<string>) {
           conversationId: conversationId.value,
           state,
           joined: viewerJoined.value,
+          /*
+            specs/006 FR-045（SHOULD）：讓同事看見「有人正在結案」。
+            ⚠️ 它與 `state` 正交，因此每一次心跳都要帶對 —— 少帶就等於
+               「結案期間打一個字，提示就閃掉」（見 `PresenceEntry.closing`）。
+            ⚠️ 純提示、**不阻擋**：看到的人仍可回覆、仍可自行結案（憲法 3.3）。
+          */
+          closing: closure.isClosing(conversationId.value),
           visible: typeof document === 'undefined' || document.visibilityState === 'visible',
           clientId: stream.clientId,
         },
@@ -450,6 +457,16 @@ export function useConversationView(conversationId: Ref<string>) {
       conversationId: conversationId.value,
       state: 'away',
       joined: viewerJoined.value,
+      /*
+        ⚠️ 這裡帶的一定是 `false`：頁面正在卸載，而結案狀態是 tab-local 的
+           —— 分頁一關它就不存在了（FR-040「重新整理等同取消」）。
+           送 `closure.isClosing()` 的真值會在同事畫面上留下一個永遠不會消失的
+           「正在結案」，直到 45 秒 TTL 過期為止，而那是一個不存在的人。
+        ⚠️ **仍然要明寫**，不能省略：`reportViewing()` 會整筆覆寫條目，
+           而省略欄位與送 false 在這一支剛好同義 —— 但下一個人看到「這裡沒帶」
+           會以為是漏掉的（`joined` 就曾經因此被漏掉過）。
+      */
+      closing: false,
       visible: false,
       clientId: stream.clientId,
     })
@@ -478,6 +495,8 @@ export function useConversationView(conversationId: Ref<string>) {
           conversationId: prev,
           state: 'away',
           joined: detail.value?.viewerJoined ?? false,
+          // 切走時把「正在結案」一併帶對 —— 結案狀態是 tab-local 的，切走不等於取消
+          closing: closure.isClosing(prev),
           visible: true,
           clientId: stream.clientId,
         },

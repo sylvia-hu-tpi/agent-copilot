@@ -158,3 +158,45 @@ describe('來源合併', () => {
     expect(snap.unidentifiedActor).toBe(false)
   })
 })
+
+/**
+ * specs/006 FR-045：`closing` 與 `state` 正交。
+ *
+ * ⚠️ `reportViewing()` 會**整筆覆寫** presence 條目 —— 這正是 `joined` 當初
+ *    差點被 `composing` 蓋掉的那顆地雷（見 `PresenceEntry.joined` 的註解）。
+ *    `closing` 走同一條路，因此要有同一條測試。
+ */
+describe('FR-045：composing 不會把 closing 覆寫成 false', () => {
+  it('結案期間打字：心跳帶著 closing=true，條目仍是 closing', async () => {
+    const s = makeStore()
+    // 進入結案，心跳送 viewing
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'viewing', true, true)
+    // 開始打字 —— 心跳改送 composing，但仍在結案中
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'composing', true, true)
+
+    const snap = await snapshotOf(s, CONV, { mode: 'manual' })
+    const entry = snap.operators.find(o => o.operatorId === 'u_wang')
+    expect(entry?.state).toBe('composing')
+    expect(entry?.closing, 'composing MUST NOT 把 closing 蓋掉').toBe(true)
+    expect(entry?.joined).toBe(true)
+  })
+
+  it('⚠️ 心跳漏帶 closing 就會被清成 false —— 這正是它 MUST 每次都帶的理由', async () => {
+    const s = makeStore()
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'viewing', true, true)
+    // 模擬「只在進入結案時帶一次」的錯誤寫法
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'composing', true)
+
+    const snap = await snapshotOf(s, CONV, { mode: 'manual' })
+    expect(snap.operators.find(o => o.operatorId === 'u_wang')?.closing).toBe(false)
+  })
+
+  it('取消結案：心跳帶 closing=false，提示隨即消失（不必等 TTL）', async () => {
+    const s = makeStore()
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'viewing', true, true)
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'viewing', true, false)
+
+    const snap = await snapshotOf(s, CONV, { mode: 'manual' })
+    expect(snap.operators.find(o => o.operatorId === 'u_wang')?.closing).toBe(false)
+  })
+})

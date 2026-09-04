@@ -217,6 +217,21 @@ export interface PresenceEntry {
    *    這與 §10.6 拒絕把三種平台模式建模成單一列舉是同一個判斷。
    */
   joined: boolean
+  /**
+   * 這個人正在走結案流程（specs/006-closure-handoff-summary FR-045，SHOULD）。
+   *
+   * ⚠️ **MUST NOT 做成 `PresenceState` 的第四個值** —— 理由與 `joined` 為什麼不併進
+   *    `state` **完全相同**：結案期間打一個字，心跳會送出 `composing`，
+   *    而那會把 `closing` 蓋掉。症狀是「同事正在結案」的提示在對方每次打字時閃掉，
+   *    而型別檢查一聲都不吭。
+   *
+   * ⚠️ 它是**純提示，不阻擋**（憲法 3.3）：看到的人仍可回覆、仍可自行結案。
+   *    同一通對話多筆結案紀錄是正常的（憲法 5.3），策略是讓碰撞被看見而非防止碰撞。
+   *
+   * ⚠️ 跟著 presence 的 45 秒 TTL 走、**不持久化** ——
+   *    因此 FR-040「重新整理等同取消」不會被它破壞：分頁一關，心跳就停了。
+   */
+  closing: boolean
   source: PresenceSource
   /** 此狀態的發生時間（ISO8601）。source 為 `message` 時即該則訊息的時間 */
   at: string

@@ -30,6 +30,15 @@ const { t } = useI18n()
 const live = computed(() => props.presence.operators.filter(o => o.source !== 'message'))
 const inferred = computed(() => props.presence.operators.filter(o => o.source === 'message'))
 
+/**
+ * specs/006 FR-045：正在結案的同事。
+ * ⚠️ 只看來源 ①（自家 SSE）—— 來源 ② 是「曾經發言」的反推，它不知道對方有沒有在結案。
+ * ⚠️ 快照已由 server 排除自己（`snapshotOf` 的 `excludeOperatorId`），
+ *    因此這裡不會出現「你正在結案」。
+ */
+const closingOperators = computed(() =>
+  props.presence.operators.filter(o => o.source !== 'message' && o.closing))
+
 const isEmpty = computed(() =>
   props.presence.operators.length === 0 && !props.presence.unidentifiedActor,
 )
@@ -93,6 +102,25 @@ const lastUpdatedText = computed(() => (
       />
       <span class="font-medium">{{ displayName(op) }}</span>
       <span>{{ liveLabel(op) }}</span>
+    </span>
+
+    <!--
+      specs/006 FR-045（SHOULD）：有同事正在走結案流程。
+
+      ⚠️ **純提示，不阻擋**（憲法 3.3、憲法 7.1）—— 看到的人仍可回覆、仍可自行結案。
+         文案本身就把這件事說出來（「你仍可回覆或自行結案」），
+         而不是只顯示「XXX 正在結案」讓人自己猜要不要停手。
+      ⚠️ 與 ①「正在輸入／正在檢視」是**兩個正交的維度**，因此另起一列而不是
+         替換 `liveLabel()` 的文字 —— 替換的話，對方一開始打字提示就消失了。
+    -->
+    <span
+      v-for="op in closingOperators"
+      :key="`closing-${op.operatorId}`"
+      class="flex items-center gap-1.5 rounded-full px-2 py-0.5"
+      :style="{ background: 'var(--open-bg)', color: 'var(--open)' }"
+    >
+      <UIcon name="i-lucide-flag" class="size-3 shrink-0" aria-hidden="true" />
+      {{ t('closure.presenceClosing', { name: displayName(op) }) }}
     </span>
 
     <!-- ② 訊息反推：推測，措辭必須是過去式 -->

@@ -649,3 +649,53 @@ describe('006 契約守衛：四條「不報錯但做錯事」的防線', () => 
     expect(stripNonCode("throw new Error('不得用 localStorage')")).not.toContain('localStorage')
   })
 })
+
+/**
+ * ── 006 FR-045：`closing` 是 `PresenceEntry` 的欄位，不是 `PresenceState` 的第四個值 ──
+ *
+ * ⚠️ 這條守的錯誤與 `joined` 曾經差點犯的完全相同：把「正在結案」做成第四個狀態值。
+ *    做成第四個值之後，**結案期間打一個字，心跳送出 `composing` 就會把它蓋掉** ——
+ *    症狀是同事畫面上的「正在結案」提示在對方每次打字時閃掉，而型別檢查一聲都不吭。
+ */
+describe('006 FR-045：PresenceState 維持三值，closing 與 state 正交', () => {
+  const SHARED = resolve(ROOT, 'shared/types/conversation.ts')
+
+  it('PresenceState 的字面聯集恰為三值', () => {
+    const source = readFileSync(SHARED, 'utf8')
+    const line = /export type PresenceState\s*=\s*([^\n]+)/.exec(stripComments(source))
+    expect(line?.[1], 'PresenceState 的宣告抓不到 —— 守衛會恆真').toBeTruthy()
+
+    const values = [...line![1]!.matchAll(/'([^']+)'/g)].map(m => m[1])
+    expect(values).toEqual(['viewing', 'composing', 'joined'])
+  })
+
+  it('PresenceEntry 有 closing 欄位（否則上面那條可以靠「根本沒實作」而通過）', () => {
+    const source = stripComments(readFileSync(SHARED, 'utf8'))
+    expect(source).toMatch(/closing:\s*boolean/)
+  })
+
+  it('心跳每一次都帶 closing —— 少帶一次就等於把它清成 false', () => {
+    /*
+      ⚠️ `reportViewing()` 會**整筆覆寫** presence 條目（`joined` 曾經踩過同一顆地雷）。
+         因此前端每一支送出 `/api/presence` 的呼叫都 MUST 帶 `closing`，
+         而不是「只有進入結案時帶一次」。
+    */
+    const view = stripComments(readFileSync(resolve(ROOT, 'app/composables/useConversationView.ts'), 'utf8'))
+    const beats = [...view.matchAll(/'\/api\/presence'/g)]
+    expect(beats.length, 'presence 心跳的呼叫點抓不到 —— 守衛會恆真').toBeGreaterThan(0)
+    // 每一個 body 裡都要有 closing —— 用出現次數比對是近似的，但方向是漏抓不是誤抓
+    const closingCount = [...view.matchAll(/\bclosing:/g)].length
+    expect(closingCount, `presence 呼叫有 ${beats.length} 處，closing 只出現 ${closingCount} 次`)
+      .toBeGreaterThanOrEqual(beats.length)
+  })
+
+  it('server 端把 closing 一路帶到 PresenceEntry（不是收下就丟掉）', () => {
+    const route = stripComments(readFileSync(resolve(ROOT, 'server/api/presence.post.ts'), 'utf8'))
+    expect(route).toMatch(/closing:\s*z\.boolean\(\)/)
+    // 解構出來並傳給 reportViewing —— 只在 schema 宣告而不轉交是最容易漏的一步
+    expect(route).toMatch(/closing\b[^\n]*\}\s*=\s*await readBodyAs/)
+
+    const service = stripComments(readFileSync(resolve(ROOT, 'server/services/presence.ts'), 'utf8'))
+    expect(service).toMatch(/closing/)
+  })
+})
