@@ -87,8 +87,8 @@
 - 情緒三數值的「留空」與「0」在紀錄上 MUST 可區分（FR-022b）。
 - 結案狀態 MUST NOT 持久化（FR-040）——這與憲法 8.4 的關係見下方 Constitution Check 第八條。
 
-**Scale/Scope**：4 則 User Story、**53 條 FR**（FR-001～005、010～019、020～022b、030～035、
-040～047b、050～052，含 20 條字母尾綴）、**10 條 SC**（SC-001～008 ＋ SC-006a／006b）。
+**Scale/Scope**：4 則 User Story、**59 條 FR**（FR-001～005、010～017、019、020～022b、030～035a、
+040～047b、050～052，含 25 條字母尾綴；FR-018 不存在）、**10 條 SC**（SC-001～008 ＋ SC-006a／006b）。
 新增 **3 支 route**、**1 支 setup script**、**2 支 spike**、
 **1 個 Pinia store**、**1 份設定檔**、**4 個前端元件**；影響約 **12 個既有檔案**。
 另有 **4 筆文件改判義務**（`categories.yaml` 三處落點、`period_origin` 三處落點，＋ `IMBRACE_QUESTIONS.md` D 段與 `DESIGN_FEEDBACK.md` D 段**已完成**）。
@@ -166,9 +166,11 @@ server/
 │                                      #    ⚠️ MUST NOT 接觸任何訊息取數路徑
 ├── services/
 │   ├── closure/
+│   │   ├── board-schema.ts            # 🆕 Board 名稱＋26 欄位表（純模組，setup script 也 import）
 │   │   ├── board-repository.ts        # 🆕 Board CRUD ＋ 三步冪等（憲法 5.3）
 │   │   ├── period.ts                  # 🆕 候選推導、則數掃描（上限 500）、起點解析
-│   │   └── sentiment-range.ts         # 🆕 區間內三數值（⚠️ 不得讀 stats.lowestScore）
+│   │   ├── sentiment-range.ts         # 🆕 區間內三數值（⚠️ 不得讀 stats.lowestScore）
+│   │   └── readonly-fields.ts         # 🆕 唯讀欄位的同一段計算（draft 與 commit 共用，R3.7）
 │   ├── imbrace.ts                     # ✏️ Board API 的防腐層包裝（SDK 繞道不得散落）
 │   ├── ai/
 │   │   ├── imbrace-agent-provider.ts  # ✏️ summarizeClosure()（第五個 agent）
@@ -200,13 +202,20 @@ scripts/
     └── 30-closure-latency.ts          # 🆕 三段時間預算量測（容量規劃用，非驗收門檻）
 
 test/
-├── contract-guards.test.ts            # ✏️ 三條新守衛（見下）
+├── contract-guards.test.ts            # ✏️ 四條新守衛（見下）
 ├── closure-idempotency.test.ts        # 🆕 SC-002：重試 10 次 1 筆；兩份草稿 2 筆並存
-├── closure-write-failures.test.ts     # 🆕 SC-003：四種失敗形態各 10 次
+├── closure-write-failures.test.ts     # 🆕 SC-003：四種失敗形態各 10 次（repository 層）
+├── closure-write-timeout.test.ts      # 🆕 FR-032a：30 秒硬逾時（repository 層）
 ├── closure-scope-selection.test.ts    # 🆕 SC-006a：四個代表情境
 ├── closure-sentiment-range.test.ts    # 🆕 SC-006b：區間內最低點、留空與 0 可區分
 ├── closure-commit-guard.test.ts       # 🆕 SC-001：只有寫入按鈕呼叫 commit
-└── closure-leave-no-write.test.ts     # 🆕 SC-006：LEAVE 20 次、寫入 0 次
+├── closure-leave-no-write.test.ts     # 🆕 SC-006：LEAVE 20 次、寫入 0 次
+├── closure-board-verify.test.ts       # 🆕 SC-007：diffBoardFields 純函式（名稱／型別／選項）
+├── redact-assert.ts                   # 🆕 憑證外洩掃描 helper（自 smoke-http.ts 抽出）
+└── nuxt/                              # ⚠️ 凡 import `app/stores/**` 的測試 MUST 放這裡 ——
+    │                                  #    `nuxt typecheck` 才有 ref／$fetch 型別（tsconfig.scripts.json 檔頭）
+    ├── closure-wait-honesty.test.ts   # 🆕 SC-004：等待期間 100% 誠實（store 層）
+    └── closure-store-failures.test.ts # 🆕 SC-003／FR-040a／US3 AC#4 的 store 層斷言
 
 i18n/locales/zh-TW.json                # ✏️ 結案面板全部文案（憲法 8.5）
 nuxt.config.ts                         # ✏️ IMBRACE_CLOSURE_BOARD_ID／_AGENT_ID 的 runtimeConfig 橋接
@@ -216,7 +225,7 @@ nuxt.config.ts                         # ✏️ IMBRACE_CLOSURE_BOARD_ID／_AGEN
 （`app/` 前端、`server/` Nitro BFF、`shared/` 兩端共用型別、`config/` 設定、
 `test/` vitest、`scripts/spike/` 真實環境實測）。
 新增兩個目錄層級：`server/api/conversations/[id]/closure/`（Nitro 檔案路由慣例）與
-`server/services/closure/`（三個模組合計約 500 行，放進既有的扁平 `services/` 會讓
+`server/services/closure/`（五個模組合計約 600 行，放進既有的扁平 `services/` 會讓
 Board 相關邏輯與分析管線混在同一層）。
 
 ⚠️ **`server/services/closure/` 刻意**不**是分析管線的成員**。它不受 `@analysis-pipeline`

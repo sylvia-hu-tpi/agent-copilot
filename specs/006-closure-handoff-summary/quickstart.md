@@ -72,12 +72,17 @@ npx vitest run test/closure-idempotency.test.ts
 ### SC-003：四種失敗形態，畫面顯示成功 0 次
 
 ```bash
-npx vitest run test/closure-write-failures.test.ts
+npx vitest run test/closure-write-failures.test.ts test/nuxt/closure-store-failures.test.ts
 ```
 
-四種各注入 10 次（逾時、4xx、5xx、200 但回查不存在）。每一種斷言：
-端點回非 2xx、前端 store 回到 `ready`、`draft` 內容逐欄未變、`panelOpen` 仍為 true、
-回應帶 `reqId`（FR-035a）。
+四種各注入 10 次（逾時、4xx、5xx、200 但回查不存在），分兩層：
+repository 層（`test/`）斷言 `commitClosure()` 拋錯、`failKind` 正確、錯誤帶 `reqId`（FR-035a）；
+store 層（`test/nuxt/`，因為它 import `app/stores/closure.ts`）斷言 store 回到 `ready`、
+`draft` 內容逐欄未變、條目仍在（面板不關）、沒有任何 `/leave` 呼叫。
+
+⚠️ 5xx 是**真注入**（`failWith.create = 503`）：SDK 對 5xx 寫死退避重試 3 次、約 7 秒且不可關閉，
+因此 10 次以不同 `draftId` 並行、該組 timeout 放寬到 15 秒，並額外斷言 `create` 被呼叫 40 次
+（重試耗盡後仍是失敗，不是被吞成成功）。MUST NOT 以 4xx 代替 —— 那會讓 SC-003 的 5xx 一格從未被驗到。
 
 另斷言 `failKind` 的分派（FR-032c）：前三種為 `failed`（畫布 B7），
 第四種為 `unverified`（畫布 B8）。⚠️ 但四種的 **store 狀態轉移必須完全相同** ——
@@ -89,7 +94,7 @@ npx vitest run test/closure-write-failures.test.ts
 ### SC-004：等待期間 100% 誠實（**不是**秒數門檻）
 
 ```bash
-npx vitest run test/closure-wait-honesty.test.ts
+npx vitest run test/nuxt/closure-wait-honesty.test.ts
 ```
 
 任意 20 次產生（涵蓋短、中、長三種區間）中，斷言三個 0：
@@ -104,10 +109,11 @@ npx vitest run test/closure-wait-honesty.test.ts
 ⚠️ **但寫入路徑仍有硬門檻**（FR-032a，30 秒），且它是 FR-040a「寫入中不可取消」的成立前提：
 
 ```bash
-npx vitest run test/closure-write-timeout.test.ts
+npx vitest run test/closure-write-timeout.test.ts test/nuxt/closure-store-failures.test.ts
 ```
 
-假 gateway 讓寫入永不回應，斷言 30 秒內轉為失敗、草稿仍在、取消鍵恢復可用。
+假 gateway 讓寫入永不回應，斷言 30 秒內轉為失敗（repository 層）、草稿仍在、
+`writing` 期間取消鍵鎖住、落定後恢復可用（store 層，在 `test/nuxt/`）。
 ⚠️ 少了這條，客服會被困在一個既不能取消、也不會自己結束的狀態裡。
 
 ### SC-005：3 位未參與者說得出兩個出口的差別（＝重跑 003 SC-007）
