@@ -42,6 +42,11 @@ const ENV_BRIDGE: Record<string, string> = {
   // specs/002-suggestion-knowledge-search 新增：知識庫檢索／建議卡生成 agent
   NUXT_IMBRACE_KNOWLEDGE_AGENT_ID: 'IMBRACE_KNOWLEDGE_AGENT_ID',
   NUXT_IMBRACE_SUGGESTION_AGENT_ID: 'IMBRACE_SUGGESTION_AGENT_ID',
+  // specs/006-closure-handoff-summary 新增：結案摘要 agent ＋ 結案紀錄的 Data Board。
+  // ⚠️ Board 以 **id** 指定而非名稱（契約 closure-board-schema.md §1）——
+  //    名稱不是唯一鍵，同名 board 會讓寫入靜默落到錯的地方，而那是正式 CRM。
+  NUXT_IMBRACE_CLOSURE_AGENT_ID: 'IMBRACE_CLOSURE_AGENT_ID',
+  NUXT_IMBRACE_CLOSURE_BOARD_ID: 'IMBRACE_CLOSURE_BOARD_ID',
 }
 for (const [nuxtKey, plainKey] of Object.entries(ENV_BRIDGE)) {
   const plain = process.env[plainKey]
@@ -86,6 +91,11 @@ export default defineNuxtConfig({
     redisUrl: '',
     imbraceSummaryAgentId: '',
     imbraceSentimentAgentId: '',
+    // specs/006：⚠️ 憲法 1.1 —— 兩者 MUST NOT 移入 public。
+    //   `imbraceClosureBoardId` 由 `server/api/conversations/[id]/closure/*` 讀取；
+    //   `imbraceClosureAgentId` 由 `server/services/ai/index.ts` 讀取（走 process.env，見該檔）。
+    imbraceClosureAgentId: '',
+    imbraceClosureBoardId: '',
 
     public: {
       appName: 'AgentCopilot',
