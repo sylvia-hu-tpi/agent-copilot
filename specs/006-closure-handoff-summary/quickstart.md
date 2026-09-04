@@ -230,3 +230,92 @@ npm run dev
 | 429 無全域退避佇列 | 直接轉錯誤狀態供手動重試 | `IMBRACE_QUESTIONS.md` G-2 🔴 未回覆 |
 | 交接摘要不存在 | `HandoverSummary` 規劃中、未實作 | §13.4 ②、FR-016a |
 | 平台對話狀態不變更 | 結案 ＝ 寫入 ＋ LEAVE | spec.md「明確排除」 |
+
+---
+
+## 6. 驗收紀錄（2026-09-04 落地）
+
+> ⚠️ **本節只記「實際跑過的結果」，未跑過的一律標成「⬜ 待執行」而不是留白。**
+> 留白會被下一個人讀成「跑過了、只是忘了寫」—— 那正是 003 SC-007 被「結案而非驗證」
+> 的同一個形狀（見 §2 的 SC-005）。
+
+### 6.1 綠燈基線
+
+| 指令 | 結果 | 備註 |
+|---|---|---|
+| `npm run typecheck` | ✅ 通過 | `nuxt typecheck` ＋ `tsc -p tsconfig.scripts.json` |
+| `npm test` | ✅ **53 檔 671 項全數通過** | 落地前為 43 檔 559 項 |
+| `npm run build` | ✅ 通過 | |
+| `npm run smoke` | ✅ M0＋M1 兩支全數通過 | 含三支結案端點的 401 與憑證外洩掃描 |
+| `grep -rn "@imbrace/sdk" app/ shared/` | ✅ 無違規 | 唯一命中是 `app/utils/operator-id.ts` 的**註解**（說明為何不 import），憲法 1.2 守衛未被破壞 |
+
+### 6.2 逐條 SC
+
+| SC | 狀態 | 依據 |
+|---|---|---|
+| **SC-001** 只有寫入按鈕會呼叫 commit | ✅ 自動化通過 | `test/closure-commit-guard.test.ts`：`/closure/commit` 在 `app/**` 恰好出現一次，且在 `app/stores/closure.ts` |
+| **SC-002** 同一份草稿重試 10 次恰好一筆 | ✅ 自動化通過 | `test/closure-idempotency.test.ts`：前次逾時（紀錄已建立）→ 後續走 update → Board 上 1 筆、內容為第 10 版、第 10 次 `created === false`。另驗兩份草稿 2 筆並存、`q` 命中他人紀錄時仍走 create（`update` 呼叫 0 次） |
+| **SC-003** 四種失敗形態畫面顯示成功 0 次 | ✅ 自動化通過 | repository 層 `test/closure-write-failures.test.ts`（逾時／4xx／**真 5xx**／回查不存在各 10 次）＋ store 層 `test/nuxt/closure-store-failures.test.ts`（四種的狀態轉移**完全相同**，只有 `failKind` 不同）。5xx 那組 `create` 被打 **40 次**（10 × 4），證明重試耗盡後仍是失敗 |
+| **SC-004** 等待期間 100% 誠實 | ✅ 自動化通過 | `test/nuxt/closure-wait-honesty.test.ts`：三種區間長度共 20 次，完成前 `status` 從未是 `ready`；`closure.*` 文案掃描無「N 秒／約 N」承諾；`generating` 期間 `canCancel === true` 且 `cancel()` 使在途請求 `AbortSignal.aborted === true` |
+| **SC-005** 3 位未參與者說得出兩個出口的差別 | ⬜ **待執行（人工）** | 見 6.4。⚠️ 這是 003 SC-007 的重跑，MUST NOT 因為行為已補上就視為通過 |
+| **SC-006** LEAVE 不寫入 | ✅ 自動化通過 | `test/closure-leave-no-write.test.ts`：LEAVE 20 次 → Board `create`／`update`／`search` 皆 0 次、`summarizeClosure()` 0 次；003 SC-002 重跑 20/20 |
+| **SC-006a** 涵蓋區間四情境各 5 次 | ✅ 自動化通過 | `test/closure-scope-selection.test.ts`：含「跨夜同一段服務不得被切開」的**反例**與「截斷是逐個候選」的斷言 |
+| **SC-006b** 區間內情緒數值 | ✅ 自動化通過 | `test/closure-sentiment-range.test.ts`：`trough` ≠ 全局最低；「部分有值」窮舉 25 個起點皆不可能出現；`null` 不進 body 而 `0` 進 body |
+| **SC-007** setup script 指得出缺漏 | 🟡 **自動化通過，真實環境待執行** | `test/closure-board-verify.test.ts`：**逐欄窮舉** 26 欄，移除任一欄都被指出；型別不符、選項缺漏、選項多出各一條。真實環境的三次執行見 6.4 |
+| **SC-008** 文案與行為落差為 0 | ✅ 已對照（見 6.3） | |
+
+### 6.3 FR-002／SC-008 的文案對照結論（T033）
+
+逐句對照 `i18n/locales/zh-TW.json` 與 T029 之後的實際行為：
+
+- `conversation.exitHint`「離開＝僅退出不寫入 · 結案＝產生摘要供確認後寫入」
+  → ✅ **現在成立**。`closeConversation()` 只開面板，寫入成功後才 LEAVE。
+- `conversation.closing`「結案中…」→ ✅ 語意不變（標題列的結案中標示）。
+- `conversation.closeFailed`「結案失敗」→ ❌ **已刪除**。
+  它的舊語意是「`closeConversation()` 裡那次 LEAVE 失敗」，而那條路徑在 006 之後不存在。
+  新的對應是 `closure.scopesError`「無法載入結案紀錄」。
+  ⚠️ **刪掉而不是改寫**：那個鍵在 `app/**` 已無人引用，留著就是第二筆帳。
+
+### 6.4 人工驗收（⬜ 全部待執行）
+
+> ⚠️ 這四項**無法自動化**，而且三項會動到 `IMBRACE_ENV=stable`（正式環境、真實客戶資料）。
+> 執行前 MUST 讓使用者知情（`CLAUDE.md` 環境章節）。
+
+| 任務 | 內容 | 為什麼不能自動化 |
+|---|---|---|
+| **T046** | 在 stable 跑 `board:setup` ×2、`board:verify` ×1，把印出的 id 寫進 `.env.local`；手動刪一欄後 verify 要非零離開並逐欄列出；補回該欄 | 會在**正式組織**建立 Board 與欄位 |
+| **T052**（SC-005） | 找 **3 位未參與本專案**的人，只給看兩顆按鈕與 `conversation.exitHint`，**在按下之前**請他們說出「哪一個會留下紀錄」；3/3 才算過 | 驗的是「沒看過規格的人讀不讀得懂」，任何自動化都會偷看到答案 |
+| **T053**（US1 AC#3） | 開啟結案面板後**完全不操作**放置 10 分鐘，確認 Board 上沒有任何紀錄 | 驗的是「沒有閒置自動寫入路徑」—— 一條不存在的路徑無法用測試證明不存在，只能實際等 |
+| **T054** | 走查 §3 步驟 1～8 ＋「中途要驗的三件事」 | 需要真實瀏覽器與真實 AI |
+
+⚠️ **走查期間 MUST NOT 編輯 `server/**`** —— Nitro 熱重啟會清空 process-local session，
+所有分頁跳回登入頁，症狀酷似產品缺陷。
+
+### 6.5 §4 跨 spec 熱點複審結果（T055）
+
+| 檔案 | 驗法 | 結果 |
+|---|---|---|
+| `app/composables/useConversationView.ts` | `leave()` 與 `closeConversation()` 仍是兩個獨立函式 | ✅ 兩者各自存在（003 FR-022a）；M3 銜接註解已改寫為「兩件事都移到寫入成功後的 LEAVE」 |
+| `server/services/copilot-analysis.ts` | `grep -n "closing\|closure"` | ✅ **零結果** —— 沒有為結案新增第二個門檻條件 |
+| `test/contract-guards.test.ts` | `git diff main` 只有新增 | ✅ 唯一的刪除行是 `import { readdirSync, readFileSync }`，換成加了 `existsSync` 的同一行；既有守衛一條都沒被弱化 |
+| `shared/types/conversation.ts` | `PresenceState` 仍是三值 | ✅ `'viewing' \| 'composing' \| 'joined'`；`closing` 是 `PresenceEntry` 的獨立欄位，並有守衛與行為測試各一 |
+
+### 6.6 落地時發現並修正的兩件事（記錄以免重犯）
+
+1. **回查失敗被歸成 `failed` 而非 `unverified`。**
+   平台對「查不到」回 404，SDK 把非 2xx 一律拋成例外 —— 讓它逸出到外層 catch 就變成
+   「CRM 未收到，可直接重試」，但事實正好相反：`createItem` 已經回了 200，紀錄可能真的在。
+   照那個提示重試會在正式 CRM 上產生第二筆。**由 SC-003 的第四種形態抓到。**
+
+2. **`hangMs` 注入讓假 gateway 關不掉。**
+   `close()` 原本只 destroy 連線、沒有 `clearTimeout`，`server.close()` 因此要等到
+   60 秒後才回。症狀是「`afterEach` 卡住」，與「被測程式碼真的沒落定」在紅字上一模一樣。
+
+### 6.7 已知落差（新增一項）
+
+除 §5 既有的四項外，本次落地新增一項：
+
+| 落差 | 現況 | 為什麼不猜 |
+|---|---|---|
+| `readonly.joinedAt` 不是真正的 JOIN 時間 | 取 `CopilotSession.createdAt`（＝第一條連線開始檢視這個對話的時刻）；取不到時退回 `periodStart` | 平台沒有給「這位客服何時 JOIN」的時間戳，`StateStore` 也沒有記（JOIN 紀錄是一個 Set，presence 的 `at` 每 20 秒被心跳刷新）。⚠️ 退回 `now` 會讓每一份重啟後的報告都寫著「剛剛才加入」，而那是編造的（憲法 4.5） |
+

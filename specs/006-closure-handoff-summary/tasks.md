@@ -173,29 +173,29 @@ MUST 有一個會紅的迴歸測試；本清單共新增 10 支測試檔（8 支
 
 ### FR-045（SHOULD）：presence「XXX 正在結案」
 
-- [ ] T047 [P] 修改 `shared/types/conversation.ts`：`PresenceEntry` 新增 `closing: boolean`，與 `joined` 並列；註解逐字說明「MUST NOT 做成 `PresenceState` 的第四個值 —— 結案期間打一個字，`composing` 會把 `closing` 蓋掉」（research #18）。**`PresenceState` 維持三值不動**
-- [ ] T048 [P] 修改 `server/api/presence.post.ts` 的 Zod `Body` 新增 `closing: z.boolean().default(false)`，並在 `server/services/presence.ts` 的 `reportViewing()`／`snapshotOf()` 帶過 `closing`（跟既有 TTL 走，不持久化；FR-045 的「MUST NOT 讓 FR-040 失效」因此天然成立）
-- [ ] T049 修改 `app/composables/useConversationView.ts` 的 `beat()` 心跳送出 `closing: useClosureStore().isClosing(id)`；修改 `app/components/conversation/PresenceBar.vue`：他人 `closing === true` 時顯示「〈某人〉正在結案／你仍可回覆或自行結案」（i18n；`DESIGN_TOKENS.md` 1c「同事視角」），**純提示、不阻擋**（FR-045、憲法 3.3）
-- [ ] T050 在 `test/contract-guards.test.ts` 或既有 presence 測試補一條：`PresenceState` 的字面聯集恰為三值（掃 `shared/types/conversation.ts` 該行）；`test/closure-scope-selection.test.ts` 或新測試補：presence 心跳 `composing` 不會把 `closing` 覆寫成 `false`
+- [x] T047 [P] 修改 `shared/types/conversation.ts`：`PresenceEntry` 新增 `closing: boolean`，與 `joined` 並列；註解逐字說明「MUST NOT 做成 `PresenceState` 的第四個值 —— 結案期間打一個字，`composing` 會把 `closing` 蓋掉」（research #18）。**`PresenceState` 維持三值不動**
+- [x] T048 [P] 修改 `server/api/presence.post.ts` 的 Zod `Body` 新增 `closing: z.boolean().default(false)`，並在 `server/services/presence.ts` 的 `reportViewing()`／`snapshotOf()` 帶過 `closing`（跟既有 TTL 走，不持久化；FR-045 的「MUST NOT 讓 FR-040 失效」因此天然成立）
+- [x] T049 修改 `app/composables/useConversationView.ts` 的 `beat()` 心跳送出 `closing: useClosureStore().isClosing(id)`；修改 `app/components/conversation/PresenceBar.vue`：他人 `closing === true` 時顯示「〈某人〉正在結案／你仍可回覆或自行結案」（i18n；`DESIGN_TOKENS.md` 1c「同事視角」），**純提示、不阻擋**（FR-045、憲法 3.3）
+- [x] T050 在 `test/contract-guards.test.ts` 或既有 presence 測試補一條：`PresenceState` 的字面聯集恰為三值（掃 `shared/types/conversation.ts` 該行）；`test/closure-scope-selection.test.ts` 或新測試補：presence 心跳 `composing` 不會把 `closing` 覆寫成 `false`
 
 ### 量測與人工驗收
 
-- [ ] T051 [P] 新增 `scripts/spike/30-closure-latency.ts`（research #24 末段）：對真實環境量三段時間 —— `scopes`（候選查詢＋則數掃描）、`draft`（快照＋AI）、`commit`（三步寫入）—— 各 n=5，分短（≤ 10 則）／中（≈ 50 則）／長（≥ 200 則）三種區間，輸出到 `scripts/spike/out/30-*.json`。檔頭註解逐字寫明：**這是容量規劃參考，MUST NOT 回頭變成 SC-004 的驗收門檻**（research #20）。唯讀除了 `commit` 段 —— `commit` 段 MUST 帶 `--yes` 才執行且寫入前印計畫，結案紀錄的 `summary` 以「spike 30 量測用，可刪除」開頭
+- [x] T051 [P] 新增 `scripts/spike/30-closure-latency.ts`（research #24 末段）：對真實環境量三段時間 —— `scopes`（候選查詢＋則數掃描）、`draft`（快照＋AI）、`commit`（三步寫入）—— 各 n=5，分短（≤ 10 則）／中（≈ 50 則）／長（≥ 200 則）三種區間，輸出到 `scripts/spike/out/30-*.json`。檔頭註解逐字寫明：**這是容量規劃參考，MUST NOT 回頭變成 SC-004 的驗收門檻**（research #20）。唯讀除了 `commit` 段 —— `commit` 段 MUST 帶 `--yes` 才執行且寫入前印計畫，結案紀錄的 `summary` 以「spike 30 量測用，可刪除」開頭
 - [ ] T052 **人工驗收 SC-005（＝ 003 SC-007 重跑，FR-003）**：找 **3 位未參與本專案**的人，只給他們看中欄底部兩顆按鈕與 `conversation.exitHint` 那行文案，**在按下之前**請他們說出「哪一個會留下紀錄」；3/3 通過才算過。結果（受測者代號、回答、日期）記入 T059。⚠️ 這是獨立任務，MUST NOT 被「結案」而非「驗證」（research #23）
 - [ ] T053 **人工驗收 US1 AC#3**：開啟結案面板後**完全不操作**放置 10 分鐘，確認 Board 上沒有任何紀錄（無自動化替代 —— 它驗的是「沒有閒置自動寫入路徑」）。結果記入 T059
 - [ ] T054 **人工走查 quickstart.md §3**（步驟 1～8 ＋「中途要驗的三件事」）：結案期間送訊息（輸入框不鎖、橫幅在、摘要不自動更新只出過期標記）、切走再回來（Sidebar 標記）、重新整理（等同取消：JOIN 狀態、面板照常、第 6 區塊不見、各區塊重新分析、Board 無紀錄）。⚠️ 走查期間 MUST NOT 編輯 `server/**`。結果記入 T059
 
 ### 跨 spec 熱點複審（quickstart.md §4；spec.md 驗收補充要求 2）
 
-- [ ] T055 複審四個熱點檔案並把結論寫入 T059：`app/composables/useConversationView.ts`（003 FR-022a 的獨立行為路徑仍成立、M3 銜接註解已改寫）；`server/services/copilot-analysis.ts`（**沒有**為結案新增第二個門檻條件，003 FR-012 維持單一條件 —— `grep -n "closing\|closure" server/services/copilot-analysis.ts` 零結果）；`test/contract-guards.test.ts`（既有守衛一條都沒被弱化 —— `git diff main -- test/contract-guards.test.ts` 只有新增）；`shared/types/conversation.ts`（`PresenceState` 仍是三值）
+- [x] T055 複審四個熱點檔案並把結論寫入 T059：`app/composables/useConversationView.ts`（003 FR-022a 的獨立行為路徑仍成立、M3 銜接註解已改寫）；`server/services/copilot-analysis.ts`（**沒有**為結案新增第二個門檻條件，003 FR-012 維持單一條件 —— `grep -n "closing\|closure" server/services/copilot-analysis.ts` 零結果）；`test/contract-guards.test.ts`（既有守衛一條都沒被弱化 —— `git diff main -- test/contract-guards.test.ts` 只有新增）；`shared/types/conversation.ts`（`PresenceState` 仍是三值）
 
 ### 正典文件收尾
 
-- [ ] T056 [P] 修改 `docs/ARCHITECTURE.md` §18 M3 驗收清單：勾選「摘要可編輯後才寫入 Board」、「重複觸發摘要為覆蓋而非新增」（該行措辭已於 v4.0.0 訂正為「同一草稿冪等、多次結案並存」—— 確認措辭後打勾）、「UI 上已經有一行文案在對客服承諾這個尚未實作的行為」三項；「LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用」**標記為不適用並附 FR-017 理由，MUST NOT 打勾**。驗法：`grep -n "兩者不混用" docs/ARCHITECTURE.md` 命中處旁有「不適用」字樣
-- [ ] T057 [P] 依 CLAUDE.md「正典文件修改後必須 grep 舊說法」全文掃描並修正殘留：`grep -rn "先 leave\|停止分析 → 隱藏面板\|結案即停止分析" docs/ app/ server/`（M2 階段性行為的描述，除刻意保留的歷史紀錄外一律改寫或加「已由 006 改掉」）；`grep -rn "categories.yaml" docs/`（應零結果，確認未被回退）；`grep -rn "sentimentTrough: number\b" docs/ shared/`（應只剩 `number | null`）；`grep -rn "closeConversation" docs/`（描述須與 T029 後的行為一致）
-- [ ] T058 [P] 修改 `docs/DESIGN_FEEDBACK.md`：新增 D-5「自訂起算時間彈窗的『約 N 則』預估在 006 未實作 —— 需額外一次訊息掃描，套用後以 `draft.period.messageCount` 呈現實際則數；請 Design 確認可接受或改為套用後才顯示」（T025 的刻意偏離）；並確認 D-4（`writing` 鎖住標題列取消鍵）已依 T031 實作、若 Design 已回覆則結案該項
-- [ ] T059 在 `specs/006-closure-handoff-summary/quickstart.md` 末尾新增「## 6. 驗收紀錄」章節，逐條記錄：SC-001～SC-008 的驗證方式與結果（含 T046、T052、T053、T054、T055 的人工結果與日期）、FR-002／SC-008 的文案對照結論（T033）、`npm run typecheck && npm test && npm run build && npm run smoke` 的最終輸出摘要
-- [ ] T060 最終全綠：`npm run typecheck && npm test && npm run build && npm run smoke`；確認 `grep -rn "@imbrace/sdk" app/ shared/` 零結果（憲法 1.2 既有守衛未被破壞）；確認 `git status` 沒有掃進另一個 session 的進行中修改（CLAUDE.md 協作注意）
+- [x] T056 [P] 修改 `docs/ARCHITECTURE.md` §18 M3 驗收清單：勾選「摘要可編輯後才寫入 Board」、「重複觸發摘要為覆蓋而非新增」（該行措辭已於 v4.0.0 訂正為「同一草稿冪等、多次結案並存」—— 確認措辭後打勾）、「UI 上已經有一行文案在對客服承諾這個尚未實作的行為」三項；「LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用」**標記為不適用並附 FR-017 理由，MUST NOT 打勾**。驗法：`grep -n "兩者不混用" docs/ARCHITECTURE.md` 命中處旁有「不適用」字樣
+- [x] T057 [P] 依 CLAUDE.md「正典文件修改後必須 grep 舊說法」全文掃描並修正殘留：`grep -rn "先 leave\|停止分析 → 隱藏面板\|結案即停止分析" docs/ app/ server/`（M2 階段性行為的描述，除刻意保留的歷史紀錄外一律改寫或加「已由 006 改掉」）；`grep -rn "categories.yaml" docs/`（應零結果，確認未被回退）；`grep -rn "sentimentTrough: number\b" docs/ shared/`（應只剩 `number | null`）；`grep -rn "closeConversation" docs/`（描述須與 T029 後的行為一致）
+- [x] T058 [P] 修改 `docs/DESIGN_FEEDBACK.md`：新增 D-4（本清單原寫 D-5，實際檔案的編號只到 D-3，落地時編為 **D-4**）「自訂起算時間彈窗的『約 N 則』預估在 006 未實作 —— 需額外一次訊息掃描，套用後以 `draft.period.messageCount` 呈現實際則數；請 Design 確認可接受或改為套用後才顯示」（T025 的刻意偏離）；並確認 D-3（`writing` 鎖住標題列取消鍵；本清單原寫 D-4）已依 T031 實作、若 Design 已回覆則結案該項
+- [x] T059 在 `specs/006-closure-handoff-summary/quickstart.md` 末尾新增「## 6. 驗收紀錄」章節，逐條記錄：SC-001～SC-008 的驗證方式與結果（含 T046、T052、T053、T054、T055 的人工結果與日期）、FR-002／SC-008 的文案對照結論（T033）、`npm run typecheck && npm test && npm run build && npm run smoke` 的最終輸出摘要
+- [x] T060 最終全綠：`npm run typecheck && npm test && npm run build && npm run smoke`；確認 `grep -rn "@imbrace/sdk" app/ shared/` 零結果（憲法 1.2 既有守衛未被破壞）；確認 `git status` 沒有掃進另一個 session 的進行中修改（CLAUDE.md 協作注意）
 
 ---
 
