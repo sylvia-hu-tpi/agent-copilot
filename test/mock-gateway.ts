@@ -141,10 +141,17 @@ const OPERATORS: Record<string, { id: string, name: string }> = {
   default: { id: 'u_test_operator', name: '測試客服' },
 }
 
-/** 探測用對話。⚠️ 三種識別碼刻意設成互相對得起來但字串不同（§9.3）*/
-const CONV_BARE = '68e39cf1-68df-47a0-9e68-6e19c72eff8a'
+/**
+ * 探測用對話。⚠️ 三種識別碼刻意設成互相對得起來但字串不同（§9.3）。
+ *
+ * ⚠️ 匯出是為了讓測試**用同一組常數**，而不是各自抄一份 —— 抄錯一個字元的症狀
+ *    是「查不到對話」，而那與「路徑寫錯」在畫面上長得一模一樣（§9.3 的整個主題）。
+ */
+export const MOCK_CONV_BARE = '68e39cf1-68df-47a0-9e68-6e19c72eff8a'
+export const MOCK_TCU_ID = 'tcu_042cae1b-8833-4580-be7e-54f03289ae41'
+const CONV_BARE = MOCK_CONV_BARE
 const CONV_PREFIXED = `conv_${CONV_BARE}`
-const TCU_ID = 'tcu_042cae1b-8833-4580-be7e-54f03289ae41'
+const TCU_ID = MOCK_TCU_ID
 
 export async function startMockGateway(opts: MockGatewayOptions = {}): Promise<MockGateway> {
   const requests: RecordedRequest[] = []

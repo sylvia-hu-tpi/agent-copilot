@@ -10,7 +10,7 @@
  *    而「靜默跳過」正是這些守衛要防的失效形態。本檔不依賴任何建置產物。
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -563,5 +563,89 @@ describe('對話清單查詢 MUST 走防腐層（skip → offset）', () => {
     expect(CALL.test(stripNonCode('/* conversations.search() 已被防腐層取代 */'))).toBe(false)
     // business-unit.ts:59 就是這一種 —— 錯誤訊息的字串裡提到它
     expect(CALL.test(stripNonCode("throw new Error('無法組出 conversations.search() 的查詢範圍')"))).toBe(false)
+  })
+})
+
+/**
+ * ── 006 契約守衛 G1～G4（`specs/006-closure-handoff-summary/plan.md`）─────
+ *
+ * 四條守的都是同一類事故：**不報錯但做錯事**。四個被防的錯誤在型別層完全合法，
+ * 在畫面上看不出來，而且都會把錯的東西寫進正式 CRM。
+ *
+ * ⚠️ 每一條 MUST 先斷言目標檔案**存在**。少了那一句，檔案被改名或搬走時
+ *    守衛會靜默變成恆真 —— 那正是它要防的事故的同一個形狀。
+ */
+describe('006 契約守衛：四條「不報錯但做錯事」的防線', () => {
+  const CLOSURE_SERVICES = resolve(ROOT, 'server/services/closure')
+  const COMMIT_ROUTE = 'server/api/conversations/[id]/closure/commit.post.ts'
+  const CLOSURE_STORE = 'app/stores/closure.ts'
+
+  const mustExist = (rel: string): string => {
+    const full = resolve(ROOT, rel)
+    expect(existsSync(full), `${rel} 不存在 —— 守衛會靜默恆真，先修檔名`).toBe(true)
+    return readFileSync(full, 'utf8')
+  }
+
+  it('G1：commit.post.ts 不得接觸任何訊息取數（FR-020 的快照語意）', () => {
+    /*
+      ⚠️ 「送出時取最新」與「取當初的快照」在型別上完全相同，兩者都是 `Message[]`。
+         這條守衛是那個錯誤唯一會變紅的地方 —— 摘要一旦被實作成寫入時重取，
+         客服看過的內容與寫進 CRM 的內容會不一樣，而畫面上分不出來。
+    */
+    const source = stripNonCode(mustExist(COMMIT_ROUTE))
+    for (const forbidden of ['fetchLatest', 'fetchSince', 'rawList', 'message-fetch', '/api/messages']) {
+      expect(source, `commit.post.ts 不得出現 ${forbidden}`).not.toContain(forbidden)
+    }
+  })
+
+  it('G2：server/services/closure/** 不得出現 lowestScore（FR-022a）', () => {
+    /*
+      ⚠️ `stats.lowestScore` 是**整條時間軸**的最低點；區間最低點要的是
+         **本次涵蓋區間內**的最低點。兩者都是 `number`、都叫「最低分」。
+         對服務過三次的客戶，取錯會把半年前那次最生氣的分數寫進今天這份報告。
+    */
+    expect(existsSync(CLOSURE_SERVICES)).toBe(true)
+    const offenders = filesUnder(CLOSURE_SERVICES, ['.ts'])
+      .filter(f => stripNonCode(readFileSync(f, 'utf8')).includes('lowestScore'))
+      .map(toRel)
+    expect(offenders).toEqual([])
+  })
+
+  it('G3：app/stores/closure.ts 不得持久化（FR-040 vs 憲法 8.4）', () => {
+    /*
+      ⚠️ 憲法 8.4「草稿絕不遺失」的標的是 **Composer 草稿**（客服自己打的字，
+         遺失無從復原）；結案草稿是**模型產物**，重按一次即可重生且尚未寫入
+         任何紀錄。FR-040 因此逐字要求「重新整理等同取消」。
+         下一個人看到「草稿」就會依 8.4 加上持久化 —— 這條守衛是那件事會變紅的地方。
+    */
+    const source = stripNonCode(mustExist(CLOSURE_STORE))
+    for (const forbidden of ['localStorage', 'sessionStorage']) {
+      expect(source, `closure store 不得出現 ${forbidden}`).not.toContain(forbidden)
+    }
+  })
+
+  it('G4：server/services/closure/** 不得出現 filter: 或 sort:（實測皆被靜默忽略）', () => {
+    /*
+      ⚠️ 2026-09-03 實測：`boards.search()` 的 `filter` 回整批不報錯；
+         `sort` 拿一個**不存在的欄位**去排會得到完全相同的順序（決定性證據）。
+         平台回的是合法的 200 ＋ 一批合法但沒過濾／沒排序的紀錄。
+    */
+    expect(existsSync(CLOSURE_SERVICES)).toBe(true)
+    const offenders = filesUnder(CLOSURE_SERVICES, ['.ts'])
+      .filter((f) => {
+        const code = stripNonCode(readFileSync(f, 'utf8'))
+        return code.includes('filter:') || code.includes('sort:')
+      })
+      .map(toRel)
+    expect(offenders).toEqual([])
+  })
+
+  it('⚠️ 這四條守衛本身是有效的 —— 抓得到真程式碼，且不會被註解或字串騙', () => {
+    expect(stripNonCode('const x = fetchLatest(c, id)')).toContain('fetchLatest')
+    expect(stripNonCode('// 本檔不得呼叫 fetchLatest')).not.toContain('fetchLatest')
+    expect(stripNonCode('await search(id, { filter: "a = 1" })')).toContain('filter:')
+    expect(stripNonCode('/* MUST NOT 用 filter: 與 sort: */')).not.toContain('filter:')
+    expect(stripNonCode('localStorage.setItem("k", v)')).toContain('localStorage')
+    expect(stripNonCode("throw new Error('不得用 localStorage')")).not.toContain('localStorage')
   })
 })
