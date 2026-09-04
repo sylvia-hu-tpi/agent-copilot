@@ -125,9 +125,9 @@ MUST 有一個會紅的迴歸測試；本清單共新增 10 支測試檔（8 支
 
 **Independent Test**: 對同一份草稿在假 gateway 注入逾時後重試，數 Board 筆數；再以兩份不同 `draftId` 寫入同一對話，數筆數。兩個期望值不同，各自可驗。
 
-- [ ] T034 [P] [US2] 新增 `test/closure-idempotency.test.ts`（SC-002、US2 AC#1／1a／2／3／4、契約 R3.4／R3.13、research #22 第 5／6 列）：對假 gateway（T009）以 `board.createButTimeout = { times: 9 }` 注入 → 同一 `draftId` 呼叫 `commitClosure()` 10 次 → `boardItems()` 中 `draft_id` 相符者**恰好 1 筆**，內容為第 10 次送出的版本（第 10 次前改 `summary`，FR-030c），第 10 次 `created === false`；兩份不同 `draftId` 寫同一 `conversation_id` → **2 筆並存**、先寫那筆內容未變；`q` 回多筆但 `draft_id` 不相符（假 gateway 預先塞入 `draft_id` 含相同前綴的他人紀錄）→ 斷言**沒有** `updateItem` 打到那些紀錄、而是 `createItem`（R3.13 反例）；`≥2` 筆相符 → 更新**最早建立**那筆並有 `console.warn`；`listClosuresFor()` 對一批 `closed_at` 與建立順序**相反**的紀錄仍回 `closed_at` 降冪（R1.6 反例）
-- [ ] T035 [US2] 在 `app/components/copilot/ClosureBlock.vue` 與 `app/stores/closure.ts` 實作 FR-034 的告知：`commit()` 回應的 `newClosuresSincePanelOpen` 非空時，於 `leaving` 前以非阻斷的 `UToast`／inline notice 顯示「{operatorName} 已於 {HH:MM} 完成結案」（i18n），**MUST NOT** 做成需要確認的攔截、MUST NOT 暗示會覆蓋對方（R3.10）；紀錄照常已寫入、流程照常 LEAVE
-- [ ] T036 [US2] 在 `test/closure-idempotency.test.ts` 補 `newClosuresSincePanelOpen` 的計算斷言：面板開啟當下已存在的紀錄（在 `closureBaseline` 內）**不出現**；開啟後新增的**出現**且帶 `operatorName`／`closedAt`（R3.10）
+- [x] T034 [P] [US2] 新增 `test/closure-idempotency.test.ts`（SC-002、US2 AC#1／1a／2／3／4、契約 R3.4／R3.13、research #22 第 5／6 列）：對假 gateway（T009）以 `board.createButTimeout = { times: 9 }` 注入 → 同一 `draftId` 呼叫 `commitClosure()` 10 次 → `boardItems()` 中 `draft_id` 相符者**恰好 1 筆**，內容為第 10 次送出的版本（第 10 次前改 `summary`，FR-030c），第 10 次 `created === false`；兩份不同 `draftId` 寫同一 `conversation_id` → **2 筆並存**、先寫那筆內容未變；`q` 回多筆但 `draft_id` 不相符（假 gateway 預先塞入 `draft_id` 含相同前綴的他人紀錄）→ 斷言**沒有** `updateItem` 打到那些紀錄、而是 `createItem`（R3.13 反例）；`≥2` 筆相符 → 更新**最早建立**那筆並有 `console.warn`；`listClosuresFor()` 對一批 `closed_at` 與建立順序**相反**的紀錄仍回 `closed_at` 降冪（R1.6 反例）
+- [x] T035 [US2] 在 `app/components/copilot/ClosureBlock.vue` 與 `app/stores/closure.ts` 實作 FR-034 的告知：`commit()` 回應的 `newClosuresSincePanelOpen` 非空時，於 `leaving` 前以非阻斷的 `UToast`／inline notice 顯示「{operatorName} 已於 {HH:MM} 完成結案」（i18n），**MUST NOT** 做成需要確認的攔截、MUST NOT 暗示會覆蓋對方（R3.10）；紀錄照常已寫入、流程照常 LEAVE
+- [x] T036 [US2] 在 `test/closure-idempotency.test.ts` 補 `newClosuresSincePanelOpen` 的計算斷言：面板開啟當下已存在的紀錄（在 `closureBaseline` 內）**不出現**；開啟後新增的**出現**且帶 `operatorName`／`closedAt`（R3.10）
 
 **Checkpoint**: T034、T036 綠。「把冪等鍵改回 `conversation_id`」會弄紅 T034 的並存斷言；「省略本地比對」會弄紅 R3.13 反例。
 

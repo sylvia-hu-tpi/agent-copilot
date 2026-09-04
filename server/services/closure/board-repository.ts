@@ -259,6 +259,28 @@ export async function listClosuresFor(
 }
 
 /**
+ * 「面板開啟之後才出現的他人結案」（FR-034、契約 R3.10）。
+ *
+ * ⚠️ 抽成純函式是為了讓它**只有一份定義**：`commit.post.ts` 內聯三行的話，
+ *    這條規則就沒有任何測試守得住，而它錯的方式是「多列或少列一則提示」——
+ *    多列會讓客服以為自己蓋掉了同事的紀錄（實際上沒有），
+ *    少列則讓他不知道同事剛結過案。兩種都不報錯。
+ *
+ * ⚠️ 面板開啟當下就存在的結案 MUST NOT 出現在結果裡 ——
+ *    客服在候選清單上已經看過一次了，再提一次只會變成噪音。
+ * ⚠️ **自己剛寫的那一筆也要排除** —— 否則每一次成功寫入都會提示「有人結案了」，
+ *    而那個人就是自己。
+ */
+export function closuresSincePanelOpen(
+  rows: readonly ClosureRecordRow[],
+  baseline: readonly string[],
+  ownRecordId: string,
+): ClosureRecordRow[] {
+  const seen = new Set(baseline)
+  return rows.filter(r => !seen.has(r.recordId) && r.recordId !== ownRecordId)
+}
+
+/**
  * 冪等寫入（憲法 5.3、契約 R3.4／R3.5／R3.13）。
  *
  * ```

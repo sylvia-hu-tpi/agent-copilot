@@ -27,6 +27,7 @@ import {
 import type { ClosureSummary } from '../../../../../shared/types/copilot.js'
 import {
   ClosureWriteError,
+  closuresSincePanelOpen,
   commitClosure,
   listClosuresFor,
 } from '../../../../services/closure/board-repository.js'
@@ -171,9 +172,8 @@ export default defineEventHandler(async (event) => {
   */
   let newClosuresSincePanelOpen: Array<{ recordId: string, operatorName: string, closedAt: string }> = []
   try {
-    const baseline = new Set(body.closureBaseline)
-    newClosuresSincePanelOpen = (await listClosuresFor(client, boardId, ctx.id))
-      .filter(c => !baseline.has(c.recordId) && c.recordId !== result.recordId)
+    const rows = await listClosuresFor(client, boardId, ctx.id)
+    newClosuresSincePanelOpen = closuresSincePanelOpen(rows, body.closureBaseline, result.recordId)
       .map(c => ({
         recordId: c.recordId,
         operatorName: c.reviewedBy ? operatorName(session.orgId, c.reviewedBy) ?? c.reviewedBy : '',
