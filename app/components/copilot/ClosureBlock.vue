@@ -88,6 +88,67 @@ const onPick = (start: string, origin: ClosurePeriodOrigin): void => {
 const onRegenerate = (): void => void store.regenerate(props.conversationId)
 const onRetryScopes = (): void => void store.loadScopes(props.conversationId)
 
+/*
+  ── 兩種寫入失敗態（B7／B8，`docs/DESIGN_TOKENS.md` §7.2）───────────────
+
+  ⚠️ **拆成兩態的判準是「客服接下來該做什麼」不同，不是錯誤碼不同。**
+     B7（`failed`）：CRM 沒收到，可直接重試。
+     B8（`unverified`）：平台說寫成功了但查不到 —— MUST 先請客服到 CRM 查驗，
+        因此主鈕的文字本身就綁著那一步（「已確認沒有，重試寫入」）。
+  ⚠️ **兩者只切文案與按鈕，MUST NOT 在 store 開第二條狀態路徑**
+     （`test/nuxt/closure-store-failures.test.ts` 會驗四種的狀態轉移完全相同）。
+  ⚠️ **摘要不清空** —— 錯誤區塊插在按鈕列上方、摘要正文下方。
+*/
+const failKind = computed(() => session.value?.error?.failKind ?? null)
+const showFailure = computed(() => status.value === 'ready' && !!failKind.value)
+
+const failIcon = computed(() =>
+  (failKind.value === 'unverified' ? 'i-lucide-shield-alert' : 'i-lucide-x-circle'))
+
+const failMeta = computed(() => {
+  const err = session.value?.error
+  if (!err) return ''
+  const time = new Intl.DateTimeFormat(locale.value, {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date(err.at))
+  return failKind.value === 'unverified'
+    ? t('closure.fail.metaUnverified', { time, reqId: err.reqId ?? '—' })
+    : t('closure.fail.metaFailed', { time, reason: err.message, reqId: err.reqId ?? '—' })
+})
+
+const failFallback = computed(() => {
+  if (failKind.value !== 'unverified') return t('closure.fail.failed.fallback')
+  return t('closure.fail.unverified.fallback', {
+    when: new Intl.DateTimeFormat(locale.value, {
+      month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit',
+    }).format(new Date(session.value?.error?.at ?? Date.now())),
+    category: draft.value?.category || '—',
+  })
+})
+
+/**
+ * 「回報 IT」（B7 的次鈕）。畫布只定義了按鈕文字，行為由本規格補上。
+ *
+ * ⚠️ **MUST NOT 複製草稿內容**（`summary`／`intent`）—— 那是客戶對話個資
+ *    （憲法 1.5 的同一個理由）。要貼給 IT 的是「哪一次請求、哪一份草稿、哪一通對話」，
+ *    IT 拿 `reqId` 就能在日誌裡把三步寫入串起來（FR-035a），不需要看到內容。
+ * ⚠️ 不開 mailto、不引入新環境變數 —— 那會是一條沒有人維護的對外設定。
+ */
+async function reportToIt(): Promise<void> {
+  const lines = [
+    failMeta.value,
+    `draftId: ${draft.value?.draftId ?? '—'}`,
+    `conversationId: ${props.conversationId}`,
+  ].join('\n')
+  try {
+    await navigator.clipboard.writeText(lines)
+    toast.add({ title: t('closure.fail.reportCopied'), color: 'neutral' })
+  }
+  catch {
+    // 剪貼簿被瀏覽器擋下（非安全來源、未授權）—— 靜默降級，不要再彈一個錯誤蓋住原本的失敗
+  }
+}
+
 /** ⚠️ **全元件唯一觸發寫入的地方** —— 由「一鍵寫入 CRM」按鈕直接呼叫，沒有其他路徑 */
 async function onCommit(): Promise<void> {
   const result = await store.commit(props.conversationId)
@@ -381,25 +442,88 @@ async function onCommit(): Promise<void> {
           {{ $t('closure.draftAt', { time: draftAt }) }}
         </p>
 
-        <!-- ⑦ 兩顆按鈕 -->
+        <!--
+          ⑦ 兩種寫入失敗態（B7／B8）。⚠️ 插在**按鈕列上方、摘要正文下方**，
+             摘要不清空 —— 客服編了半天的內容不能因為一次寫入失敗就消失。
+        -->
+        <div
+          v-if="showFailure"
+          class="flex flex-col gap-[7px] rounded-lg p-[9px_11px]"
+          :style="{
+            background: 'var(--danger-bg)',
+            border: '1px solid var(--danger-bd)',
+            borderLeft: '3px solid var(--danger)',
+          }"
+        >
+          <div class="flex items-start gap-2">
+            <UIcon :name="failIcon" class="mt-0.5 size-3.5 shrink-0" :style="{ color: 'var(--danger)' }" />
+            <div class="min-w-0 flex-1">
+              <p class="text-[0.9063rem] font-semibold" :style="{ color: 'var(--danger)' }">
+                {{ failKind === 'unverified'
+                  ? $t('closure.fail.unverified.title')
+                  : $t('closure.fail.failed.title') }}
+              </p>
+              <p class="mt-0.5 text-[0.875rem] leading-relaxed" :style="{ color: 'var(--text-2)' }">
+                {{ failKind === 'unverified'
+                  ? $t('closure.fail.unverified.body')
+                  : $t('closure.fail.failed.body') }}
+              </p>
+            </div>
+          </div>
+
+          <!-- ⚠️ meta 列的 `req` 是 FR-035a 的請求識別碼：客服看不懂也不需要懂，
+               但那是事後唯一能判斷「平台沒建」還是「我方回查用錯 id」的線索 -->
+          <p class="flex items-center gap-1.5 pl-[21px]">
+            <UIcon name="i-lucide-clock" class="size-[11px] shrink-0" :style="{ color: 'var(--text-3)' }" />
+            <span class="ac-mono text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ failMeta }}</span>
+          </p>
+          <p class="flex items-start gap-1.5 pl-[21px]">
+            <UIcon name="i-lucide-corner-down-right" class="mt-0.5 size-[11px] shrink-0" :style="{ color: 'var(--text-3)' }" />
+            <span class="text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ failFallback }}</span>
+          </p>
+        </div>
+
+        <!-- ⑧ 兩顆按鈕（畫布的六種組合） -->
         <div class="flex items-center justify-end gap-2">
+          <!--
+            ⚠️ 「重新產生」在 B7／B8 **降為次要**（畫布逐字寫明理由）：
+               此刻重產只會蓋掉待寫入的內容 —— 客服要的是把手上這一份寫進去。
+          -->
           <UButton
             color="neutral"
-            :variant="session?.stale ? 'solid' : 'outline'"
+            :variant="!showFailure && session?.stale ? 'solid' : 'ghost'"
             :disabled="status === 'writing'"
             @click="onRegenerate"
           >
             {{ $t('closure.buttons.regenerate') }}
           </UButton>
+
+          <!-- ⚠️ 次鈕只有 B7 有 —— B8 的出路是人工查驗後重試，不是回報 -->
           <UButton
-            color="primary"
+            v-if="showFailure && failKind === 'failed'"
+            color="neutral"
+            variant="outline"
+            @click="reportToIt"
+          >
+            {{ $t('closure.buttons.reportIt') }}
+          </UButton>
+
+          <UButton
+            :color="showFailure ? 'error' : 'primary'"
+            :icon="showFailure
+              ? (failKind === 'unverified' ? 'i-lucide-shield-check' : 'i-lucide-rotate-cw')
+              : undefined"
             :loading="status === 'writing'"
             :disabled="status === 'writing'"
             @click="onCommit"
           >
             {{ status === 'writing'
               ? $t('closure.buttons.writing')
-              : session?.stale ? $t('closure.buttons.commitStale') : $t('closure.buttons.commit') }}
+              : showFailure
+                ? (failKind === 'unverified'
+                  ? $t('closure.buttons.retryWriteUnverified')
+                  : $t('closure.buttons.retryWrite'))
+                : session?.stale ? $t('closure.buttons.commitStale') : $t('closure.buttons.commit') }}
           </UButton>
         </div>
 
