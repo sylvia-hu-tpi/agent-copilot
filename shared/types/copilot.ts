@@ -481,6 +481,7 @@ export interface ClosureSummary {
   conversationId: string
   periodStart: string
   periodMessageCount: number | null
+  /** Board 欄位 `period_origin`。⚠️ 光靠 `periodStart` 事後分不出起點是怎麼來的 */
   periodOrigin: ClosurePeriodOrigin
   channel: string
   contactId: string

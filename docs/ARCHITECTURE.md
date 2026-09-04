@@ -1874,7 +1874,9 @@ export interface ClosureSummary {
   draftId: string               // 產生本筆的摘要草稿 id，冪等寫入的依據（憲法 5.3）
   conversationId: string        // ⚠️ 可重複的索引，不是唯一鍵——同一對話會有多筆
   periodStart: string           // 本次涵蓋區間的起點（§13.4 ④）
-  periodMessageCount: number    // 本次涵蓋的訊息則數
+  periodMessageCount: number | null  // 本次涵蓋的訊息則數。⚠️ null ＝ 超過 500 則的掃描上限、數不完（**不是 0 則**）
+  /** 這個 periodStart 是怎麼來的。⚠️ 光靠時間戳事後分不出「選了某次結案」與「客服自己打的時間」 */
+  periodOrigin: 'closure' | 'first' | 'custom'   // 🆕 specs/006
   channel: string
   contactId: string
   operators: string[]
@@ -1891,14 +1893,25 @@ export interface ClosureSummary {
   /** 情緒結果的語意標籤，供介面直接顯示 */
   sentimentOutcome: 'appeased' | 'satisfied' | 'still_negative' | 'escalated'
 
-  // ── 數值供報表統計使用，不直接顯示於介面 ──
-  sentimentStart: number
-  sentimentEnd: number
-  sentimentTrough: number       // 本次涵蓋區間內的最低點——不可只取 sparkline 繪出的最近 N 點，也不可跨越區間邊界取到前幾輪服務的谷底（§13.4 ④、§14.6）
+  /*
+    ── 數值供報表統計使用，不直接顯示於介面 ──
+
+    ⚠️ **四個數值欄一律 `number | null`**（specs/006 FR-022b 的落點，2026-09-04 訂正）。
+       非 nullable 的型別會逼實作者在「區間內評分點不齊」時填 0，而那正是 FR-022b
+       逐字禁止的事 —— 且填了 0 之後**不會有任何錯誤**，只會讓報表把留空當成最低分。
+       實測未設定的 `Number` 欄位回讀為 `null`，與 `0` 明確可分（`spike:board-write` 006-E4），
+       因此「留空」的表達方式是**不送該欄位**。
+    ⚠️ 三個 sentiment 值 MUST **同時**有值或**同時**為 null，部分有值是實作錯誤。
+  */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null  // 本次涵蓋區間內的最低點——不可只取 sparkline 繪出的最近 N 點，也不可跨越區間邊界取到前幾輪服務的谷底（§13.4 ④、§14.6）
+  /** 情緒留空的原因與實際涵蓋範圍。有值即代表上面三個是 null。對應 Board 的 period_sentiment_note */
+  sentimentNote: string | null   // 🆕 specs/006
 
   citedSopIds: string[]
   followUps: Array<{ action: string; owner?: string; dueHint?: string }>
-  confidence: number
+  confidence: number | null      // 無真實依據時為 null（憲法 4.4）
   reviewedBy: string | null     // 未經人審為 null
   reviewedAt: string | null
 }
@@ -2122,7 +2135,8 @@ boards.linkItems()                                      # 關聯至 Contact
 | `draft_id` | text | 產生本筆的摘要草稿 id，**冪等寫入的依據**（同一份草稿至多一筆） |
 | `conversation_id` | text（**可重複的索引**） | 用途是查出「這通對話歷來的所有結案紀錄」，不是唯一鍵 |
 | `period_start` | datetime | 本筆涵蓋區間的起點 |
-| `period_message_count` | number | 本筆涵蓋的訊息則數。⚠️ 與 `period_start` 一起，是事後唯一能看出「這份報告涵蓋了什麼」的依據 |
+| `period_message_count` | number | 本筆涵蓋的訊息則數。⚠️ 與 `period_start` 一起，是事後唯一能看出「這份報告涵蓋了什麼」的依據。**留空 ＝ 超過 500 則的掃描上限，不是 0 則** |
+| `period_origin` | select | 🆕 `closure` / `first` / `custom` —— 這個起點是怎麼來的。⚠️ 光靠 `period_start` 事後分不出「客服選了某次結案」與「客服自己打了一個時間」，而那是完全不同的兩件事 |
 | `channel` | text | LINE / Web / WhatsApp… |
 | `contact_id` | text | 可 `linkItems()` 關聯至 Contact board |
 | `operators` | text[] | 參與過的所有客服 |
@@ -2133,18 +2147,30 @@ boards.linkItems()                                      # 關聯至 Contact
 | `resolution` | select | resolved / workaround / escalated / unresolved / customer_abandoned |
 | `actions_taken` | text[] | 受控詞彙。**與 `resolution` 分開**——前者是做了什麼，後者是結果狀態 |
 | `sentiment_outcome` | select | appeased / satisfied / still_negative / escalated |
-| `sentiment_start` / `sentiment_end` / `sentiment_trough` | number | 供報表統計，不直接顯示於介面 |
+| `sentiment_start` / `sentiment_end` / `sentiment_trough` | number | 供報表統計，不直接顯示於介面。⚠️ **留空 ＝ 區間內評分點不齊，不是 0 分**（實測未設定的 Number 回讀為 `null`，與 0 可分）。三者 MUST 同時有值或同時留空 |
+| `period_sentiment_note` | text | 🆕 情緒留空的原因與實際涵蓋範圍。有值即代表上面三欄是留空 |
 | `cited_sops` | text[] | |
 | `follow_ups` | long text（JSON） | |
-| `confidence` | number | |
+| `confidence` | number | 留空 ＝ 無真實依據（憲法 4.4）。⚠️ 結案摘要沒有檢索分數可依據，目前恆為留空 |
 | `reviewed_by` | text | 未經人審為空 |
 | `reviewed_at` | datetime | |
 
-> 欄位需先透過 `createField()` 在平台上建立。建議寫一支一次性 setup script 置於 `scripts/`，讓環境可重建。
+> 欄位需先透過 `createField()` 在平台上建立。✅ 已落地為 `scripts/setup-closure-board.ts`
+> （`npm run board:setup` 建立／補欄、`npm run board:verify` 只比對且有落差即非零離開）。
+> ⚠️ 欄位 id **MUST 由 `boards.get()` 反查**，MUST NOT 取 `createField()` 的回傳值 ——
+> SDK 註解寫著它「直接回傳 field」，實測回的是**整個 board**；照它做的話所有欄位
+> 共用同一把 id、寫入互相覆蓋，而**平台照樣回 200**（`spike:board-write` 006-E2a）。
 >
 > ⚠️ 本表與 §11.5 的 `ClosureSummary` 必須逐欄對得上——少建一欄不會報錯，只會讓該維度在報表裡永遠是空的。
 
 **欄位對照**：`operators`／`summary`／`intent`／`category`／`resolution`／`actions_taken`／`sentiment_outcome`／`sentiment_start|end|trough`／`cited_sops`／`follow_ups`／`confidence`／`reviewed_by|at` 一一對應 `ClosureSummary` 的同名欄位（camelCase → snake_case）；`joined_at`／`closed_at` 對應 `joinedAt`／`closedAt`。
+
+⚠️ `period_origin`／`period_sentiment_note` 是 **specs/006 落地時（2026-09-04）新增的兩欄**，
+對應 `ClosureSummary` 的 `periodOrigin`／`sentimentNote`。同一時間把四個數值欄
+（`sentiment_start|end|trough`／`confidence`）在 §11.5 改為 `number | null` ——
+非 nullable 會逼實作者填 0，而那會讓報表把「留空」讀成「最低分」，且不會報錯。
+本表、§11.5、`shared/types/copilot.ts` 的 `ClosureSummary`、
+`server/services/closure/board-schema.ts` 是**同一份事實的四個副本**，改任一處 MUST 四處同步。
 
 ⚠️ `record_id`／`draft_id`／`period_start`／`period_message_count` 是 v4.0.0（2026-09-03 修憲）新增的四欄，對應 `ClosureSummary`（§11.5）的 `recordId`／`draftId`／`periodStart`／`periodMessageCount`，兩處已同步。**少建一欄不會報錯**，只會讓冪等或涵蓋區間在事後無從稽核——這正是 setup script 需要驗證模式的理由。
 
