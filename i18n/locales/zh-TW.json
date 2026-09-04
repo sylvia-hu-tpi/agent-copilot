@@ -87,7 +87,6 @@
     "leaving": "離開中…",
     "close": "結案",
     "closing": "結案中…",
-    "closeFailed": "結案失敗",
     "exitHint": "離開＝僅退出不寫入 · 結案＝產生摘要供確認後寫入",
     "joinFailed": "加入對話失敗",
     "leaveFailed": "離開對話失敗",
@@ -285,5 +284,125 @@
   },
   "account": {
     "signedInAs": "已登入身分"
+  },
+  "closure": {
+    "blockTitle": "結案摘要自動填入",
+    "blockTag": "AI 草稿 · 可修改",
+    "enteredBanner": "已進入結案流程",
+    "draftAt": "草稿產生於 {time}",
+    "writeWarning": "「一鍵寫入 CRM」是本面板唯一會寫入資料庫的動作，寫入後不可自動回復。",
+    "staleNotice": "對話有新內容，建議重新產生",
+    "fields": {
+      "summary": "摘要正文",
+      "intent": "意圖",
+      "category": "分類",
+      "resolution": "處理結果",
+      "actionsTaken": "採取的行動",
+      "sentimentOutcome": "情緒結果",
+      "citedSops": "引用的知識庫來源",
+      "followUps": "後續待辦",
+      "choose": "請選擇",
+      "chooseHint": "AI 沒有從清單中選到合適的值，請自行選擇",
+      "followUpAdd": "新增一項待辦",
+      "followUpAction": "待辦事項",
+      "followUpOwner": "負責人（選填）",
+      "followUpDueHint": "時間（選填）",
+      "followUpRemove": "移除這一項",
+      "sopRemove": "移除這筆引用",
+      "readonlyTitle": "由系統計算，不可修改",
+      "operators": "參與的客服",
+      "joinedAt": "接手時間",
+      "sentimentStart": "區間起點情緒",
+      "sentimentEnd": "區間終點情緒",
+      "sentimentTrough": "區間最低情緒",
+      "sentimentEmpty": "留空"
+    },
+    "buttons": {
+      "regenerate": "重新產生",
+      "regenerating": "重新產生中，請稍候",
+      "commit": "一鍵寫入 CRM",
+      "commitStale": "仍要寫入 CRM",
+      "writing": "寫入中…",
+      "retryWrite": "重試寫入 CRM",
+      "retryWriteUnverified": "已確認沒有，重試寫入",
+      "reportIt": "回報 IT",
+      "retry": "重試"
+    },
+    "generating": {
+      "title": "正在產生結案摘要",
+      "body": "涵蓋的訊息愈多，需要的時間愈長。你可以隨時取消。",
+      "cancel": "取消產生"
+    },
+    "scopesError": {
+      "title": "無法載入結案紀錄",
+      "body": "查不到這個對話過去的結案紀錄，因此無法列出涵蓋範圍的候選。這不代表沒有結案過，請重試。"
+    },
+    "draftError": {
+      "title": "結案摘要產生失敗",
+      "body": "其餘區塊不受影響，可直接閱讀完整對話紀錄。"
+    },
+    "fail": {
+      "failed": {
+        "title": "寫入 CRM 失敗",
+        "body": "CRM 未收到這筆結案紀錄，摘要仍在此處、未遺失。可直接重試；連續失敗請改用下方備援管道，不要離開此對話。",
+        "fallback": "備援：複製摘要並貼到 CRM 手動建檔，或回報 IT。"
+      },
+      "unverified": {
+        "title": "寫入結果無法確認",
+        "body": "平台回報寫入成功，但在 CRM 查不到這筆結案紀錄。請勿當成已完成——先到 CRM 確認，若確實沒有再重試一次。",
+        "fallback": "查驗方式：CRM 客戶頁 › 服務紀錄，比對「{when} {category}」是否存在。"
+      },
+      "metaFailed": "{time} 寫入失敗 · {reason}（req {reqId}）",
+      "metaUnverified": "{time} 已送出 · 回報成功 · 查驗未找到（req {reqId}）",
+      "reportCopied": "已複製錯誤資訊，請貼給 IT"
+    },
+    "othersClosed": "{name} 已於 {time} 完成結案",
+    "scope": {
+      "title": "本次結案涵蓋範圍",
+      "subtitle": "決定 AI 讀哪些訊息",
+      "label": "涵蓋範圍",
+      "change": "變更範圍",
+      "row": "{t} 起 · {n} 則",
+      "rowTruncated": "超過 500 則",
+      "rowEmpty": "0 則",
+      "closureLabel": "上次結案 · 分類：{category}（{name}）",
+      "fallbackLabel": "自 {date} 首次進線起算 · 完整對話",
+      "customLabel": "自訂起算時間（非結案起點）",
+      "coverage": "本次摘要涵蓋 {t} 起 · {n} 則",
+      "coverageTruncated": "本次摘要涵蓋 {t} 起 · 超過 500 則",
+      "unselectable": "此後尚無新訊息，無法作為起算點",
+      "never": "這則對話從未被結案，預設從第一則起算。若只想涵蓋某段時間，可自訂起算時間。",
+      "overflow": "另有 {n} 個更早的結案起點未列出（僅顯示最近 5 次）。需要更早的區間請用自訂起算時間。",
+      "zeroTop": "最近一次結案之後尚無新訊息，已自動改選下一個起點。",
+      "regen": "涵蓋範圍已改為 {t} 起（{n} 則），正在重新產生摘要…"
+    },
+    "custom": {
+      "entry": "自訂起算時間",
+      "unused": "未使用",
+      "applied": "{t} · 已套用",
+      "dialogLabel": "自訂起算時間",
+      "range": "可選範圍：{from}（首次進線）至今",
+      "prevMonth": "上個月",
+      "nextMonth": "下個月",
+      "hour": "時",
+      "minute": "分",
+      "cancel": "取消",
+      "apply": "以此起算並重新產生"
+    },
+    "titlebar": {
+      "cancel": "取消結案",
+      "closing": "結案中…",
+      "cancelHint": "取消結案＝回到已接手狀態，不會留下任何紀錄",
+      "cancelLocked": "寫入請求已送出，此時無法取消"
+    },
+    "composerBanner": "結案中 —— 摘要內容為按下結案當下的對話快照，不含此後的新訊息。送出新訊息後，可按「重新產生」把它納入摘要。",
+    "modeLocked": "結案中無法切換服務模式，請先取消結案",
+    "sidebarPending": "結案未完成",
+    "presenceClosing": "{name} 正在結案／你仍可回覆或自行結案",
+    "leaveFailed": {
+      "title": "結案摘要已寫入，但離開對話失敗",
+      "body": "摘要已存入 CRM（{recordId}），但系統未能將你自對話中移除，因此畫面仍停留在已接手狀態。",
+      "retry": "重試離開"
+    }
   }
 }
