@@ -70,6 +70,8 @@ export default defineEventHandler(async (event) => {
     { id: session.operatorId, name: session.operatorName },
     'joined',
     true,
+    // ⚠️ JOIN 不是結案心跳 —— 明寫 false，`reportViewing()` 會整筆覆寫條目
+    false,
   )
 
   const control = controlFromMode(mode)

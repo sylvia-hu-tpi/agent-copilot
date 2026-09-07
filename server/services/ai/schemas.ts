@@ -181,10 +181,17 @@ export function parseSuggestionCards(raw: unknown): SuggestionCard[] {
  *      顯示「請選擇」要求客服補上；保留模型自由生成的值則會寫進 Board，
  *      而報表從此多出一個沒人定義過的分類，沒有任何錯誤訊息。
  *
- *   ③ `citedSopIds` 不在本次檢索命中內／`followUps[].action` 空 → **丟棄該筆**，
- *      不丟棄整份草稿（憲法 4.3、契約 R2.7）。單一引用錯誤不該讓整份摘要重跑。
+ *   ③ `followUps[].action` 空 → **丟棄該筆**，不丟棄整份草稿（憲法 4.3）。
+ *      單一筆錯誤不該讓整份摘要重跑。
  *
  * ⚠️ `confidence` 無值 → `null`（憲法 4.4），MUST NOT 估算填充。
+ *
+ * ⚠️ **本 schema 刻意不含 `citedSopIds`**（2026-09-08）。結案 agent 的 system prompt
+ *    逐字要求它不要輸出這個欄位（「由系統填入」），因此原本那道「以檢索命中為白名單」的
+ *    後驗永遠在過濾一個空清單 —— 看起來在保護什麼，實際上什麼都沒發生。
+ *    `ClosureDraft.citedSopIds` 現在由 `closure/draft.post.ts` 直接以檢索命中填入。
+ *    ⚠️ 要改回「模型自己挑」的話，MUST 先改 iMBrace 後台的 system prompt，
+ *    再把欄位與白名單一起加回來 —— 只加回其中一半就是回到 2026-09-08 之前的狀態。
  */
 export const ClosureDraftAiPartSchema = z.object({
   summary: z.string().min(1),
@@ -198,8 +205,6 @@ export const ClosureDraftAiPartSchema = z.object({
   actionsTaken: z.unknown().transform(v =>
     (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map(x => x.trim()) : [])),
   sentimentOutcome: z.unknown().transform(v => (typeof v === 'string' ? v.trim() : '')),
-  citedSopIds: z.unknown().transform(v =>
-    (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && !!x.trim()).map(x => x.trim()) : [])),
   followUps: z.unknown().transform(normalizeFollowUps),
   confidence: z.unknown().transform(v =>
     (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null)),
@@ -223,13 +228,11 @@ function normalizeFollowUps(raw: unknown): ClosureFollowUp[] {
 
 /**
  * @param vocabulary 本次允許的受控詞彙（＝ 傳給 agent 的那一份，`config/categories.ts`）
- * @param knowledgeHitIds 本次檢索命中的 SOP id 集合（憲法 4.3 的白名單）
  * @throws {AIOutputValidationError} `summary`／`intent` 為空，或整體形狀不對
  */
 export function parseClosureDraftAiPart(
   raw: unknown,
   vocabulary: ClosureVocabulary,
-  knowledgeHitIds: readonly string[],
 ): ClosureDraftAiPart {
   const result = ClosureDraftAiPartSchema.safeParse(raw)
   if (!result.success) {
@@ -243,8 +246,6 @@ export function parseClosureDraftAiPart(
   const pick = (value: string, allowed: readonly string[]): string =>
     (allowed.includes(value) ? value : '')
 
-  const allowedSops = new Set(knowledgeHitIds)
-
   return {
     summary: d.summary,
     intent: d.intent,
@@ -255,8 +256,6 @@ export function parseClosureDraftAiPart(
       d.sentimentOutcome,
       vocabulary.sentimentOutcomes,
     ) as ClosureDraftAiPart['sentimentOutcome'],
-    // 憲法 4.3：不在本次檢索命中內者**丟棄該 id**，不丟棄整份草稿
-    citedSopIds: d.citedSopIds.filter(id => allowedSops.has(id)),
     followUps: d.followUps,
     confidence: d.confidence,
   }

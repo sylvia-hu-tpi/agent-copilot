@@ -25,6 +25,8 @@ import {
   SENTIMENT_OUTCOMES,
 } from '../../../../../config/categories.js'
 import type { ClosureSummary } from '../../../../../shared/types/copilot.js'
+import { CLOSURE_PERIOD_ORIGINS } from '../../../../../shared/types/copilot.js'
+import type { ClosureCommitResponse } from '../../../../../shared/types/copilot.js'
 import {
   ClosureWriteError,
   closuresSincePanelOpen,
@@ -39,12 +41,21 @@ import { useStateStore } from '../../../../state/index.js'
 import { conversationIdParam } from '../../../../utils/conversation-param.js'
 import { imbraceClientFor } from '../../../../utils/imbrace-client.js'
 import { requireActiveBffSession } from '../../../../utils/session.js'
+import { readBodyAs } from '../../../../utils/validate.js'
 
 /**
  * ⚠️ 受控詞彙一律由 `config/categories.ts` 建 `z.enum`，**MUST NOT 在這裡再抄一份**
  *    字面聯集（憲法 4.6）。抄一份的那一刻，設定檔就從「唯一來源」退化成副本，
  *    而分岔的症狀是「新增的分類永遠送不進去」，且不會報錯。
  * ⚠️ 空字串是合法值：模型挑不到、客服也沒補時該欄位就是留空（FR-015）。
+ *
+ * ⚠️ **不要為了消 TS 錯誤而加 `as unknown as readonly [string, ...string[]]`**
+ *    （2026-09-08 移除四處）。zod 3.25 直接吃 `as const` 的唯讀 tuple
+ *    （`ai/schemas.ts` 的 `z.enum(SENTIMENT_LABELS)` 一直都這樣寫）。
+ *    那四個轉型會把推斷型別放寬成 `string`，於是 `resolution`／`sentimentOutcome`
+ *    又各得補一個 `as ClosureSummary[...]` 把它斷言回來 —— 而那是**未經檢查**的斷言：
+ *    `config/categories.ts` 與 `ClosureSummary` 哪天分岔，typecheck 仍然全綠。
+ *    拿掉轉型後，字面聯集一路從設定檔流到 `ClosureSummary`。
  */
 const enumOrEmpty = <T extends readonly [string, ...string[]]>(values: T) =>
   z.union([z.enum(values), z.literal('')])
@@ -52,14 +63,21 @@ const enumOrEmpty = <T extends readonly [string, ...string[]]>(values: T) =>
 const Body = z.object({
   draftId: z.string().min(1),
   periodStart: z.string().datetime({ offset: true }),
-  periodOrigin: z.enum(['closure', 'first', 'custom']),
+  periodOrigin: z.enum(CLOSURE_PERIOD_ORIGINS),
   periodMessageCount: z.number().int().nonnegative().nullable(),
+  /**
+   * 區間內第一則客戶文字發言的時間 —— 情緒涵蓋判定的比較對象。
+   *
+   * ⚠️ 與 `periodMessageCount` 一樣是**本次快照的事實**，由 `draft` 端算好、前端原樣帶回。
+   *    本檔不得 import 任何取數模組（契約 R3.3、守衛 G1），因此無法自己重算。
+   */
+  periodFirstCustomerAt: z.string().datetime({ offset: true }).nullable(),
   summary: z.string().min(1),
   intent: z.string().min(1),
-  category: enumOrEmpty(CATEGORIES as unknown as readonly [string, ...string[]]),
-  resolution: enumOrEmpty(RESOLUTIONS as unknown as readonly [string, ...string[]]),
-  actionsTaken: z.array(z.enum(ACTIONS_TAKEN as unknown as readonly [string, ...string[]])),
-  sentimentOutcome: enumOrEmpty(SENTIMENT_OUTCOMES as unknown as readonly [string, ...string[]]),
+  category: enumOrEmpty(CATEGORIES),
+  resolution: enumOrEmpty(RESOLUTIONS),
+  actionsTaken: z.array(z.enum(ACTIONS_TAKEN)),
+  sentimentOutcome: enumOrEmpty(SENTIMENT_OUTCOMES),
   citedSopIds: z.array(z.string()),
   followUps: z.array(z.object({
     action: z.string().min(1),
@@ -70,7 +88,8 @@ const Body = z.object({
   closureBaseline: z.array(z.string()),
 })
 
-export default defineEventHandler(async (event) => {
+// ⚠️ 回傳型別 MUST 標註 —— 理由同 `scopes.post.ts`
+export default defineEventHandler(async (event): Promise<ClosureCommitResponse> => {
   // ⚠️ FR-035a／R3.14：**請求進入時**就產生，MUST NOT 只在出錯時產生 ——
   //    那樣看不到出錯之前的兩步，而 B8 要判斷的正是那兩步。
   const reqId = crypto.randomUUID().slice(0, 8)
@@ -79,28 +98,34 @@ export default defineEventHandler(async (event) => {
   const session = await requireActiveBffSession(event)
   const boardId = requireClosureBoardId()
 
-  const parsedBody = Body.safeParse(await readBody(event))
-  if (!parsedBody.success) {
-    throw createError({
-      statusCode: 400,
-      message: '結案寫入的請求格式不正確',
-      data: { reqId, failKind: 'failed' },
-    })
-  }
-  const body = parsedBody.data
+  /*
+    ⚠️ 走共用的 `readBodyAs()` 並把 `reqId`／`failKind` 交給它（FR-035a、R3.14）——
+       自己 safeParse 的那版少了欄位名，客服只會看到「寫入失敗、可直接重試」，
+       而重試送的是一模一樣的 body，永遠一樣失敗。最常見的觸發是
+       「按了新增後續事項但沒填內容」，畫面上沒有任何地方指得出那一列。
+       前端另有停用寫入鍵的守門（`ClosureBlock.vue`），這裡是第二道。
+  */
+  const body = await readBodyAs(event, Body, { data: { reqId, failKind: 'failed' } })
 
   const client = imbraceClientFor(session)
   const ctx = await loadConversationContext(client, session.orgId, conversationId)
   if (!ctx) throw createError({ statusCode: 404, message: '找不到這個對話', data: { reqId } })
 
   const store = useStateStore()
+  // ⚠️ 兩筆讀取互不相依 —— 併行。記憶體 store 下只差兩個 microtask，
+  //    但 M4 換 Redis 後每次寫入都要付兩次跨機往返，而這條路徑有 30 秒硬上界在算時間。
+  const [analysis, copilotSession] = await Promise.all([
+    store.getAnalysisState(ctx.id),
+    store.getCopilotSession(ctx.id),
+  ])
   // ⚠️ 與 `draft.post.ts` **共用同一支** `computeReadonlyFields()`（R3.7）——
   //    在這裡另寫一份的話，客服看到的與寫進 CRM 的會分岔，兩份都不報錯
   const readonly = computeReadonlyFields({
     ctx,
-    analysis: await store.getAnalysisState(ctx.id),
-    session: await store.getCopilotSession(ctx.id),
+    analysis,
+    session: copilotSession,
     periodStart: body.periodStart,
+    firstCustomerAt: body.periodFirstCustomerAt,
     operatorId: session.operatorId,
     // ⚠️ 結案摘要沒有檢索分數可依據，`confidence` 全程為 null（憲法 4.4）
     confidence: null,
@@ -115,7 +140,7 @@ export default defineEventHandler(async (event) => {
     periodStart: body.periodStart,
     periodMessageCount: body.periodMessageCount,
     periodOrigin: body.periodOrigin,
-    // ── 以下六項由 server 重算，body 帶來的一律忽略（R3.7）──
+    // ── 以下八項由 server 重算，body 帶來的一律忽略（R3.7）；`confidence` 是第九項 ──
     channel: readonly.channel,
     contactId: readonly.contactId,
     operators: readonly.operators,
@@ -132,9 +157,10 @@ export default defineEventHandler(async (event) => {
     summary: body.summary,
     intent: body.intent,
     category: body.category,
-    resolution: body.resolution as ClosureSummary['resolution'],
+    // ⚠️ 這裡不需要 `as` —— `enumOrEmpty()` 沒有轉型後，字面聯集直接對得上（見 Body 上方說明）
+    resolution: body.resolution,
     actionsTaken: body.actionsTaken,
-    sentimentOutcome: body.sentimentOutcome as ClosureSummary['sentimentOutcome'],
+    sentimentOutcome: body.sentimentOutcome,
     citedSopIds: body.citedSopIds,
     followUps: body.followUps,
     confidence: readonly.confidence,
@@ -186,8 +212,14 @@ export default defineEventHandler(async (event) => {
 
   return {
     recordId: result.recordId,
-    reviewedBy: summary.reviewedBy,
-    reviewedAt: summary.reviewedAt,
+    /*
+      ⚠️ 回的是**這次寫入實際用的值**（`session.operatorId`／`now`），不是
+         `summary.reviewedBy`／`summary.reviewedAt`。兩者內容相同，但後者的型別是
+         `string | null`（`ClosureSummary` 允許「未經人審」的紀錄留空，憲法 5.2），
+         而這支端點的回應永遠有值 —— 用後者會逼呼叫端處理一個不可能發生的 null。
+    */
+    reviewedBy: session.operatorId,
+    reviewedAt: now,
     created: result.created,
     reqId,
     newClosuresSincePanelOpen,

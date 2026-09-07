@@ -170,7 +170,6 @@ export class MockAIProvider implements AIProvider {
   async summarizeClosure(input: {
     history: Message[]
     vocabulary: ClosureVocabulary
-    knowledgeHits: KnowledgeHit[]
     signal?: AbortSignal
   }): Promise<ClosureDraftAiPart> {
     // ⚠️ 延遲期間也要能被取消 —— 契約 R2.9 要求「取消 MUST 真的中止在途呼叫」，
@@ -194,9 +193,15 @@ export class MockAIProvider implements AIProvider {
       resolution: (first(input.vocabulary.resolutions) ?? '') as ClosureDraftAiPart['resolution'],
       actionsTaken: input.vocabulary.actionsTaken.slice(0, 1) as string[],
       sentimentOutcome: (first(input.vocabulary.sentimentOutcomes) ?? '') as ClosureDraftAiPart['sentimentOutcome'],
-      // 前兩筆命中 —— 白名單後驗（憲法 4.3）在真 provider 與 mock 都會跑到，
-      // 取命中集合內的值才驗得到「有引用時不被丟棄」那一半
-      citedSopIds: input.knowledgeHits.slice(0, 2).map(h => h.id),
+      /*
+        ⚠️ **這裡不再回 `citedSopIds`**（2026-09-08）。它以前回檢索命中的前兩筆，
+           而真 provider 的 system prompt 逐字禁止模型輸出這個欄位 ——
+           於是「面板上看得到引用來源」只在退回 Mock 的環境成立，正式環境永遠是空的，
+           兩者的差別沒有任何測試或型別會指出來。實際回報過一次：
+           使用者在測試環境看到欄位有值，因而以為正式環境也有。
+           現在 `citedSopIds` 一律由 `closure/draft.post.ts` 以檢索命中填入，
+           真假 provider 走同一條路徑。
+      */
       followUps: [],
       confidence: null,
     }

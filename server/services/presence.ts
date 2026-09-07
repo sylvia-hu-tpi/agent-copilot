@@ -58,8 +58,15 @@ export async function reportViewing(
   operator: { id: string, name: string },
   state: PresenceState,
   joined: boolean,
-  /** specs/006 FR-045：這個人正在走結案流程。⚠️ 與 `state` 正交，理由同 `joined` */
-  closing = false,
+  /**
+   * specs/006 FR-045：這個人正在走結案流程。⚠️ 與 `state` 正交，理由同 `joined`。
+   *
+   * ⚠️ **刻意沒有預設值**（2026-09-08 移除 `= false`）。心跳會整筆覆寫條目，
+   *    漏帶就等於把旗標清掉 —— 同事畫面上的「正在結案」會莫名閃掉。
+   *    有預設值時「漏帶」在型別上完全合法，唯一的防線是一條用出現次數比對的
+   *    regex 守衛（自陳「近似」）。拿掉預設值後，漏帶直接是 tsc 錯誤。
+   */
+  closing: boolean,
 ): Promise<void> {
   await store.addPresence(
     conversationId,

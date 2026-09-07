@@ -400,7 +400,6 @@ export class ImbraceAgentProvider implements AIProvider {
   async summarizeClosure(input: {
     history: Message[]
     vocabulary: ClosureVocabulary
-    knowledgeHits: KnowledgeHit[]
     signal?: AbortSignal
   }): Promise<ClosureDraftAiPart> {
     if (!this.closureAgentId) {
@@ -418,8 +417,14 @@ export class ImbraceAgentProvider implements AIProvider {
     )
     throwIfAborted(input.signal)
 
-    // 格式驗證與白名單後驗交給呼叫端的 `parseClosureDraftAiPart()`（憲法 4.2／4.6），
-    // 這一層只負責取回原樣輸出 —— 與 `narrateSentiment()` 同一個分工。
+    /*
+      格式驗證與受控詞彙的白名單後驗交給呼叫端的 `parseClosureDraftAiPart()`
+      （憲法 4.2／4.6），這一層只負責取回原樣輸出 —— 與 `narrateSentiment()` 同一個分工。
+
+      ⚠️ 這支**不收知識庫命中**：後台的 system prompt 逐字列出「不要輸出 citedSopIds
+         —— 由系統填入」，交給模型也沒有人會用。`ClosureDraft.citedSopIds` 由
+         `closure/draft.post.ts` 以檢索命中直接填入，因此檢索與這支呼叫可以並行。
+    */
     return extractLeadingJson(text) as ClosureDraftAiPart
   }
 

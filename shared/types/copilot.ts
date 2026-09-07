@@ -323,11 +323,17 @@ export interface AIProvider {
    * ⚠️ `vocabulary` 由呼叫端傳入，agent 只能從中選擇；後端另有白名單後驗（憲法 4.6）。
    * ⚠️ `signal` 是契約 R2.9 的落點：**取消 MUST 真的中止在途的 AI 呼叫**，
    *    MUST NOT 只是把畫面關掉 —— 後者的呼叫照送、錢照付、結果無人看，且不會報錯。
+   *
+   * ⚠️ **刻意不收 `knowledgeHits`**（2026-09-08）。結案 agent 的 system prompt 逐字要求
+   *    「不要輸出 citedSopIds —— 由系統填入」，因此把命中交給模型也不會有人引用它。
+   *    `ClosureDraft.citedSopIds` 改由呼叫端直接以檢索命中填入（見 `closure/draft.post.ts`），
+   *    檢索與這支呼叫因此完全獨立、可並行。
+   *    ⚠️ 要改成「讓模型自己挑」的話，**MUST 先改 iMBrace 後台的 system prompt**
+   *    —— 那不在這個 repo 裡，改了不會有 commit（CLAUDE.md 地雷 4）。
    */
   summarizeClosure(input: {
     history: Message[]
     vocabulary: ClosureVocabulary
-    knowledgeHits: KnowledgeHit[]
     signal?: AbortSignal
   }): Promise<ClosureDraftAiPart>
 }
@@ -361,12 +367,84 @@ export interface ClosurePeriod {
   messageCount: number | null
   /** 掃描上限截斷時為 true —— UI 逐字呈現「超過 500 則」（憲法 4.5：不猜） */
   truncated: boolean
+  /**
+   * 這個區間內**第一則客戶文字發言**的時間；`null` ＝ 區間內客戶沒有文字發言。
+   *
+   * ⚠️ **它是情緒涵蓋判定唯一正確的比較對象，MUST NOT 改用 `start`**
+   *    （2026-09-08 修，見 `server/services/closure/sentiment-range.ts` 檔頭）。
+   *    `start` 是客服選的時間戳，可能落在一段沒人說話的空白期裡 ——
+   *    拿它比會把「這段期間客戶本來就沒發言」誤判成「評分資料漏了」，
+   *    於是回頭客的三個情緒欄恆為空，而畫面與報表都看不出哪裡不對。
+   *
+   * ⚠️ **與 `messageCount` 同屬「本次快照的事實」，由 `draft` 端算出、前端原樣帶回**
+   *    （契約 R2.1／R3.3）。它不是 R3.7 的唯讀欄位 ——
+   *    `commit` 端點不得 import 任何取數模組（守衛 G1），因此無法自己重算。
+   */
+  firstCustomerAt: string | null
 }
 
-export type ClosurePeriodOrigin = 'closure' | 'first' | 'custom'
+/**
+ * 涵蓋區間起點的三種來源。
+ *
+ * ⚠️ **runtime 常數與型別 MUST 同源**：這三個值同時要當 `z.enum()` 的輸入
+ *    （`closure/draft.post.ts`、`closure/commit.post.ts`）與 Board 的選項清單
+ *    （`closure/board-schema.ts`）。以前是四處各抄一份字面聯集 ——
+ *    新增第四種 origin 時漏改任何一處都只會在 runtime 收到 400，typecheck 不會響。
+ */
+export const CLOSURE_PERIOD_ORIGINS = ['closure', 'first', 'custom'] as const
+
+export type ClosurePeriodOrigin = typeof CLOSURE_PERIOD_ORIGINS[number]
 
 /** 訊息則數的掃描上限（FR-021c、憲法 6.4）。超過即 `messageCount: null` ＋ `truncated: true` */
 export const CLOSURE_SCAN_LIMIT = 500
+
+/*
+  ── 兩支端點的回應形狀（契約 `closure-http-api.md` §1、§3）──────────────
+  ⚠️ **放在 shared 是為了讓 server 與 store 共用同一份定義。**
+     以前 server 端的 `ScopeCandidate`／`CandidateSet` 與 store 裡的介面是
+     手抄的兩份，而 route 沒有回傳型別註記 —— `$fetch<T>()` 是單方面的斷言。
+     於是 server 改名 `overflowCount` 或 `operatorName` 仍然全綠，
+     UI 只是安靜地讀到 `undefined`（例如 FR-034 的提示顯示空的客服名字）。
+     兩邊都指向這裡之後，改一邊就是 tsc 錯誤。
+*/
+
+/** 涵蓋範圍選擇器的一列候選 */
+export interface ClosureScopeCandidate {
+  start: string
+  origin: ClosurePeriodOrigin
+  /** ⚠️ 三種值可區分：`0` 不可選、`n` 精確、`null`＋`truncated` 為「超過上限」但仍可選 */
+  messageCount: number | null
+  truncated: boolean
+  /** 只有 `origin === 'closure'` 的候選有 —— 讓客服認得出「那一次是誰結的、結成什麼」 */
+  label?: { category: string, reviewedByName: string, closedAt: string }
+}
+
+/** `POST /api/conversations/{id}/closure/scopes` 的回應 */
+export interface ClosureScopesResponse {
+  candidates: ClosureScopeCandidate[]
+  /** 「從第一則對話起算」—— **永遠存在、永遠墊底**，是安全網 */
+  fallback: ClosureScopeCandidate
+  /** 未列出的更早結案筆數；0 代表沒有 */
+  overflowCount: number
+  /** 預設選中的索引；`-1` ＝ 全部候選都是 0 則，落到 `fallback` */
+  defaultIndex: number
+  firstMessageAt: string
+  /** FR-034 的基準線：前端原樣保存並在 commit 時帶回（server 不記） */
+  baselineAt: string
+  closureBaseline: string[]
+}
+
+/** `POST /api/conversations/{id}/closure/commit` 的回應 */
+export interface ClosureCommitResponse {
+  recordId: string
+  reviewedBy: string
+  reviewedAt: string
+  /** `false` ＝ 更新既有那一筆（同一個 draftId 的重試），不是新建 */
+  created: boolean
+  reqId: string
+  /** FR-034：面板開啟**之後**才出現的他人結案 —— 告知而非攔截 */
+  newClosuresSincePanelOpen: Array<{ recordId: string, operatorName: string, closedAt: string }>
+}
 
 /**
  * 草稿的唯讀欄位 —— 由系統計算，客服 MUST NOT 能改（FR-010a）。
@@ -419,8 +497,13 @@ export interface ClosureDraftAiPart {
   actionsTaken: string[]
   /** 受控詞彙；白名單外 → 空字串 */
   sentimentOutcome: ClosureSentimentOutcome | ''
-  /** 白名單後驗（憲法 4.3）：不在本次 `knowledgeHits` 內者丟棄該 id，不丟棄整份草稿 */
-  citedSopIds: string[]
+  /*
+    ⚠️ **這裡沒有 `citedSopIds`，是刻意的**（2026-09-08）。結案 agent 的 system prompt
+       逐字列出「不要輸出 citedSopIds ⋯ 由系統填入」，模型不會給、給了也該丟。
+       `ClosureDraft.citedSopIds` 由 `closure/draft.post.ts` 直接以知識庫檢索命中填入。
+       放回這裡會讓「模型挑選 ＋ 白名單後驗」那條路徑看起來還在運作，
+       但它的輸入永遠是空的 —— 那正是 2026-09-08 審查抓到的形狀。
+  */
   followUps: ClosureFollowUp[]
   confidence: number | null
 }
@@ -458,6 +541,15 @@ export interface ClosureDraft {
   resolution: ClosureResolution | ''
   actionsTaken: string[]
   sentimentOutcome: ClosureSentimentOutcome | ''
+  /**
+   * 本次服務**相關的**知識庫來源（不是「模型引用過的」）。
+   *
+   * ⚠️ 由 server 以知識庫檢索命中直接填入，客服再把不相干的刪掉 ——
+   *    面板只提供移除、沒有新增，正是為這個方向設計的。
+   * ⚠️ 文案 MUST 是「相關的」而非「引用的」：模型從頭到尾沒看過這份清單
+   *    （見 `ClosureDraftAiPart` 的說明），寫成「引用」等於在稽核紀錄上
+   *    宣稱一件沒有發生過的事。
+   */
   citedSopIds: string[]
   followUps: ClosureFollowUp[]
 

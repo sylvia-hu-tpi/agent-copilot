@@ -79,6 +79,14 @@ export interface ClosureRecordRow {
   category: string
   reviewedBy: string | null
   createdAt: string | null
+  /*
+    ⚠️ 以下三欄讀回來**只為了重試時的防呆**（見 `preserveSentimentOnUpdate()`），
+       不參與候選清單或基準線比對。少了它們，同一份草稿的第二次寫入會在
+       Board 上留下「三個數值 ＋ 一句說沒有數值的說明」這種自相矛盾的列。
+  */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null
 }
 
 export interface CommitOptions {
@@ -215,6 +223,16 @@ function str(v: unknown): string {
   return typeof v === 'string' ? v : ''
 }
 
+/**
+ * Number 欄位的回讀 —— 未設定時平台回 `null`（spike 29 的 006-E4）。
+ *
+ * ⚠️ **`0` MUST 保留**：`Number(null)` 是 0、`!v` 對 0 成立，任何一種簡寫都會把
+ *    「客戶情緒 0 分」讀成「沒有資料」，而那正是 FR-022b 在防的混淆。
+ */
+function num(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null
+}
+
 function toRow(
   item: { id: string, fields: Record<string, unknown>, createdAt: string | null },
   fieldIds: ReadonlyMap<string, string>,
@@ -231,6 +249,55 @@ function toRow(
     category: str(readField(item.fields, fieldIds, 'category')),
     reviewedBy: str(readField(item.fields, fieldIds, 'reviewed_by')) || null,
     createdAt: item.createdAt,
+    sentimentStart: num(readField(item.fields, fieldIds, 'sentiment_start')),
+    sentimentEnd: num(readField(item.fields, fieldIds, 'sentiment_end')),
+    sentimentTrough: num(readField(item.fields, fieldIds, 'sentiment_trough')),
+  }
+}
+
+/**
+ * 重試寫入時保住 FR-022b 的不變式：**三個數值與說明文字互斥**。
+ *
+ * ⚠️ **問題形狀**：`toFieldsById()` 不送 `null` 的欄位（那是 006-E4 表達「留空」的方式），
+ *    而平台的 `updateItem` 是**部分更新**（006-E9）—— 沒送的欄位維持原樣。
+ *    於是這條路徑會產生一列自相矛盾的紀錄，且不會有任何錯誤：
+ *
+ *      ① 第一次寫入時分析狀態還在 → 三個數值寫進 Board（例：35／70／20）。
+ *      ② 平台回應超過 30 秒硬逾時 → 客服看到「寫入失敗」，但紀錄其實已經建立。
+ *      ③ 客服兩小時後才按重試 → `CopilotAnalysisState` 的 2 小時 sliding TTL 已過期，
+ *         重算得到三個 `null` ＋ 一句「這段期間沒有任何情緒評分點」。
+ *      ④ 三個 `null` 被略過不送、說明文字送出去 → Board 上同時有 35／70／20
+ *         **和**一句說沒有評分點的說明。報表讀不出哪一筆是這樣。
+ *
+ * ⚠️ 因此規則是：**新算出的三數值不完整時，一律沿用既有列的值，並且不寫說明文字。**
+ *    既有列的值是當初真的算出來的，比「因為狀態過期而變成空」更接近事實。
+ *
+ * ⚠️ **已知殘留**：反過來的情況（既有列是空的＋有說明，這次算出了數值）仍會留下
+ *    那句過期的說明 —— 清空一個欄位需要平台支援「送空值即清除」，而那尚未實測
+ *    （`IMBRACE_ENV=stable` 是正式環境，動的是真實客戶資料）。
+ *    此時數值是新的、說明是舊的，方向上仍是「數值可信」，不像上面 ④ 那樣兩者互相否定。
+ */
+export function preserveSentimentOnUpdate(
+  summary: ClosureSummary,
+  existing: ClosureRecordRow,
+): ClosureSummary {
+  const recomputed = summary.sentimentStart !== null
+    && summary.sentimentEnd !== null
+    && summary.sentimentTrough !== null
+  if (recomputed) return summary
+
+  const kept = existing.sentimentStart !== null
+    && existing.sentimentEnd !== null
+    && existing.sentimentTrough !== null
+  if (!kept) return summary
+
+  return {
+    ...summary,
+    sentimentStart: existing.sentimentStart,
+    sentimentEnd: existing.sentimentEnd,
+    sentimentTrough: existing.sentimentTrough,
+    // ⚠️ MUST 一併清成 null —— 留著它就是上面 ④ 那個自相矛盾的列
+    sentimentNote: null,
   }
 }
 
@@ -324,11 +391,19 @@ export async function commitClosure(
     ⚠️ 誠實地只做到能做的：MUST NOT 在註解或文案裡宣稱「已中止寫入」——
     平台那邊可能已經寫進去了，那正是 B8（`unverified`）存在的理由。
   */
-  const deadline = AbortSignal.timeout(timeoutMs)
+  /*
+    ⚠️ 用自建的 `setTimeout` 而非 `AbortSignal.timeout()`：後者**沒有辦法取消**，
+       於是每一次成功的寫入都會在事件迴圈裡留下一個跑滿 30 秒才觸發的計時器，
+       以及一個抓著 `reqId`／`timeoutMs` 的 closure，最後白建一個沒有人接的
+       `ClosureWriteError`。單次成本很小，但它是每次寫入必留的垃圾。
+       改用可清除的計時器後，`finally` 一行就收乾淨。
+  */
+  let timer: ReturnType<typeof setTimeout> | undefined
   const timeout = new Promise<never>((_, reject) => {
-    deadline.addEventListener('abort', () => reject(
-      new ClosureWriteError(`寫入逾時（${timeoutMs}ms）`, 'failed', 504, reqId),
-    ), { once: true })
+    timer = setTimeout(
+      () => reject(new ClosureWriteError(`寫入逾時（${timeoutMs}ms）`, 'failed', 504, reqId)),
+      timeoutMs,
+    )
   })
 
   try {
@@ -339,6 +414,9 @@ export async function commitClosure(
     // 平台 4xx／5xx 與任何其他失敗 —— 一律 `failed`（契約 §4 的對照表）
     log.warn(`[closure] req=${reqId} draft=${summary.draftId} 寫入失敗：${errText(err)}`)
     throw new ClosureWriteError(`寫入 Data Board 失敗：${errText(err)}`, 'failed', 502, reqId, err)
+  }
+  finally {
+    clearTimeout(timer)
   }
 
   async function writeSteps(): Promise<{ recordId: string, created: boolean }> {
@@ -381,9 +459,15 @@ export async function commitClosure(
       itemId = target.itemId
       recordId = target.recordId
       created = false
-      // ⚠️ FR-030c：更新為**當下**的草稿內容。⚠️ 平台的 update 是部分更新
-      //    （006-E9），因此整份都要送 —— 只送有改的欄位會讓上一次的舊值留著。
-      await updateBoardItem(client, boardId, itemId, toFieldsById({ ...summary, recordId }, fieldIds))
+      /*
+        ⚠️ FR-030c：更新為**當下**的草稿內容。⚠️ 平台的 update 是部分更新
+           （006-E9），因此整份都要送 —— 只送有改的欄位會讓上一次的舊值留著。
+        ⚠️ 情緒三數值是這條規則的例外，理由見 `preserveSentimentOnUpdate()`：
+           `null` 的欄位本來就送不出去，硬照「整份都要送」的字面做會留下
+           一列自相矛盾的紀錄（數值是第一次的、說明是這一次的）。
+      */
+      const merged = preserveSentimentOnUpdate({ ...summary, recordId }, target)
+      await updateBoardItem(client, boardId, itemId, toFieldsById(merged, fieldIds))
     }
     log.info(`[closure] req=${reqId} step=${created ? 'create' : 'update'} `
       + `draft=${summary.draftId} record=${recordId} item=${itemId}`)

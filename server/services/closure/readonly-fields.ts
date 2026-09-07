@@ -24,6 +24,14 @@ export interface ReadonlyFieldsInput {
   /** `null` ＝ process 重啟後 session 已不在記憶體 —— `joinedAt` 退回 `periodStart` */
   session: CopilotSession | null
   periodStart: string
+  /**
+   * 區間內第一則客戶文字發言的時間（`ClosurePeriod.firstCustomerAt`）——
+   * 情緒涵蓋判定的比較對象，理由見 `sentiment-range.ts` 檔頭。
+   *
+   * ⚠️ `commit` 端點自己算不出它（守衛 G1 禁止 import 取數模組），
+   *    因此由 `draft` 端算好、經 request body 原樣帶回，比照 `periodMessageCount`。
+   */
+  firstCustomerAt: string | null
   /** 發起這次結案的客服 —— 一定算在 `operators` 裡 */
   operatorId: string
   /** 模型自陳的把握度；無真實依據時為 null（憲法 4.4） */
@@ -33,7 +41,11 @@ export interface ReadonlyFieldsInput {
 export function computeReadonlyFields(input: ReadonlyFieldsInput): ClosureDraftReadonly {
   const { ctx, analysis, session, periodStart, operatorId } = input
 
-  const range = sentimentRange(analysis?.sentimentBlock.timeline ?? [], periodStart)
+  const range = sentimentRange(
+    analysis?.sentimentBlock.timeline ?? [],
+    periodStart,
+    input.firstCustomerAt,
+  )
 
   return {
     operators: serviceOperators(session, operatorId),
