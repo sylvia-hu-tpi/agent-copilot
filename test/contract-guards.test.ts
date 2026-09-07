@@ -699,3 +699,58 @@ describe('006 FR-045：PresenceState 維持三值，closing 與 state 正交', (
     expect(service).toMatch(/closing/)
   })
 })
+
+/**
+ * 「什麼算新訊息」只有一個定義 —— 2026-09-07 手動走查（T054 前置）定位。
+ *
+ * ⚠️ 這條守衛的存在理由：`PollingMessageSource.sliceNew()` 在**首次拉取**時刻意把整批
+ *    訊息當成新的推給訂閱者（那是訊息流的初始內容），而 `entry` 是 pipeline 層級的 ——
+ *    唯一分頁重新整理就會讓 refcount 歸零、pipeline 被拆掉，重連時錨點回到 `null`。
+ *    `onMessages()` 若只以 `sender.type === 'customer'` 過濾就交給 `scheduleIncremental()`，
+ *    **每一次重新整理都會對整段歷史重跑摘要／情緒／建議**：不報錯、沒有型別錯誤，
+ *    只是每次重連白燒一輪三個 agent 呼叫，而摘要每次都被整段換掉。
+ *
+ * ⚠️ 這個洞 2026-08-26 就由使用者在真實環境回報過一次（症狀是「同一筆事實在 `keyFacts`
+ *    裡重複累加」），當時只補了 SSE 重連那一半（`newCustomerMessagesSince()`），
+ *    輪詢這一半留到 2026-09-07 才被走查抓到。**兩條路 MUST 用同一個定義。**
+ *
+ * ⚠️ 為什麼是掃原始碼而不是單元測試：`session-manager.ts` 經 `copilot-runtime.ts`
+ *    用到 Nitro auto-import，vitest／tsc 碰不得（理由見 `session-registry.ts` 檔頭）。
+ */
+describe('分析觸發的「新訊息」只有一個定義（輪詢與 SSE 兩條路）', () => {
+  const MANAGER = resolve(ROOT, 'server/services/session-manager.ts')
+  const STREAM = resolve(ROOT, 'server/api/stream.get.ts')
+
+  it('兩條路都用 newCustomerMessagesSince() 判定', () => {
+    for (const [rel, file] of [['session-manager.ts', MANAGER], ['stream.get.ts', STREAM]] as const) {
+      const source = stripNonCode(readFileSync(file, 'utf8'))
+      expect(source, `${rel} 沒有用 newCustomerMessagesSince() 判定新訊息`)
+        .toMatch(/newCustomerMessagesSince\s*\(/)
+    }
+  })
+
+  it('session-manager.ts 交給 scheduleIncremental() 的不是「只濾 sender.type」的那份', () => {
+    const source = stripNonCode(readFileSync(MANAGER, 'utf8'))
+
+    const decl = /const\s+customerMessages\s*=\s*([\s\S]*?)\n\s*if\s*\(customerMessages\.length/.exec(source)
+    expect(decl?.[1], 'customerMessages 的宣告抓不到 —— 守衛會恆真').toBeTruthy()
+    expect(decl![1]!, '退回「只濾 sender.type」等於把整段歷史當新訊息')
+      .toMatch(/newCustomerMessagesSince/)
+
+    // 傳進 scheduleIncremental() 的必須就是這一份
+    expect(source).toMatch(/scheduleIncremental\(conversationId,\s*customerMessages/)
+  })
+
+  it('訊息流的 fan-out 與撞單檢查 MUST 維持吃整批（一起濾會漏訊息／漏搶答）', () => {
+    const source = stripNonCode(readFileSync(MANAGER, 'utf8'))
+    expect(source, 'checkSuggestionsSuperseded() 應吃整批 messages').toMatch(/checkSuggestionsSuperseded\(conversationId,\s*messages\)/)
+    expect(source, 'messages.appended 應送整批 messages').toMatch(/messages,\s*\n\s*\}\)/)
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 退回舊寫法必須抓得出來', () => {
+    const regressed = "const customerMessages = messages.filter(m => m.sender.type === 'customer')\n  if (customerMessages.length > 0) {"
+    const decl = /const\s+customerMessages\s*=\s*([\s\S]*?)\n\s*if\s*\(customerMessages\.length/.exec(stripNonCode(regressed))
+    expect(decl?.[1]).toBeTruthy()
+    expect(decl![1]!).not.toMatch(/newCustomerMessagesSince/)
+  })
+})
