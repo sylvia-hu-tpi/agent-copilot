@@ -2915,7 +2915,10 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
       （`specs/006` T033 已逐句對照，並刪掉語意已不存在的死鍵 `conversation.closeFailed`）。
       ⚠️ 下方原文保留為歷史紀錄，說明這個落差當初是**刻意**的。
       ⚠️ 連帶的 003 SC-007 **仍未通過** —— 它要求找 3 位未參與者驗證文案可讀性，
-      那是人工驗收，由 `specs/006` T052 獨立承擔，MUST NOT 因為行為補上了就視為通過。
+      那是人工驗收，原由 `specs/006` T052 承擔，但 **2026-09-04 使用者決定放行該任務
+      （訪談未執行，改與 PM 確認）**，因此這條至今**沒有任何證據**，
+      MUST NOT 因為行為補上了、或因為 006 已結案就視為通過。
+      要補做時素材與問句已備妥於 `specs/006-closure-handoff-summary/quickstart.md` §2 SC-005。
       〔以下為 2026-08-28 的原始記載〕 —— 中欄出口按鈕下方的
       `conversation.exitHint`（`i18n/locales/zh-TW.json`）寫著「離開＝僅退出不寫入・
       **結案＝產生摘要供確認後寫入**」，而 M2 的「結案」當時只等同「離開 ＋ 停止分析 ＋
