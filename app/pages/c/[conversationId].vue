@@ -80,6 +80,16 @@ const leaveFailed = computed(() => closureSession.value?.status === 'writtenLeav
 
 const panel = useCopilotPanel(conversationId, view.viewerJoined, closing)
 
+/**
+ * 情緒區塊還在跑 —— 結案面板要據此換一句話（見 `ClosureBlock` 的 `sentimentPending`）。
+ *
+ * ⚠️ 只看 `analyzing`／`retrying`：`error` 不算「還在算」（等也不會有，
+ *    客服要按的是重試而不是等），`ready` 當然也不算。
+ */
+const sentimentPending = computed(() =>
+  copilot.sentiment.value.status === 'analyzing'
+  || copilot.sentiment.value.status === 'retrying')
+
 /** 結案中被收合的五塊裡，客服臨時展開的那一塊（一次一塊） */
 const closingExpanded = ref<string | null>(null)
 
@@ -356,7 +366,28 @@ const presenceShort = computed(() => {
           class="shrink-0 border-b px-4 py-2"
           :style="{ borderColor: 'var(--border)', background: 'var(--surface)' }"
         >
-          <div class="flex items-center gap-2">
+          <!--
+            ⚠️ **這一列必須能變窄，因為中欄的寬度不是它自己決定的**（與 `HeaderCollapsed`
+               檔頭記的是同一個 bug，2026-09-07 在展開態又發生一次）。中欄是 `flex-1`，
+               左欄可拉到 400px、右欄可拉到 720px —— 兩邊都拉滿時中欄只剩幾百 px，
+               而「取消結案 ＋ 結案中…」是整個標題列最寬的一組按鈕。
+               先前這裡是 `flex`（不換行）＋ 按鈕組 `shrink-0`，寬度不夠時**整組按鈕
+               溢出到右欄的 Copilot 面板上面**。
+               ⚠️ 那不是 z-index 設錯，是 CSS 的繪製順序（CSS 2.1 附錄 E）：面板的背景屬於
+               「非定位區塊」那一輪，溢出的按鈕是 inline-level 內容、在更後面一輪才畫，
+               天生蓋在後面兄弟的背景之上。**加 `z-index` 不會修好它，不要往那個方向調。**
+
+               修法兩層，缺一不可：
+               ① **`flex-wrap`**：擠不下時按鈕組整組換到第二行（`ml-auto` 讓它仍靠右，
+                  與下方的輔助說明對齊）。展開態有垂直空間，換行不必犧牲任何資訊 ——
+                  這一點與收合態不同，那邊是 38px 的固定單列，只能讓資訊依序消失。
+               ② **資訊區 `min-w-0 flex-auto overflow-hidden`**：即使換行後第一行還是塞不下
+                  （代號很長、pill 很多），被裁掉的也只會是資訊，**永遠不會是按鈕**。
+               ⚠️ `flex-auto`（`flex:1 1 auto`）不可寫成 `flex-1`（`flex:1 1 0%`）——
+                  basis 為 0 時這一項對「這行放不放得下」的計算貢獻是 0，於是**永遠不會觸發換行**，
+                  資訊區會一路縮到 0 而按鈕照樣溢出。不會有型別或樣式錯誤，只是不換行。
+          -->
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-1.5">
             <!--
               畫布 §8.3 標題列：頭像 ＋ 代號 ＋ status pill ＋ 頻道 pill，第二行是 meta。
               ⚠️ 頭像／status 色／頻道 icon 與側欄共用 `app/utils/conversation-display.ts` ——
@@ -371,7 +402,7 @@ const presenceShort = computed(() => {
               aria-hidden="true"
             >{{ avatarLabel(title) }}</span>
 
-            <div class="flex min-w-0 flex-col gap-0.5">
+            <div class="flex min-w-0 flex-auto flex-col gap-0.5 overflow-hidden">
               <div class="flex min-w-0 items-center gap-2">
                 <h1 class="ac-mono min-w-0 truncate text-[1.03125rem] font-medium">{{ title }}</h1>
 
@@ -409,7 +440,7 @@ const presenceShort = computed(() => {
               ⚠️ 憲法 8.1：「離開對話」與「結案」的差別 MUST 由**文案**讀得出來（下方輔助說明），
                  MUST NOT 只靠主／次按鈕的視覺層級表達 —— 視覺層級是強化，不是資訊本身。
             -->
-            <div class="ml-auto flex shrink-0 items-center gap-2">
+            <div class="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
               <template v-if="!view.viewerJoined.value">
                 <div class="relative flex">
                   <!--
@@ -468,7 +499,13 @@ const presenceShort = computed(() => {
               </template>
 
               <template v-else>
+                <!--
+                  ⚠️ **結案中不顯示「離開對話」**（畫布 1c 的 `closing` 分支只有兩顆鈕）——
+                     此刻按離開會退出對話而結案沒完成，是個沒有好結局的出口。
+                     要走就先「取消結案」，語意才說得清楚。
+                -->
                 <button
+                  v-if="!closing"
                   type="button"
                   class="flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
                   :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
@@ -480,10 +517,13 @@ const presenceShort = computed(() => {
                 </button>
                 <!--
                   ⚠️ 結案中換成「取消結案」＋「結案中…」（畫布 1c「結案中」狀態）。
-                     `writing` 時這顆 disabled ＋ title —— 寫入請求已送出，此時取消
+                     `writing` 時「取消結案」disabled ＋ title —— 寫入請求已送出，此時取消
                      只會讓畫面與 CRM 分岔（FR-040a）。它之所以可以鎖住，
                      是因為寫入路徑有 30 秒硬上界（FR-032a）；兩者缺一，
                      客服會被困在既不能取消也不會自己結束的狀態裡。
+                  ⚠️ 「結案中…」是**disabled 的 navy 實心鍵 ＋ 旋轉 loader**，不是一段文字
+                     （畫布逐字：無框、`--navy` 底、`cursor:default`、`opacity:.85`）——
+                     靜態文字看不出「正在進行」，而這個狀態唯一要傳達的就是「還在跑」。
                 -->
                 <template v-if="closing">
                   <button
@@ -491,13 +531,23 @@ const presenceShort = computed(() => {
                     class="flex h-8 items-center gap-1.5 rounded-lg border px-3 text-[0.9375rem] transition-colors disabled:opacity-50"
                     :style="{ borderColor: 'var(--border-strong)', color: 'var(--text-2)' }"
                     :disabled="closureWriting"
-                    :title="closureWriting ? $t('closure.titlebar.cancelLocked') : undefined"
+                    :title="closureWriting
+                      ? $t('closure.titlebar.cancelLocked')
+                      : $t('closure.titlebar.cancelTitle')"
                     @click="view.cancelClosing()"
                   >
-                    <UIcon name="i-lucide-x" class="size-4" />
+                    <UIcon name="i-lucide-undo-2" class="size-4" />
                     {{ $t('closure.titlebar.cancel') }}
                   </button>
-                  <span class="flex h-8 items-center gap-1.5 px-1 text-[0.9375rem]" :style="{ color: 'var(--text-2)' }">
+                  <span
+                    class="flex h-8 cursor-default items-center gap-1.5 rounded-lg px-3 text-[0.9375rem] font-medium"
+                    :style="{
+                      background: 'var(--navy)',
+                      color: 'var(--navy-fg)',
+                      opacity: 0.85,
+                    }"
+                  >
+                    <UIcon name="i-lucide-loader-2" class="size-4 animate-spin" />
                     {{ $t('closure.titlebar.closing') }}
                   </span>
                 </template>
@@ -791,6 +841,7 @@ const presenceShort = computed(() => {
           <CopilotClosureBlock
             v-if="panel.variant.value === 'closing'"
             :conversation-id="conversationId"
+            :sentiment-pending="sentimentPending"
             @committed="view.finishClosure()"
           />
 
