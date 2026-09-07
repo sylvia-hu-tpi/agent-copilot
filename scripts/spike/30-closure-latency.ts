@@ -121,7 +121,7 @@ export const probe30 = () => runProbe('30', '結案三段時間預算', async (p
 
       // ② draft：快照取數（AI 的部分見下方說明）
       const draft = await timed(async () => {
-        const history = await fetchPeriodMessages(client, conversationId, periodStart)
+        const { messages: history } = await fetchPeriodMessages(client, conversationId, periodStart)
         /*
           ⚠️ 只組 prompt、**不真的呼叫 agent**：這支 spike 的 client 是 API-key client，
              而 `summarizeClosure()` 的 agent 呼叫已由 `spike:closure-agent`（31）量過

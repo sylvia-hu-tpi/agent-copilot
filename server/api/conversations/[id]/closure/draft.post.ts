@@ -69,7 +69,7 @@ export default defineEventHandler(async (event): Promise<ClosureDraft> => {
   event.node.req.on('close', () => cancel.abort())
 
   // ⚠️ 快照 MUST 在**本次請求內**取得（R2.1）。每次呼叫 ＝ 一次新快照 ＝ 一個新 draftId
-  const history = await fetchPeriodMessages(client, ctx.id, periodStart)
+  const { messages: history, truncated: periodTruncated } = await fetchPeriodMessages(client, ctx.id, periodStart)
 
   /*
     知識庫檢索 —— 比照 `server/services/blocks/suggestion.ts` 的用法：
@@ -83,9 +83,9 @@ export default defineEventHandler(async (event): Promise<ClosureDraft> => {
     try {
       knowledgeHits = await useKnowledgeProvider().search(query, { topK: 5 })
     }
-    catch {
-      // ⚠️ 不記錄 query（憲法 1.5：那是客戶對話個資）
-      console.warn(`[closure] 知識庫檢索失敗，改以空集合續行（conversation=${ctx.id}）`)
+    catch (err) {
+      // ⚠️ 不記錄 query（憲法 1.5：那是客戶對話個資）；錯誤訊息本身不含 query，記它才能事後歸因
+      console.warn(`[closure] 知識庫檢索失敗，改以空集合續行（conversation=${ctx.id}）：${errText(err)}`)
     }
   }
 
@@ -129,9 +129,18 @@ export default defineEventHandler(async (event): Promise<ClosureDraft> => {
     period: {
       start: periodStart,
       origin: periodOrigin,
-      // 快照的則數就是這次真正涵蓋的則數 —— 與候選清單的估算是兩件事
-      messageCount: history.length,
-      truncated: false,
+      /*
+        快照的則數就是這次真正涵蓋的則數 —— 與候選清單的估算是兩件事。
+
+        ⚠️ 但**收滿掃描上限時 MUST 是 `null` ＋ `truncated: true`**（2026-09-04 修）：
+           Board 的 `period_message_count` 逐字定義是「留空 ＝ 超過 500 則的掃描上限，
+           數不完（不是 0）」，回報 `500 / truncated:false` 等於在紀錄上寫一個
+           數不完卻看起來精確的數字。UI 那側也靠 `truncated` 才分得出
+           「超過 500 則」與「尚未算出」。
+      */
+      ...(periodTruncated
+        ? { messageCount: null, truncated: true }
+        : { messageCount: history.length, truncated: false }),
     },
     summary: aiPart.summary,
     intent: aiPart.intent,

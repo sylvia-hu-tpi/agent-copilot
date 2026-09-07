@@ -215,22 +215,35 @@ export function defaultIndex(candidates: readonly ScopeCandidate[]): number {
  * ⚠️ 上限同樣是 500 則。超過時取**最新的 500 則**（區間的尾端），
  *    不是最舊的 500 則 —— 結案報告談的是這段服務怎麼收尾的。
  */
+/** `fetchPeriodMessages()` 的結果 —— 訊息本身，以及它是否被掃描上限截斷 */
+export interface PeriodMessages {
+  /** 由舊到新（prompt 讀的是對話順序） */
+  messages: Message[]
+  /** `true` ＝ 收滿掃描上限、區間還有更早的沒讀到（則數 MUST 以 `null` 呈現） */
+  truncated: boolean
+}
+
 export async function fetchPeriodMessages(
   client: ImbraceClient,
   conversationId: string,
   periodStart: string,
   opts: { scanLimit?: number, pageSize?: number } = {},
-): Promise<Message[]> {
+): Promise<PeriodMessages> {
   const scanLimit = opts.scanLimit ?? CLOSURE_SCAN_LIMIT
   const pageSize = opts.pageSize ?? SCAN_PAGE_SIZE
   const startMs = Date.parse(periodStart)
 
   const collected: Message[] = []
+  /** 走到比 `periodStart` 更舊的訊息 ＝ 這個區間已經完整讀到 */
+  let hitOlder = false
+  /** 資料本身掃完了（最後一頁不滿） */
+  let exhausted = false
+
   for (let skip = 0; collected.length < scanLimit; skip += pageSize) {
     const page = await fetchLatest(client, conversationId, { limit: pageSize, skip })
-    if (page.length === 0) break
+    if (page.length === 0) { exhausted = true; break }
+    if (page.length < pageSize) exhausted = true
 
-    let hitOlder = false
     // 由新到舊塞，收滿或走過起點就停
     for (let i = page.length - 1; i >= 0; i--) {
       const m = page[i]!
@@ -239,9 +252,25 @@ export async function fetchPeriodMessages(
       collected.push(m)
       if (collected.length >= scanLimit) break
     }
-    if (hitOlder || page.length < pageSize) break
+    if (hitOlder || exhausted) break
   }
 
-  // 收集時是由新到舊，交給 AI 前反轉回由舊到新 —— prompt 讀的是對話順序
-  return collected.reverse()
+  /*
+    ⚠️ 截斷判定與 `countByCandidate()` 用**同一組條件**：收滿上限，
+       **而且**不是因為走過了區間起點（`hitOlder`）或資料掃完（`exhausted`）。
+
+       只看 `collected.length >= scanLimit` 的話，「資料剛好掃完而則數又剛好達到上限」
+       會被誤判成截斷 —— 那一筆的則數其實是精確的。反過來，硬寫 `truncated: false`
+       （2026-09-04 之前的版本）則讓真的超過 500 則的區間回報「500 則、未截斷」，
+       而 Board 的 `period_message_count` 逐字定義是「留空 ＝ 超過 500 則，數不完（不是 0）」
+       —— 寫進去的 500 是個謊。
+
+    ⚠️ `!hitOlder` 目前**是冗餘的**：內層先判 `at < startMs` 才 push、push 完才判收滿，
+       因此撞到更舊的訊息時 `collected` 必然還沒滿。寫出來是為了讓這個判準與
+       `countByCandidate()` 逐字對齊 —— 迴圈順序一改它就會真的生效。
+  */
+  return {
+    messages: collected.reverse(),
+    truncated: collected.length >= scanLimit && !hitOlder && !exhausted,
+  }
 }
