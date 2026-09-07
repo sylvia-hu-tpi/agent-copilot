@@ -15,7 +15,7 @@
  * ✅ **「詳細內容」四段已被畫布採納**（2026-09-01 改版；先前是實作自訂、畫布只有一段正文，
  *    舊 `DESIGN_FEEDBACK.md` C-13 已結清）。仍與畫布不同的是那四段內部用 `<ul>` 而非整段
  *    文字 —— 我方的 `keyFacts`／`attempted`／`openIssues` 是字串陣列，攤平會失去
- *    「這是幾件獨立的事」這個資訊。
+ *    「這是幾件獨立的事」這個資訊。⚠️ 這一條 2026-09-07 才轉出給 Design，編號 **C-35**。
  *
  * 五態呈現（`AnalysisBlockStatus`，憲法 8.1 擴大適用至所有狀態資訊）：
  * empty／analyzing／retrying／ready／error，彼此視覺上可區分。
@@ -233,7 +233,7 @@ const statusColor = computed(() => {
         ⚠️ 原生 `<button>` ＋ `aria-expanded`（憲法 8.2），不是畫布的 `<div role="button">`。
         ⚠️ 段落內容用 `<ul>` 而非畫布的整段文字 —— 我方的 `keyFacts`／`attempted`／
            `openIssues` 是**字串陣列**，攤平成一段會失去「這是三件獨立的事」這個資訊。
-           已登記於 DESIGN_FEEDBACK。
+           已登記於 `DESIGN_FEEDBACK.md` C-35。
       -->
       <div v-if="hasDetails" class="border-t pt-2" :style="{ borderColor: 'var(--border)' }">
         <button
