@@ -288,7 +288,8 @@
   "closure": {
     "blockTitle": "結案摘要自動填入",
     "blockTag": "AI 草稿 · 可修改",
-    "enteredBanner": "已進入結案流程",
+    "enteredBannerPrefix": "已進入",
+    "enteredBannerStrong": "結案流程",
     "draftAt": "草稿產生於 {time}",
     "writeWarning": "「一鍵寫入 CRM」是本面板唯一會寫入資料庫的動作，寫入後不可自動回復。",
     "staleNotice": "對話有新內容，建議重新產生",
@@ -315,7 +316,23 @@
       "sentimentStart": "區間起點情緒",
       "sentimentEnd": "區間終點情緒",
       "sentimentTrough": "區間最低情緒",
-      "sentimentEmpty": "留空"
+      "sentimentEmpty": "留空",
+      "sentimentPending": "情緒分析仍在進行，此刻寫入的紀錄情緒欄位會留空。等它完成後按「重新產生」即可補上。"
+    },
+    "vocab": {
+      "resolution": {
+        "resolved": "已解決",
+        "workaround": "以替代方案處理（未根治）",
+        "escalated": "已升級處理",
+        "unresolved": "未解決",
+        "customer_abandoned": "客戶未再回應"
+      },
+      "sentimentOutcome": {
+        "appeased": "已安撫",
+        "satisfied": "滿意",
+        "still_negative": "仍為負面",
+        "escalated": "情緒升溫"
+      }
     },
     "buttons": {
       "regenerate": "重新產生",
@@ -362,19 +379,23 @@
       "subtitle": "決定 AI 讀哪些訊息",
       "label": "涵蓋範圍",
       "change": "變更範圍",
-      "row": "{t} 起 · {n} 則",
-      "rowTruncated": "超過 500 則",
-      "rowEmpty": "0 則",
+      "startAt": "{t} 起",
+      "startFirst": "第一則對話起",
+      "countN": "{n} 則",
+      "countTruncated": "超過 500 則",
+      "countPending": "則數計算中…",
+      "row": "{start} · {count}",
       "closureLabel": "上次結案 · 分類：{category}（{name}）",
       "fallbackLabel": "自 {date} 首次進線起算 · 完整對話",
       "customLabel": "自訂起算時間（非結案起點）",
-      "coverage": "本次摘要涵蓋 {t} 起 · {n} 則",
-      "coverageTruncated": "本次摘要涵蓋 {t} 起 · 超過 500 則",
+      "coverage": "本次摘要涵蓋 {start} · {count}",
       "unselectable": "此後尚無新訊息，無法作為起算點",
       "never": "這則對話從未被結案，預設從第一則起算。若只想涵蓋某段時間，可自訂起算時間。",
       "overflow": "另有 {n} 個更早的結案起點未列出（僅顯示最近 5 次）。需要更早的區間請用自訂起算時間。",
       "zeroTop": "最近一次結案之後尚無新訊息，已自動改選下一個起點。",
-      "regen": "涵蓋範圍已改為 {t} 起（{n} 則），正在重新產生摘要…"
+      "regen": "涵蓋範圍已改為 {t} 起（{count}），正在重新產生摘要…",
+      "regenFirst": "涵蓋範圍已改為第一則對話起（{count}），正在重新產生摘要…",
+      "regenPending": "涵蓋範圍已改為 {t} 起，正在重新產生摘要…"
     },
     "custom": {
       "entry": "自訂起算時間",
@@ -393,7 +414,8 @@
       "cancel": "取消結案",
       "closing": "結案中…",
       "cancelHint": "取消結案＝回到已接手狀態，不會留下任何紀錄",
-      "cancelLocked": "寫入請求已送出，此時無法取消"
+      "cancelLocked": "寫入請求已送出，此時無法取消",
+      "cancelTitle": "回到已接手狀態，不寫入任何紀錄"
     },
     "composerBanner": "結案中 —— 摘要內容為按下結案當下的對話快照，不含此後的新訊息。送出新訊息後，可按「重新產生」把它納入摘要。",
     "modeLocked": "結案中無法切換服務模式，請先取消結案",

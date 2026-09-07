@@ -93,6 +93,15 @@ export interface ClosureSession {
   error: ClosureError | null
   baselineAt: string | null
   closureBaseline: string[]
+  /**
+   * 這次 `generating` 是「**重新產生**」而不是首次產生。
+   *
+   * ⚠️ **不能用 `draft !== null` 推導**：契約 R2.2 要求發請求前先把 `draft` 清空
+   *    （保留舊內容的話，畫面上顯示的是上一個區間的摘要，而客服看不出來），
+   *    因此 `generating` 期間 `draft` **恆為 `null`**，兩種產生分不出來。
+   *    2026-09-04 就是這樣讓 regen 的提示與忙碌鍵變成死程式碼的。
+   */
+  regenerating: boolean
   /** 在途請求的取消控制器。⚠️ 不是狀態，是資源；`cancel()`／落定時一律清掉 */
   abort: AbortController | null
 }
@@ -114,6 +123,7 @@ function blank(): ClosureSession {
     error: null,
     baselineAt: null,
     closureBaseline: [],
+    regenerating: false,
     abort: null,
   }
 }
@@ -241,14 +251,19 @@ export const useClosureStore = defineStore('closure', () => {
     periodStart: string,
     periodOrigin: ClosurePeriodOrigin,
   ): Promise<void> {
+    // ⚠️ 先中止在途的那一次 —— 兩次產生同時在跑的話，先回來的那個會被後回來的蓋掉，
+    //    而「先發的後回」完全可能（區間越長越慢）。abort 之後舊的 catch 走 `isAbort` 靜默收工。
     get(conversationId)?.abort?.abort()
     const abort = new AbortController()
+    // ⚠️ 在 `draft` 被清掉**之前**取 —— 它是「這次是重新產生」的唯一依據（見型別註解）
+    const hadDraft = !!get(conversationId)?.draft
     patch(conversationId, {
       status: 'generating',
       selected: { periodStart, periodOrigin },
       draft: null,
       stale: false,
       error: null,
+      regenerating: hadDraft,
       abort,
     })
 
@@ -258,7 +273,7 @@ export const useClosureStore = defineStore('closure', () => {
         { method: 'POST', body: { periodStart, periodOrigin }, signal: abort.signal },
       )
       if (!get(conversationId)) return
-      patch(conversationId, { status: 'ready', draft, abort: null })
+      patch(conversationId, { status: 'ready', draft, regenerating: false, abort: null })
     }
     catch (err) {
       if (!get(conversationId)) return
@@ -267,6 +282,7 @@ export const useClosureStore = defineStore('closure', () => {
       patch(conversationId, {
         status: 'draftError',
         draft: null,
+        regenerating: false,
         abort: null,
         error: { message: messageOf(err), at: new Date().toISOString() },
       })
