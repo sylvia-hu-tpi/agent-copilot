@@ -97,10 +97,23 @@ const loadingFirstDraft = computed(() => busy.value && !regenerating.value)
 
 const readonlyFields = computed(() => draft.value?.readonly ?? null)
 
-const draftAt = computed(() =>
-  new Intl.DateTimeFormat(locale.value, {
+/**
+ * 「草稿產生於 HH:mm:ss」。
+ *
+ * ⚠️ **MUST 依賴 `draftId`**（2026-09-08 修）。原本寫成 `format(new Date())` 且沒有任何
+ *    反應式依賴（`locale` 除外），因此 `computed` 的快取值就是**第一次渲染**的時間：
+ *    按下「重新產生」拿到新草稿之後，畫面上那個時間還停在二十分鐘前，
+ *    而客服正是靠它判斷手上這份是新的還是舊的。
+ * ⚠️ 這裡沒有 server 端的產生時間可用（`ClosureDraft` 不帶時間戳），
+ *    因此退而求其次：以 `draftId` 當依賴，在**收到新草稿的那一刻**重算一次。
+ *    兩者的差距是一次網路往返，遠小於「永遠不更新」。
+ */
+const draftAt = computed(() => {
+  if (!draft.value?.draftId) return ''
+  return new Intl.DateTimeFormat(locale.value, {
     hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
-  }).format(new Date()))
+  }).format(new Date())
+})
 
 // ── 編輯 ───────────────────────────────────────────────────────────────
 
@@ -122,6 +135,27 @@ function patchFollowUp(i: number, over: Partial<ClosureFollowUp>): void {
 function removeSop(id: string): void {
   set('citedSopIds', (draft.value?.citedSopIds ?? []).filter(x => x !== id))
 }
+
+/**
+ * 「要做什麼」還沒填的後續事項列。
+ *
+ * ⚠️⚠️ **沒有這道守門時，客服會卡在一個出不去的迴圈**（2026-09-08 修）。
+ *      「新增後續事項」推入的是一列 `{ action: '' }`，而 commit 端點的 zod
+ *      要求 `action` 至少一個字 —— 直接按寫入會收到 400。
+ *      前端把 400 歸成「寫入失敗」，顯示的是 B7 的
+ *      「CRM 未收到這筆結案紀錄⋯可直接重試」，
+ *      而重試送的是一模一樣的 body，於是永遠失敗，
+ *      畫面上也沒有任何地方指得出是那一列空白造成的。
+ *
+ * ⚠️ 處置刻意選「**擋下並就地標示**」而不是「送出前默默濾掉」：
+ *    客服可能已經填了負責人或期限，靜默丟棄等於吃掉他打的字，而他不會知道。
+ */
+const invalidFollowUpRows = computed(() => {
+  const rows = draft.value?.followUps ?? []
+  return new Set(rows.flatMap((f, i) => (f.action.trim() ? [] : [i])))
+})
+
+const hasInvalidFollowUps = computed(() => invalidFollowUpRows.value.size > 0)
 
 // ── 動作 ───────────────────────────────────────────────────────────────
 
@@ -227,7 +261,13 @@ const failMeta = computed(() => {
   }).format(new Date(err.at))
   return failKind.value === 'unverified'
     ? t('closure.fail.metaUnverified', { time, reqId: err.reqId ?? '—' })
-    : t('closure.fail.metaFailed', { time, reason: err.message, reqId: err.reqId ?? '—' })
+    // ⚠️ `err.message` 為空 ＝ 從回應裡取不到原因。文案在 i18n（憲法 8.5），
+    //    store 不再自己塞一句寫死的「未知錯誤」。
+    : t('closure.fail.metaFailed', {
+        time,
+        reason: err.message || t('closure.fail.unknownReason'),
+        reqId: err.reqId ?? '—',
+      })
 })
 
 const failFallback = computed(() => {
@@ -540,10 +580,17 @@ async function onCommit(): Promise<void> {
             {{ $t('closure.fields.followUps') }}
           </span>
           <div v-for="(f, i) in draft.followUps" :key="i" class="flex items-center gap-1.5">
+            <!--
+              ⚠️ 空白的「要做什麼」會讓寫入被 server 擋下（見 script 區的
+                 `invalidFollowUpRows`）。錯誤 MUST 標在客服打字的那一格上 ——
+                 只把寫入鍵停用而不指出是哪一列，等於換一種方式卡住他。
+            -->
             <UInput
               class="flex-1"
               :model-value="f.action"
               :placeholder="$t('closure.fields.followUpAction')"
+              :color="invalidFollowUpRows.has(i) ? 'error' : undefined"
+              :aria-invalid="invalidFollowUpRows.has(i)"
               @update:model-value="patchFollowUp(i, { action: String($event) })"
             />
             <UInput
@@ -564,6 +611,13 @@ async function onCommit(): Promise<void> {
               @click="removeFollowUp(i)"
             />
           </div>
+          <p
+            v-if="hasInvalidFollowUps"
+            class="text-[0.8125rem]"
+            :style="{ color: 'var(--danger)' }"
+          >
+            {{ $t('closure.fields.followUpActionRequired') }}
+          </p>
           <UButton
             size="xs" color="neutral" variant="ghost" icon="i-lucide-plus"
             class="self-start"
@@ -709,9 +763,10 @@ async function onCommit(): Promise<void> {
           <button
             type="button"
             :class="BTN"
-            class="min-w-0 flex-1 px-3 disabled:cursor-not-allowed"
+            class="min-w-0 flex-1 px-3 disabled:cursor-not-allowed disabled:opacity-60"
             :style="commitBtnStyle"
-            :disabled="status === 'writing'"
+            :title="hasInvalidFollowUps ? $t('closure.fields.followUpActionRequired') : undefined"
+            :disabled="status === 'writing' || hasInvalidFollowUps"
             @click="onCommit"
           >
             <UIcon

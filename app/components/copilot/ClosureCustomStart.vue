@@ -85,16 +85,48 @@ function choose(d: Date): void {
   selected.value = d
 }
 
-const canApply = computed(() => !!selected.value && inRange(composed()))
+/**
+ * ⚠️ **`min`／`max` 這兩個 HTML 屬性擋不住鍵盤輸入的值** —— 它們只影響上下箭頭，
+ *    使用者仍可以直接打進 `30`，而 `new Date(y, m, d, 30, 0)` 會**靜默滾到隔天**。
+ *    因此夾在這裡再做一次（憲法 8.1 的同一個精神：一道防線壞掉時另一道還在）。
+ */
+function clamp(n: number, lo: number, hi: number): number {
+  if (!Number.isFinite(n)) return lo
+  return Math.min(hi, Math.max(lo, Math.trunc(n)))
+}
 
 function composed(): Date {
   const d = selected.value ?? minDate.value
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour.value, minute.value)
+  return new Date(
+    d.getFullYear(), d.getMonth(), d.getDate(),
+    clamp(hour.value, 0, 23), clamp(minute.value, 0, 59),
+  )
 }
+
+/**
+ * 組出來的起算時間**晚於現在**。
+ *
+ * ⚠️⚠️ **`inRange()` 抓不到這件事** —— 它比的是整天（當天 00:00 是否晚於上界），
+ *      所以「今天」永遠合法，不管時分填了什麼。於是現在 10:00 時選今天 23:00
+ *      會被判成可套用，送出一個未來的起點：`fetchPeriodMessages()` 第一則就比它舊，
+ *      收集到 0 則訊息，然後對著一段空對話產出摘要、`messageCount: 0`，
+ *      全程沒有錯誤也沒有警告。
+ */
+const isFuture = computed(() => !!selected.value && composed() > maxDate.value)
+
+const canApply = computed(() =>
+  !!selected.value && inRange(composed()) && !isFuture.value)
 
 function apply(): void {
   if (!canApply.value) return
-  emit('apply', composed().toISOString())
+  /*
+    ⚠️ 下界用夾的而不是擋的：起點比第一則訊息早，語意上就等於「從第一則起算」，
+       擋下來只會讓客服對著一顆按不下去的按鈕，而畫面上沒說為什麼。
+       上界則相反 —— 未來的起點不是「等於某個合理值」，是真的錯了，必須擋。
+  */
+  const at = composed()
+  const clamped = at < minDate.value ? minDate.value : at
+  emit('apply', clamped.toISOString())
 }
 
 const shiftMonth = (delta: number): void => {
@@ -213,6 +245,11 @@ const applyBtnStyle = computed(() => {
     </div>
 
     <p class="mt-2 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ rangeLabel }}</p>
+
+    <!-- ⚠️ 只把按鈕變成死鍵而不說原因，等於換一種方式讓客服卡住（見 script 區的 `isFuture`） -->
+    <p v-if="isFuture" class="mt-1 text-[0.8125rem]" :style="{ color: 'var(--danger)' }">
+      {{ $t('closure.custom.future') }}
+    </p>
 
     <!--
       ⚠️ 主要鍵的 `flex-1` 是畫布規格的一部分，不是排版順手 —— 靠文字長度碰巧填滿的話，

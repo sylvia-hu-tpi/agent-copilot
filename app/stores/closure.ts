@@ -26,38 +26,26 @@
 
 import { defineStore } from 'pinia'
 import type {
+  ClosureCommitResponse,
   ClosureDraft,
   ClosureFollowUp,
   ClosurePeriodOrigin,
+  ClosureScopeCandidate,
+  ClosureScopesResponse,
 } from '#shared/types/copilot'
 
-/** 涵蓋範圍選擇器要顯示的一列 */
-export interface ClosureScopeCandidate {
-  start: string
-  origin: ClosurePeriodOrigin
-  messageCount: number | null
-  truncated: boolean
-  label?: { category: string, reviewedByName: string, closedAt: string }
-}
-
-export interface ClosureScopes {
-  candidates: ClosureScopeCandidate[]
-  fallback: ClosureScopeCandidate
-  overflowCount: number
-  defaultIndex: number
-  firstMessageAt: string
-  baselineAt: string
-  closureBaseline: string[]
-}
-
-export interface ClosureCommitResult {
-  recordId: string
-  reviewedBy: string
-  reviewedAt: string
-  created: boolean
-  reqId: string
-  newClosuresSincePanelOpen: Array<{ recordId: string, operatorName: string, closedAt: string }>
-}
+/*
+  ⚠️ **三個回應型別已經搬到 `shared/types/copilot.ts`**（2026-09-08）。
+     以前這裡手抄了一份 server 端的形狀，而兩支 route 又沒有回傳型別註記 ——
+     `$fetch<T>()` 因此是單方面的斷言：server 改名 `overflowCount` 或
+     `newClosuresSincePanelOpen[].operatorName` 仍然全綠，UI 只是安靜地讀到
+     `undefined`（FR-034 的提示會顯示一個空的客服名字）。
+     兩邊都指向 shared 之後，改一邊就是 tsc 錯誤。
+     ⚠️ 這兩個別名只為了不動既有的元件 import；**MUST NOT 在這裡重新宣告欄位**。
+*/
+export type { ClosureScopeCandidate }
+export type ClosureScopes = ClosureScopesResponse
+export type ClosureCommitResult = ClosureCommitResponse
 
 /**
  * ⚠️ **八個狀態，沒有第九個 `writeFailed`。** 見檔頭最後一段。
@@ -78,6 +66,13 @@ export type ClosureStatus =
 export interface ClosureError {
   /** `'unverified'` ＝ 寫入回 200 但回查不存在（B8）；其餘一律 `'failed'`（B7） */
   failKind?: 'failed' | 'unverified'
+  /**
+   * 錯誤的可讀原因。
+   *
+   * ⚠️ **空字串 ＝ 取不到原因**（不是「沒有錯誤」）。以前這裡會塞一句寫死的
+   *    「未知錯誤」，而它會經 `failMeta` 顯示給客服 —— 憲法 8.5 要求 UI 文案
+   *    集中在 i18n。改成留空後，由元件以 `closure.fail.unknownReason` 補上。
+   */
   message: string
   reqId?: string
   at: string
@@ -91,8 +86,15 @@ export interface ClosureSession {
   /** 結案期間有新訊息抵達 —— 只顯示過期標記，**MUST NOT** 自動重新產生（FR-020／FR-044） */
   stale: boolean
   error: ClosureError | null
-  baselineAt: string | null
-  closureBaseline: string[]
+  /**
+   * 寫入成功後拿到的 Board 紀錄 id（`null` ＝ 還沒寫入成功）。
+   *
+   * ⚠️ **C1 橫幅要顯示它**（FR-047b）：LEAVE 失敗時客服唯一能拿去 CRM 上把這筆
+   *    找出來的識別碼就是它。以前橫幅讀的是 `error.reqId`，而 `markLeaveFailed()`
+   *    根本沒寫 `reqId` —— 於是文案永遠渲染成「摘要已存入 CRM（），但⋯」。
+   *    ⚠️ 就算 `reqId` 有值也不對：那是**請求**的 id，不是**紀錄**的 id。
+   */
+  recordId: string | null
   /**
    * 這次 `generating` 是「**重新產生**」而不是首次產生。
    *
@@ -121,19 +123,23 @@ function blank(): ClosureSession {
     draft: null,
     stale: false,
     error: null,
-    baselineAt: null,
-    closureBaseline: [],
+    recordId: null,
     regenerating: false,
     abort: null,
   }
 }
 
+/**
+ * ⚠️ 取不到原因時回**空字串**，MUST NOT 在這裡塞一句中文 ——
+ *    這個值會經 `failMeta` 顯示給客服，而憲法 8.5 要求 UI 文案集中在 i18n
+ *    （「即使目前只有繁體中文」）。補話的責任在元件那一側。
+ */
 function messageOf(err: unknown): string {
   const data = (err as { data?: { message?: string } })?.data
   return data?.message
     ?? (err as { statusMessage?: string })?.statusMessage
     ?? (err as { message?: string })?.message
-    ?? '未知錯誤'
+    ?? ''
 }
 
 function failKindOf(err: unknown): 'failed' | 'unverified' {
@@ -178,21 +184,48 @@ export const useClosureStore = defineStore('closure', () => {
 
   // ── Getters ─────────────────────────────────────────────────────────
 
-  const isClosing = (conversationId: string): boolean => sessions.value.has(conversationId)
+  /**
+   * 這個對話是否**還在結案流程中**。
+   *
+   * ⚠️⚠️ **`writtenLeaveFailed` 不算**（2026-09-08 修，FR-047b 逐字：
+   *      「包含『摘要已寫入但離開失敗』那個狀態 —— 結案本身已完成，
+   *      區塊 MUST NOT 留在畫面上」）。
+   *
+   *      以前這裡是 `sessions.has(id)`，於是寫入成功但 LEAVE 失敗時：
+   *      第 6 區塊還掛在畫面上（`draft` 已被清空，只剩一個空的選擇器）、
+   *      標題列還轉著「結案中…」並開放「取消結案」、服務模式還鎖著、
+   *      Composer 還掛著橫幅、Sidebar 還標「結案未完成」、心跳還在對同事
+   *      廣播 `closing: true` —— 而那筆紀錄早就在 CRM 上了。
+   *      更糟的是「取消結案」在那個狀態下可按，一按就把 session 丟掉，
+   *      連 C1 重試橫幅一起消失，客服仍在 JOIN 狀態且畫面上再無任何線索。
+   *
+   * ⚠️ **這是五處呈現的唯一判定來源**（見 `pages/c/[conversationId].vue`）。
+   *    要判斷「LEAVE 失敗」請直接讀 `status`，MUST NOT 在這裡開特例。
+   */
+  const isClosing = (conversationId: string): boolean =>
+    (get(conversationId)?.status ?? null) !== null
+    && get(conversationId)!.status !== 'writtenLeaveFailed'
 
   /**
    * ⚠️ `writing`／`leaving` 之外一律可取消（FR-040a）。
    *    產生摘要期間**必須**可取消：它沒有固定秒數上界（SC-004），
    *    不可取消 ＋ 沒有上界 ＝ 客服被困住。
+   *
+   * ⚠️ `writtenLeaveFailed` **不可取消**：紀錄已經在 CRM 上了，這時「取消」
+   *    唯一的效果是把重試離開的唯一入口刪掉（FR-033、畫布 C1 沒有這條出路）。
    */
   const canCancel = (conversationId: string): boolean => {
     const s = get(conversationId)
     if (!s) return false
-    return s.status !== 'writing' && s.status !== 'leaving'
+    return s.status !== 'writing' && s.status !== 'leaving' && s.status !== 'writtenLeaveFailed'
   }
 
-  /** Sidebar 的「結案未完成」標記（FR-041）—— ⚠️ 不是倒數、不是自動寫入 */
-  const hasPending = (conversationId: string): boolean => sessions.value.has(conversationId)
+  /**
+   * Sidebar 的「結案未完成」標記（FR-041）—— ⚠️ 不是倒數、不是自動寫入。
+   * ⚠️ 與 `isClosing()` 同義且刻意如此：兩個名字對應畫面上兩個不同的東西
+   *    （右欄版面／左欄標記），但判定 MUST 是同一個 —— 分開寫就會分岔。
+   */
+  const hasPending = (conversationId: string): boolean => isClosing(conversationId)
 
   // ── Actions ─────────────────────────────────────────────────────────
 
@@ -202,7 +235,43 @@ export const useClosureStore = defineStore('closure', () => {
     await loadScopes(conversationId)
   }
 
+  /**
+   * 結案已經寫進 CRM 了，這個 session 只剩「重試離開」一件事。
+   *
+   * ⚠️ 產生類的動作（`loadScopes`／`pick`／`regenerate`）在這個狀態下 MUST 全部拒絕。
+   *    沒有這道守衛的話：`markLeaveFailed()` 保留了 `scopes`，選擇器只要還畫得出來
+   *    就能再選一次範圍 → 拿到**新的 `draftId`** → 寫入鍵重新亮起 → 而 Board 的冪等
+   *    只認 `draftId` → 同一次服務在正式 Board 上多出第二筆紀錄，全程不報錯。
+   *    第一道防線是 `isClosing()` 讓整個區塊消失，這是第二道。
+   */
+  function isSettled(conversationId: string): boolean {
+    return get(conversationId)?.status === 'writtenLeaveFailed'
+  }
+
+  /**
+   * 「這個回應仍然屬於當前那一次請求嗎」—— 落定前一律先問。
+   *
+   * ⚠️⚠️ **只靠 `abort.abort()` 是擋不住競態的**（2026-09-08 修）。原本的寫法假設
+   *      「舊的那次被 abort 掉之後就會走 `isAbort` 靜默收工」，但那有兩個破口：
+   *
+   *      ① **abort 抓不到。** Nuxt 的 `$fetch`（ofetch）會把中止一律重新包成
+   *         `FetchError`，原始的 `AbortError` 只留在 `cause` 裡。舊的 `isAbort()`
+   *         只看 `err.name`，因此判不出來，直接落到下面的 `draftError` 分支：
+   *         面板閃一下「結案摘要產生失敗」，而且把**新那次**的 `abort` 清成 null
+   *         （於是接下來想取消也取消不了），直到新的回應到達才自己好回來。
+   *         單元測試以裸的 `AbortError` 模擬，正好繞過了這個差異。
+   *      ② **已經完成的請求 abort 不掉。** 舊那次若在 abort 之前就回來了，
+   *         它的 `.then` 照樣會跑，把上一個區間的草稿蓋到新狀態上。
+   *
+   *      比對 controller 身分把兩個破口一起關掉：不是當前這一次的回應，一律不碰狀態。
+   */
+  function isMine(conversationId: string, abort: AbortController): boolean {
+    const s = get(conversationId)
+    return !!s && s.abort === abort
+  }
+
   async function loadScopes(conversationId: string): Promise<void> {
+    if (isSettled(conversationId)) return
     const abort = new AbortController()
     patch(conversationId, { status: 'loadingScopes', error: null, abort })
     try {
@@ -212,12 +281,7 @@ export const useClosureStore = defineStore('closure', () => {
       )
       // 面板已被取消 —— 回應到得比取消晚，MUST NOT 把它復活
       if (!get(conversationId)) return
-      patch(conversationId, {
-        scopes,
-        baselineAt: scopes.baselineAt,
-        closureBaseline: scopes.closureBaseline,
-        abort: null,
-      })
+      patch(conversationId, { scopes, abort: null })
 
       /*
         ⚠️ `defaultIndex === -1` 代表「全部候選都是 0 則」或「從未結案」——
@@ -229,7 +293,7 @@ export const useClosureStore = defineStore('closure', () => {
       if (chosen) await pick(conversationId, chosen.start, chosen.origin)
     }
     catch (err) {
-      if (!get(conversationId)) return
+      if (!isMine(conversationId, abort)) return
       if (isAbort(err)) return
       // R1.4：查詢失敗是失敗 —— MUST NOT 以任何預設區間頂替，MUST NOT 產生草稿
       patch(conversationId, {
@@ -251,6 +315,7 @@ export const useClosureStore = defineStore('closure', () => {
     periodStart: string,
     periodOrigin: ClosurePeriodOrigin,
   ): Promise<void> {
+    if (isSettled(conversationId)) return
     // ⚠️ 先中止在途的那一次 —— 兩次產生同時在跑的話，先回來的那個會被後回來的蓋掉，
     //    而「先發的後回」完全可能（區間越長越慢）。abort 之後舊的 catch 走 `isAbort` 靜默收工。
     get(conversationId)?.abort?.abort()
@@ -272,11 +337,11 @@ export const useClosureStore = defineStore('closure', () => {
         `/api/conversations/${conversationId}/closure/draft`,
         { method: 'POST', body: { periodStart, periodOrigin }, signal: abort.signal },
       )
-      if (!get(conversationId)) return
+      if (!isMine(conversationId, abort)) return
       patch(conversationId, { status: 'ready', draft, regenerating: false, abort: null })
     }
     catch (err) {
-      if (!get(conversationId)) return
+      if (!isMine(conversationId, abort)) return
       if (isAbort(err)) return
       // FR-046：顯示錯誤與重試，**MUST NOT 呈現空白草稿**
       patch(conversationId, {
@@ -291,6 +356,7 @@ export const useClosureStore = defineStore('closure', () => {
 
   /** 「重新產生」＝ 以當前區間再跑一次 ⇒ **新的 `draftId`**（US2 AC#2） */
   async function regenerate(conversationId: string): Promise<void> {
+    if (isSettled(conversationId)) return
     const selected = get(conversationId)?.selected
     if (!selected) return
     await pick(conversationId, selected.periodStart, selected.periodOrigin)
@@ -323,7 +389,8 @@ export const useClosureStore = defineStore('closure', () => {
    */
   async function commit(conversationId: string): Promise<ClosureCommitResult | null> {
     const s = get(conversationId)
-    if (!s?.draft || !s.selected || s.status !== 'ready') return null
+    // ⚠️ `scopes` 也是前提：FR-034 的基準線就存在裡面（見下方 body）
+    if (!s?.draft || !s.selected || !s.scopes || s.status !== 'ready') return null
     const draft = s.draft
 
     // ⚠️ `writing` 期間不可取消（FR-040a）—— 因此這裡不掛 AbortController
@@ -339,6 +406,9 @@ export const useClosureStore = defineStore('closure', () => {
             periodStart: draft.period.start,
             periodOrigin: draft.period.origin,
             periodMessageCount: draft.period.messageCount,
+            // ⚠️ 情緒涵蓋判定的比較對象 —— server 端算不出來（守衛 G1 禁止它讀訊息），
+            //    只能由草稿原樣帶回。漏帶會讓三個情緒欄全部留空，且不會報錯。
+            periodFirstCustomerAt: draft.period.firstCustomerAt,
             summary: draft.summary,
             intent: draft.intent,
             category: draft.category,
@@ -347,13 +417,21 @@ export const useClosureStore = defineStore('closure', () => {
             sentimentOutcome: draft.sentimentOutcome,
             citedSopIds: draft.citedSopIds,
             followUps: draft.followUps,
-            baselineAt: s.baselineAt,
-            closureBaseline: s.closureBaseline,
+            /*
+              ⚠️ 直接讀 `scopes`，**不再另存一份鏡像欄位**（2026-09-08）。
+                 以前 session 上有 `baselineAt`／`closureBaseline` 兩個欄位，
+                 內容永遠等於 `scopes` 裡的同名欄位、只在載入候選時寫一次、只在這裡讀。
+                 兩個必須恆等卻沒有任何機制保證的欄位 —— 哪天有人只更新 `scopes`
+                 而忘了鏡像，送出的就是一條過期的 FR-034 基準線，而且不會報錯。
+            */
+            baselineAt: s.scopes.baselineAt,
+            closureBaseline: s.scopes.closureBaseline,
           },
         },
       )
       if (!get(conversationId)) return null
-      patch(conversationId, { status: 'leaving' })
+      // ⚠️ `recordId` MUST 存下來 —— LEAVE 失敗時 C1 橫幅要靠它讓客服在 CRM 上找到這筆
+      patch(conversationId, { status: 'leaving', recordId: result.recordId })
       return result
     }
     catch (err) {
@@ -396,6 +474,10 @@ export const useClosureStore = defineStore('closure', () => {
    * ⚠️ **MUST NOT 回退結案** —— 紀錄已經在 CRM 上了，回退只會讓它變成孤兒。
    *    草稿清空是因為第 6 區塊此時已經沒有意義（它的工作完成了），
    *    剩下的是頂端一條「重試離開」的橫幅。
+   *
+   * ⚠️ **這個狀態下 `isClosing()`／`hasPending()` 都是 `false`、`canCancel()` 也是**
+   *    （FR-047b）。session 之所以留著，只是為了那條橫幅要顯示的 `recordId`
+   *    與失敗原因，以及讓「重試離開」有東西可重試 —— 它已經不是「結案中」。
    */
   function markLeaveFailed(conversationId: string, message: string): void {
     const s = get(conversationId)
@@ -428,8 +510,17 @@ export const useClosureStore = defineStore('closure', () => {
   }
 })
 
-/** 取消不是失敗 —— 呼叫端已經不在看了，改狀態只會讓被取消的面板復活 */
+/**
+ * 取消不是失敗 —— 呼叫端已經不在看了，改狀態只會讓被取消的面板復活。
+ *
+ * ⚠️ **MUST 一併看 `cause`**：Nuxt 的 `$fetch`（ofetch）把每一個失敗都重新包成
+ *    `FetchError`（`name` 就是 `'FetchError'`），原始的 `AbortError`／`DOMException`
+ *    只留在 `cause` 裡。只看最外層的 `name` 會把「客服自己按了取消」判成一次真正的失敗。
+ */
 function isAbort(err: unknown): boolean {
-  const name = (err as { name?: string })?.name
-  return name === 'AbortError' || name === 'CanceledError'
+  const named = (e: unknown): boolean => {
+    const name = (e as { name?: string })?.name
+    return name === 'AbortError' || name === 'CanceledError'
+  }
+  return named(err) || named((err as { cause?: unknown })?.cause)
 }

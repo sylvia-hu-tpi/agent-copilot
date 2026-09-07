@@ -300,7 +300,7 @@
       "resolution": "處理結果",
       "actionsTaken": "採取的行動",
       "sentimentOutcome": "情緒結果",
-      "citedSops": "引用的知識庫來源",
+      "citedSops": "相關的知識庫來源",
       "followUps": "後續待辦",
       "choose": "請選擇",
       "chooseHint": "AI 沒有從清單中選到合適的值，請自行選擇",
@@ -309,7 +309,8 @@
       "followUpOwner": "負責人（選填）",
       "followUpDueHint": "時間（選填）",
       "followUpRemove": "移除這一項",
-      "sopRemove": "移除這筆引用",
+      "followUpActionRequired": "有待辦事項還沒填內容，請補上或移除該列後再寫入",
+      "sopRemove": "移除這筆來源",
       "readonlyTitle": "由系統計算，不可修改",
       "operators": "參與的客服",
       "joinedAt": "接手時間",
@@ -347,8 +348,7 @@
     },
     "generating": {
       "title": "正在產生結案摘要",
-      "body": "涵蓋的訊息愈多，需要的時間愈長。你可以隨時取消。",
-      "cancel": "取消產生"
+      "body": "涵蓋的訊息愈多，需要的時間愈長。你可以隨時取消。"
     },
     "scopesError": {
       "title": "無法載入結案紀錄",
@@ -371,14 +371,14 @@
       },
       "metaFailed": "{time} 寫入失敗 · {reason}（req {reqId}）",
       "metaUnverified": "{time} 已送出 · 回報成功 · 查驗未找到（req {reqId}）",
-      "reportCopied": "已複製錯誤資訊，請貼給 IT"
+      "reportCopied": "已複製錯誤資訊，請貼給 IT",
+      "unknownReason": "未知錯誤"
     },
     "othersClosed": "{name} 已於 {time} 完成結案",
     "scope": {
       "title": "本次結案涵蓋範圍",
       "subtitle": "決定 AI 讀哪些訊息",
       "label": "涵蓋範圍",
-      "change": "變更範圍",
       "startAt": "{t} 起",
       "startFirst": "第一則對話起",
       "countN": "{n} 則",
@@ -408,7 +408,8 @@
       "hour": "時",
       "minute": "分",
       "cancel": "取消",
-      "apply": "以此起算並重新產生"
+      "apply": "以此起算並重新產生",
+      "future": "起算時間不能晚於現在"
     },
     "titlebar": {
       "cancel": "取消結案",

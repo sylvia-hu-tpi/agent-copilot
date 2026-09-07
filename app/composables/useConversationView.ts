@@ -335,12 +335,23 @@ export function useConversationView(conversationId: Ref<string>) {
   async function closeConversation(): Promise<void> {
     if (!conversationId.value) return
     await closure.open(conversationId.value)
+    /*
+      ⚠️ **進入與離開結案都 MUST 立刻補一次心跳**（2026-09-08 補）。
+         `closing` 只搭在 20 秒一次的定期心跳上，因此以前同事畫面上的
+         「⋯正在結案」最慢要 20 秒才出現、取消後也最慢要 20 秒才消失。
+         FR-045 是「讓同事看見有人正在結案」，慢 20 秒的提示在一次短對話裡
+         可能整段都沒出現過，或在對方已經離開後還掛著。
+      ⚠️ `beat()` 自己吞掉錯誤（presence 失敗不影響本人工作），這裡不需要 try。
+    */
+    await beat('viewing')
   }
 
   /** 取消結案 —— 回到「已接手」狀態，**不會留下任何紀錄**（FR-040） */
-  function cancelClosing(): void {
+  async function cancelClosing(): Promise<void> {
     if (!conversationId.value) return
     closure.cancel(conversationId.value)
+    // ⚠️ 先 `cancel()` 再送心跳 —— 順序反過來就會把 `closing: true` 再廣播一次
+    await beat('viewing')
   }
 
   /**
@@ -357,8 +368,23 @@ export function useConversationView(conversationId: Ref<string>) {
       await leave()
       if (error.value) throw new Error(error.value)
       closure.finish(id)
+      /*
+        ⚠️ **心跳 MUST 在 `finish()` 之後再送一次**（2026-09-08 補）。
+           `leave()` 內部那次 `beat('viewing')` 跑在這一行**之前**，
+           那時 session 還在（`status: 'leaving'`），於是它送出去的是
+           `closing: true` —— 同事畫面上會看到一個已經離開對話的人
+           「正在結案」，最久要等 20 秒的下一次定期心跳才更正。
+      */
+      await beat('viewing')
     }
     catch (err) {
+      /*
+        ⚠️ **MUST 清掉 `error`**：`leave()` 包在 `act()` 裡，失敗時 `act()` 已經把
+           同一段訊息寫進 `error`，頁面會用通用的警示列渲染它。不清掉的話，
+           畫面上會同時出現 C1 橫幅與一條內容一模一樣的警示列，疊在一起。
+           C1 橫幅是這個狀態**唯一**該有的出口（它帶著 recordId 與重試鍵）。
+      */
+      error.value = null
       closure.markLeaveFailed(id, messageOf(err))
     }
   }

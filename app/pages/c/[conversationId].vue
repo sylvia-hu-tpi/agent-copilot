@@ -642,9 +642,16 @@ const presenceShort = computed(() => {
            左側「結案未完成」標記也不再顯示。這裡沒有「取消結案」的出路：
            紀錄已經在 CRM 上，回退只會讓它變成孤兒（FR-033）。
       -->
+      <!--
+        ⚠️ `record-id` 讀的是 session 上的 `recordId`（commit 回應存下來的），
+           **不是** `error.reqId`。以前接的是後者，而 `markLeaveFailed()` 從來沒寫過
+           `reqId` —— 文案於是永遠渲染成「摘要已存入 CRM（），但⋯」，
+           把客服唯一能拿去 CRM 查這筆紀錄的識別碼弄丟了。
+           就算 `reqId` 有值也不對：那是**請求**的 id，不是**紀錄**的 id。
+      -->
       <ConversationClosureLeaveFailedBanner
         v-if="leaveFailed"
-        :record-id="closureSession?.error?.reqId ?? ''"
+        :record-id="closureSession?.recordId ?? ''"
         :busy="view.busy.value"
         @retry="view.retryLeaveAfterClosure()"
       />
