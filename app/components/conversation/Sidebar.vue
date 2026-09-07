@@ -535,13 +535,18 @@ function clockTime(iso?: string): string {
                  而那正是憲法第五條禁止的事。
               ⚠️ 標記隨 store 條目消失而消失：寫入成功並離開、或取消結案，兩者都會清掉它。
                  「已寫入但離開失敗」也不再顯示 —— 結案本身已經完成了（FR-047b）。
+              ⚠️ **當前正在結案的那一列也會顯示**，這是刻意的（`DESIGN_TOKENS.md` §1c 狀態 ④
+                 逐字要求「左側清單該列顯示『結案未完成』」）。標記說的是「這個對話有一件事沒做完」，
+                 不是「你離開的那個對話有事沒做完」—— 隨選取狀態時有時無反而像狀態在變。
+              ⚠️ 虛線框是**畫布指定**的（§7.5：`clipboard-check` ＋ 虛線 `--navy-soft-bd` 的 pill），
+                 用意是與同一列實心的未讀圓點分層：未讀是「有新東西進來」，這個是「你還欠一步」。
             -->
             <span
               v-if="closure.hasPending(c.id)"
-              class="flex shrink-0 items-center gap-1"
-              :style="{ color: 'var(--open)' }"
+              class="flex shrink-0 items-center gap-1 rounded-full px-1.5 py-px"
+              :style="{ color: 'var(--open)', border: '1px dashed var(--navy-soft-bd)' }"
             >
-              <UIcon name="i-lucide-flag" class="size-3 shrink-0" />
+              <UIcon name="i-lucide-clipboard-check" class="block size-3 shrink-0 self-center" />
               {{ $t('closure.sidebarPending') }}
             </span>
           </div>

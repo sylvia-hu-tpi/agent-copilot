@@ -103,6 +103,50 @@ const shiftMonth = (delta: number): void => {
 
 const canPrev = computed(() => cursor.value > new Date(minDate.value.getFullYear(), minDate.value.getMonth(), 1))
 const canNext = computed(() => cursor.value < new Date(maxDate.value.getFullYear(), maxDate.value.getMonth(), 1))
+
+/*
+  底部兩顆動作鍵 —— 沿用全專案的手刻慣例（Tailwind class ＋ `:style` token ＋ 本地 `BTN` 常數，
+  比照 `ClosureBlock.vue`／`CollisionDialog.vue`）。
+
+  ⛔ **不要用 `UButton`**：它的 `color="primary"` 走 Nuxt UI 自己的色盤與尺寸，對不上畫布
+     §7.5 的逐字規格（`flex:1`、28px、`--navy` 底、hover `--navy-2`），畫面上會多一顆
+     「不屬於這套設計系統」的按鈕，而且不會有任何錯誤或型別問題。
+  ⛔ 也不要為了 hover 另外開一段 scoped CSS 自成一套 class —— 專案裡沒有第二個元件這樣做，
+     多一套寫法就多一個會各自漂移的地方。
+
+  ⚠️ hover 用 `hovering` ref 而不是 Tailwind 的 `hover:bg-[…]`：底色寫在 inline `:style` 上，
+     而 inline style 的優先權高於 `hover:` class，那顆 class 會被**靜默蓋掉**
+     （滑上去沒反應、沒有錯誤）。同一個坑 `ConversationResizeHandle` 與 `Composer` 各踩過一次。
+     ⚠️ 只有「不改顏色、只改透明度」的按鈕才可以直接用 `hover:opacity-70`（`CollisionDialog` 那種）。
+*/
+const BTN = 'flex h-7 items-center justify-center rounded-[7px] px-2.5 text-[0.9063rem] transition-colors'
+
+const cancelHover = ref(false)
+const applyHover = ref(false)
+
+const cancelBtnStyle = computed(() => ({
+  border: '1px solid var(--border-strong)',
+  background: cancelHover.value ? 'var(--surface-2)' : 'transparent',
+  color: 'var(--text-2)',
+}))
+
+const applyBtnStyle = computed(() => {
+  // ⚠️ 不可套用時是 `--surface-3` 的死鍵，不是半透明的 navy —— 後者看起來仍像可按
+  if (!canApply.value) {
+    return {
+      border: '1px solid var(--border)',
+      background: 'var(--surface-3)',
+      color: 'var(--text-3)',
+      cursor: 'not-allowed',
+    }
+  }
+  return {
+    border: 'none',
+    background: applyHover.value ? 'var(--navy-2)' : 'var(--navy)',
+    color: 'var(--navy-fg)',
+    fontWeight: 500,
+  }
+})
 </script>
 
 <template>
@@ -170,13 +214,37 @@ const canNext = computed(() => cursor.value < new Date(maxDate.value.getFullYear
 
     <p class="mt-2 text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">{{ rangeLabel }}</p>
 
-    <div class="mt-3 flex justify-end gap-2">
-      <UButton size="xs" color="neutral" variant="ghost" @click="$emit('close')">
+    <!--
+      ⚠️ 主要鍵的 `flex-1` 是畫布規格的一部分，不是排版順手 —— 靠文字長度碰巧填滿的話，
+         換一個語系或縮一點容器寬度就會塌掉。樣式與 hover 的取捨見 script 區的註解。
+    -->
+    <div class="mt-3 flex items-center gap-2">
+      <button
+        type="button"
+        :class="BTN"
+        :style="cancelBtnStyle"
+        @pointerenter="cancelHover = true"
+        @pointerleave="cancelHover = false"
+        @focus="cancelHover = true"
+        @blur="cancelHover = false"
+        @click="$emit('close')"
+      >
         {{ $t('closure.custom.cancel') }}
-      </UButton>
-      <UButton size="xs" color="primary" :disabled="!canApply" @click="apply">
+      </button>
+      <button
+        type="button"
+        :class="BTN"
+        class="flex-1"
+        :style="applyBtnStyle"
+        :disabled="!canApply"
+        @pointerenter="applyHover = true"
+        @pointerleave="applyHover = false"
+        @focus="applyHover = true"
+        @blur="applyHover = false"
+        @click="apply"
+      >
         {{ $t('closure.custom.apply') }}
-      </UButton>
+      </button>
     </div>
   </div>
 </template>
