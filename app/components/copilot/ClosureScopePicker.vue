@@ -27,11 +27,18 @@
 import type { ClosurePeriod, ClosurePeriodOrigin } from '#shared/types/copilot'
 import type { ClosureScopeCandidate, ClosureScopes } from '~/stores/closure'
 
+/*
+  ⚠️ **`state?: 'quiet' | 'row' | 'list'` 已於 2026-09-08 移除。**
+     唯一的呼叫端（`ClosureBlock.vue`）從來沒有傳過它，因此它恆為預設的 `row`：
+     `quiet` 完全沒有對應的分支，`list` 只守著一個永遠畫不出來的標題列。
+     一個看起來支援三種值、實際只有一種會生效的 prop，比沒有這個 prop 更糟 ——
+     傳 `state="quiet"` 的人會拿到 `row` 的樣子，而且不會有任何錯誤。
+     ⚠️ `docs/DESIGN_TOKENS.md` §7.5 記載了三種 scopeStyle，實作只出貨 `row`；
+     要補上另外兩種時，MUST 連同呼叫端一起加回來。
+*/
 const props = withDefaults(defineProps<{
   scopes: ClosureScopes
   selected: { periodStart: string, periodOrigin: ClosurePeriodOrigin } | null
-  /** 畫布的三種呈現風格；預設 `row`（可點開的摘要列） */
-  state?: 'quiet' | 'row' | 'list'
   /** `regen`：改了選擇、正在重新產生 */
   regenerating?: boolean
   /**
@@ -42,7 +49,7 @@ const props = withDefaults(defineProps<{
    *    `start`／`origin` 是否相符才採用。
    */
   period?: ClosurePeriod | null
-}>(), { state: 'row', regenerating: false, period: null })
+}>(), { regenerating: false, period: null })
 
 const emit = defineEmits<{ pick: [start: string, origin: ClosurePeriodOrigin] }>()
 
@@ -63,7 +70,7 @@ const autoState = computed<'never' | 'overflow' | 'zeroTop' | null>(() => {
   return null
 })
 
-const open = ref(props.state === 'list' || autoState.value !== null)
+const open = ref(autoState.value !== null)
 const showCustom = ref(false)
 
 const selectable = (c: ClosureScopeCandidate): boolean => c.messageCount !== 0
@@ -251,15 +258,6 @@ function applyCustom(isoStart: string): void {
     </div>
 
     <template v-if="open">
-      <div v-if="state === 'list'" class="flex items-center gap-[7px]">
-        <UIcon name="i-lucide-calendar-clock" class="size-3.5 shrink-0" :style="{ color: 'var(--text-3)' }" />
-        <span class="text-[0.9063rem] font-medium">{{ $t('closure.scope.title') }}</span>
-        <span class="flex-1" />
-        <span class="text-[0.8125rem]" :style="{ color: 'var(--text-3)' }">
-          {{ $t('closure.scope.subtitle') }}
-        </span>
-      </div>
-
       <div
         role="radiogroup"
         :aria-label="$t('closure.scope.title')"

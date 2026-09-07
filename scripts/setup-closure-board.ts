@@ -24,10 +24,15 @@
  * ⚠️ **MUST NOT 印出 API key 或任何 token**（B6、憲法 1.5）。
  */
 
-import { existsSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
 import type { Environment } from '@imbrace/sdk'
+/*
+  ⚠️ `loadEnv`／`requireEnv`／`isMain` 一律用 spike harness 的那一份（2026-09-08）。
+     這裡本來各自重寫了一遍 —— 三份要人肉同步的環境載入邏輯，
+     而其中 `isMain` 的那一份在 Windows 上是壞的（見檔尾）。
+  ⚠️ **`makeClient()` 不適用**：它偏好 `IMBRACE_ACCESS_TOKEN`，
+     而建 Board 這條路徑必須用 API key（下方 `clientForApiKey`）。
+*/
+import { isMain, loadEnv, requireEnv } from './spike/lib/harness.js'
 import {
   clientForApiKey,
   createBoard,
@@ -41,8 +46,6 @@ import {
   CLOSURE_BOARD_NAME,
   type ClosureFieldSpec,
 } from '../server/services/closure/board-schema.js'
-
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 // ── 差集（純函式，供 `test/closure-board-verify.test.ts` 驗）─────────────
 
@@ -168,22 +171,6 @@ function report(boardName: string, boardId: string, total: number, diff: BoardDi
 
 // ── 主流程 ─────────────────────────────────────────────────────────────
 
-function loadEnv(): void {
-  for (const f of ['.env.local', '.env']) {
-    const p = resolve(ROOT, f)
-    if (existsSync(p)) { process.loadEnvFile(p); break }
-  }
-}
-
-function requireEnv(key: string): string {
-  const v = process.env[key]?.trim()
-  if (!v) {
-    // ⚠️ 只說「缺哪一個」，MUST NOT 印出任何已設定的值（B6）
-    throw new Error(`缺少環境變數 ${key} —— 請填進 .env.local`)
-  }
-  return v
-}
-
 async function main(): Promise<number> {
   loadEnv()
   const verify = process.argv.includes('--verify')
@@ -250,9 +237,17 @@ async function main(): Promise<number> {
   return isDiffClean(diff) ? 0 : 1
 }
 
-// ⚠️ 只在直接執行時跑 —— `test/closure-board-verify.test.ts` 會 import
-//    `diffBoardFields()`，那時不該連上任何平台
-if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('setup-closure-board.ts')) {
+/*
+  ⚠️ 只在直接執行時跑 —— `test/closure-board-verify.test.ts` 會 import
+     `diffBoardFields()`，那時不該連上任何平台。
+
+  ⚠️ 判斷交給 `harness.isMain()`：它比對的是**解析後的路徑**。
+     這裡原本寫的是 ``import.meta.url === `file://${process.argv[1]}` ``，
+     而 Windows 上前者是 `file:///D:/…`、後者是 `D:\…`，那個條件**恆為假** ——
+     整段全靠後面那個 `endsWith('setup-closure-board.ts')` 撐著，
+     於是任何同檔名的腳本都會誤觸 `main()` 並連上正式平台。
+*/
+if (isMain(import.meta.url)) {
   /*
     ⚠️ 用 `process.exitCode` 而不是 `process.exit()`：後者在 Windows ＋ tsx 下會在
        SDK 的 socket 還在關閉時強制結束，印出

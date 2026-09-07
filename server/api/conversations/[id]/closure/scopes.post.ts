@@ -16,18 +16,22 @@ import { loadConversationContext } from '../../../../services/conversation-conte
 import { operatorName } from '../../../../services/directory.js'
 import {
   buildCandidates,
+  cachedPageFetcher,
   countByCandidate,
   defaultIndex,
   messagePageFetcher,
+  oldestMessageAt,
 } from '../../../../services/closure/period.js'
+import type { ClosureScopesResponse } from '../../../../../shared/types/copilot.js'
 import { listClosuresFor } from '../../../../services/closure/board-repository.js'
-import { fetchLatest } from '../../../../sources/message-fetch.js'
 import { conversationIdParam } from '../../../../utils/conversation-param.js'
 import { imbraceClientFor } from '../../../../utils/imbrace-client.js'
 import { requireActiveBffSession } from '../../../../utils/session.js'
 import { requireClosureBoardId } from '../../../../services/closure/config.js'
 
-export default defineEventHandler(async (event) => {
+// ⚠️ 回傳型別 MUST 標註 —— store 是以 `$fetch<ClosureScopesResponse>()` 斷言的，
+//    沒有這個註記，兩邊分岔時哪一邊都不會報錯（見該型別的說明）。
+export default defineEventHandler(async (event): Promise<ClosureScopesResponse> => {
   const conversationId = conversationIdParam(event)
   const session = await requireActiveBffSession(event)
   const boardId = requireClosureBoardId()
@@ -37,26 +41,42 @@ export default defineEventHandler(async (event) => {
   if (!ctx) throw createError({ statusCode: 404, message: '找不到這個對話' })
 
   /*
-    最舊的一則訊息 —— `fallback`（「從第一則對話起算」）的起點，
-    也是「自訂起算時間」彈窗的可選下界。
+    ⚠️ **一個分頁快取餵兩種掃描**（2026-09-08 改）。`oldestMessageAt()` 與
+       `countByCandidate()` 都從 `skip=0` 由新往舊翻同一段歷史，以前各翻各的 ——
+       長期客戶開一次面板最多 15 次串行分頁請求，其中 5 次純屬重複。
+       共用快取後上限降到 10 次，而且下面的則數掃描幾乎全部命中快取。
+  */
+  const pages = cachedPageFetcher(messagePageFetcher(client, ctx.id))
+
+  /*
+    ⚠️ 最舊一則的掃描與 Board 查詢**互不相依，一律併行**：以前是串行 await，
+       Board 那一趟的往返時間白白加在面板開啟的等待上。
 
     ⚠️ 取不到（對話完全沒有訊息）時用 `now`：此時 fallback 的則數會是 0，
        畫面上會誠實地顯示「0 則」而不是一個編出來的日期。
   */
-  const firstMessageAt = await oldestMessageAt(client, ctx.id)
+  const [oldestAt, closuresResult] = await Promise.all([
+    oldestMessageAt(pages),
+    // R1.4：查詢失敗是失敗，不是「沒有結案紀錄」—— 但 MUST NOT 讓它在這裡逸出，
+    // 否則另一條 promise 的 rejection 會變成 unhandled（兩條都在飛）
+    listClosuresFor(client, boardId, ctx.id)
+      .then(rows => ({ ok: true as const, rows }))
+      .catch((err: unknown) => ({ ok: false as const, err })),
+  ])
 
-  let closures
-  try {
-    closures = await listClosuresFor(client, boardId, ctx.id)
-  }
-  catch (err) {
-    // R1.4：查詢失敗是失敗，不是「沒有結案紀錄」
+  if (!closuresResult.ok) {
     throw createError({
       statusCode: 502,
       message: '無法載入結案紀錄',
-      data: { reason: err instanceof Error ? err.message : String(err) },
+      data: {
+        reason: closuresResult.err instanceof Error
+          ? closuresResult.err.message
+          : String(closuresResult.err),
+      },
     })
   }
+  const closures = closuresResult.rows
+  const firstMessageAt = oldestAt ?? new Date().toISOString()
 
   const set = buildCandidates(
     closures,
@@ -64,9 +84,10 @@ export default defineEventHandler(async (event) => {
     id => (id ? operatorName(session.orgId, id) ?? id : ''),
   )
 
-  // ⚠️ **一趟**掃完所有候選與 fallback 的則數（憲法 6.4）
+  // ⚠️ **一趟**掃完所有候選與 fallback 的則數（憲法 6.4）。
+  //    `pages` 是上面那趟掃描的快取，這裡多半不會再打任何請求。
   const counts = await countByCandidate(
-    messagePageFetcher(client, ctx.id),
+    pages,
     [...set.candidates.map(c => c.start), set.fallback.start],
   )
   const all = [...set.candidates, set.fallback]
@@ -87,27 +108,3 @@ export default defineEventHandler(async (event) => {
     closureBaseline: closures.map(c => c.recordId),
   }
 })
-
-/**
- * 這個對話最舊一則訊息的時間。
- *
- * ⚠️ 走 `skip` 分頁往回翻到底 —— 平台**不支援**「取最舊 N 則」，
- *    而 `fetchLatest()` 的 `limit` 是從最新算起。上限與掃描上限同源，
- *    超過時取「掃得到的最舊那一則」：對長期客戶而言 fallback 本來就會是
- *    `truncated`（「超過 500 則」），起點稍晚不影響那個呈現。
- */
-async function oldestMessageAt(
-  client: ReturnType<typeof imbraceClientFor>,
-  conversationId: string,
-): Promise<string> {
-  const PAGE = 100
-  const MAX_PAGES = 10
-  let oldest: string | null = null
-  for (let page = 0; page < MAX_PAGES; page++) {
-    const chunk = await fetchLatest(client, conversationId, { limit: PAGE, skip: page * PAGE })
-    if (chunk.length === 0) break
-    oldest = chunk[0]!.at
-    if (chunk.length < PAGE) break
-  }
-  return oldest ?? new Date().toISOString()
-}

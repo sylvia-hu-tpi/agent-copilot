@@ -16,7 +16,7 @@
 
 import type { ImbraceClient } from '@imbrace/sdk'
 import type { Message } from '../../../shared/types/conversation.js'
-import type { ClosurePeriodOrigin } from '../../../shared/types/copilot.js'
+import type { ClosureScopeCandidate } from '../../../shared/types/copilot.js'
 import { CLOSURE_SCAN_LIMIT } from '../../../shared/types/copilot.js'
 import { fetchLatest } from '../../sources/message-fetch.js'
 import type { ClosureRecordRow } from './board-repository.js'
@@ -27,14 +27,13 @@ const SCAN_PAGE_SIZE = 100
 /** 候選清單最多列幾筆（FR-021b）。其餘的以 `overflowCount` 表達 */
 export const CANDIDATE_LIMIT = 5
 
-export interface ScopeCandidate {
-  start: string
-  origin: ClosurePeriodOrigin
-  messageCount: number | null
-  truncated: boolean
-  /** 只有 `origin === 'closure'` 的候選有 —— 讓客服認得出「那一次是誰結的、結成什麼」 */
-  label?: { category: string, reviewedByName: string, closedAt: string }
-}
+/**
+ * ⚠️ **定義在 `shared/types/copilot.ts`，這裡只是本地別名。**
+ *    這個形狀同時是 `POST /closure/scopes` 的回應內容與 store 讀的型別；
+ *    在這裡自己再宣告一份的話，改欄位名不會有任何型別錯誤，
+ *    UI 只會安靜地讀到 `undefined`。
+ */
+export type ScopeCandidate = ClosureScopeCandidate
 
 export interface CandidateSet {
   candidates: ScopeCandidate[]
@@ -99,6 +98,60 @@ export function messagePageFetcher(
     return page.map(m => m.at)
   }
 }
+
+/**
+ * 把同一組分頁的結果記下來，讓多個掃描共用一趟往返。
+ *
+ * ⚠️ 這支存在的理由是 `scopes.post.ts` 要對**同一段歷史**跑兩種掃描：
+ *    `oldestMessageAt()` 找最舊一則、`countByCandidate()` 算各候選的則數。
+ *    兩者都從 `skip=0` 由新往舊翻同樣的頁，以前是各翻各的 ——
+ *    面板開一次最多打 15 次串行分頁請求，其中 5 次是純重複。
+ *
+ * ⚠️ 快取以 `skip:limit` 為鍵，**只在同一次請求內有效**（呼叫端每次自己建一個）。
+ *    跨請求共用會讓「面板開啟時看到的則數」凍結在第一次開啟的那一刻，
+ *    而客服完全看不出畫面是舊的。
+ */
+export function cachedPageFetcher(inner: MessagePageFetcher): MessagePageFetcher {
+  const cache = new Map<string, Promise<string[]>>()
+  return (skip, limit) => {
+    const key = `${skip}:${limit}`
+    const hit = cache.get(key)
+    if (hit) return hit
+    // ⚠️ 存 Promise 而非結果 —— 存結果的話兩個併發的掃描會各送一次請求
+    const p = inner(skip, limit)
+    cache.set(key, p)
+    return p
+  }
+}
+
+/**
+ * 這個對話最舊一則訊息的時間 —— `fallback`（「從第一則對話起算」）的起點，
+ * 也是「自訂起算時間」彈窗的可選下界。
+ *
+ * ⚠️ 走 `skip` 分頁往回翻到底 —— 平台**不支援**「取最舊 N 則」，
+ *    而 `fetchLatest()` 的 `limit` 是從最新算起（§6.4）。
+ * ⚠️ 上限 `SCAN_MAX_PAGES` 頁；超過時取「掃得到的最舊那一則」：對長期客戶而言
+ *    fallback 本來就會是 `truncated`（「超過 500 則」），起點稍晚不影響那個呈現。
+ * ⚠️ 這個上限**刻意大於** `CLOSURE_SCAN_LIMIT`（則數掃描的上限）：則數只需要數到
+ *    500 就能回報「數不完」，但 fallback 的**起點**要盡量真實 —— 兩者是不同的用途，
+ *    以前的註解寫成「上限與掃描上限同源」是錯的（2026-09-08 訂正）。
+ *
+ * @returns 最舊一則的時間戳；對話完全沒有訊息時回 `null`
+ */
+export async function oldestMessageAt(fetchPage: MessagePageFetcher): Promise<string | null> {
+  let oldest: string | null = null
+  for (let page = 0; page < SCAN_MAX_PAGES; page++) {
+    const chunk = await fetchPage(page * SCAN_PAGE_SIZE, SCAN_PAGE_SIZE)
+    if (chunk.length === 0) break
+    // `fetchPage` 回的是由舊到新，因此這一頁最舊的是第一筆
+    oldest = chunk[0]!
+    if (chunk.length < SCAN_PAGE_SIZE) break
+  }
+  return oldest
+}
+
+/** `oldestMessageAt()` 最多往回翻幾頁 —— 見該函式對「為何不與掃描上限同源」的說明 */
+const SCAN_MAX_PAGES = 10
 
 export interface CountResult {
   messageCount: number | null

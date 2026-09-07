@@ -52,18 +52,21 @@ function safeWrite(conversationId: string, collapsed: boolean): void {
   }
 }
 
-/**
- * 進入結案時保存的五塊狀態（`docs/DESIGN_TOKENS.md` §7.4「五塊的來回」）。
- *
- * ⚠️ **刻意不持久化**（與上面的 `collapsed` 不同）：它跟著結案狀態同生共死。
- *    存進 `localStorage` 的話，重新整理後結案已經被取消（FR-040），
- *    卻還留著一份「結案時的收合組合」等著被還原 —— 那份資料再也沒有主人。
- */
-export interface PanelSavedLayout {
-  /** 進入結案前各區塊的展開組合（由 page 提供，key 為區塊 id） */
-  open: Record<string, boolean>
-  scroll: number
-}
+/*
+  ⚠️ **`PanelSavedLayout`／`saved`／`scrollTop`／`rememberOpenState()` 與那個
+     `watch(variant)` 已於 2026-09-08 移除 —— 它們是死程式碼。**
+
+     整套機制沒有任何呼叫端：page 從來沒有繫結 `scrollTop`、也從來沒有呼叫
+     `rememberOpenState()`，因此 `saved.open` 恆為 `{}`、`scroll` 恆為 0。
+     `docs/DESIGN_TOKENS.md` §7.4 描述的「五塊的來回、取消結案與寫入成功都原樣還原」
+     於是是一份**從未生效過的契約**：下一個人要嘛以為它已經在運作，
+     要嘛去 debug 為什麼收合狀態沒有被還原。
+
+     ⚠️ 更根本的問題是它本來就還原不了：page 是用 `v-if`／`v-else` 依 `variant`
+     切換那四個區塊的，元件會被**卸載重掛**，內部狀態不是「被覆蓋」而是「不存在了」。
+     真要做這件事，得先把區塊狀態提到 page 或 store，再連同呼叫端一起加回來 ——
+     只把這幾個欄位放回來不會有任何效果。
+*/
 
 export function useCopilotPanel(
   conversationId: Ref<string>,
@@ -86,26 +89,6 @@ export function useCopilotPanel(
   const variant = computed<'expanded' | 'closing'>(() =>
     (closing?.value ? 'closing' : 'expanded'))
 
-  /**
-   * 進入結案前的五塊狀態。⚠️ **取消結案與寫入成功都原樣還原** ——
-   * 結案成功後接著按「離開」會關掉整個面板，下次接手時打開的必須是乾淨的原狀。
-   */
-  const saved = ref<PanelSavedLayout | null>(null)
-
-  /** 結案面板本身一律從頂端開始捲（畫布逐字：`scrollTop = 0`） */
-  const scrollTop = ref(0)
-
-  watch(variant, (next, prev) => {
-    if (next === 'closing' && prev !== 'closing') {
-      saved.value = { open: {}, scroll: scrollTop.value }
-      scrollTop.value = 0
-    }
-    else if (next === 'expanded' && prev === 'closing') {
-      scrollTop.value = saved.value?.scroll ?? 0
-      saved.value = null
-    }
-  })
-
   // 切換對話時重讀該對話自己的偏好（未存過 → 展開）
   watch(conversationId, (id) => {
     collapsed.value = id ? safeRead(id) : false
@@ -124,10 +107,5 @@ export function useCopilotPanel(
     collapsed.value = !collapsed.value
   }
 
-  /** 由 page 在進入結案前把各區塊的展開組合交進來（見 `PanelSavedLayout`） */
-  function rememberOpenState(open: Record<string, boolean>): void {
-    if (saved.value) saved.value = { ...saved.value, open }
-  }
-
-  return { visible, collapsed, toggle, variant, saved, scrollTop, rememberOpenState }
+  return { visible, collapsed, toggle, variant }
 }
