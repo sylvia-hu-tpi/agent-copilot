@@ -6,6 +6,10 @@
  * ── 三個容易寫錯的地方 ───────────────────────────────────────────
  * ⚠️ ① **訊息必須以 id 去重。** 後端在錨點找不到時（斷線太久被 N 則的視窗擠出去）
  *    會回傳整批，寧可重送也不漏送。前端如果直接 append 就會看到重複的訊息。
+ *    ⚠️ 「**有沒有新訊息**」這個問題 MUST 用同一份去重結果回答（`merge()` 的回傳值），
+ *    MUST NOT 以「`messages.appended` 到了」代替 —— 否則每一次整批重送都會被判成
+ *    有新內容（2026-09-07：結案面板憑空冒出過期提示的根因，
+ *    完整因果寫在 `app/utils/message-merge.ts` 的檔頭）。
  *
  * ⚠️ ② **`mode` 不可快取。** 它是對話層級的共用狀態，同事在官方介面切換
  *    我方也要跟著變（§10.6）。因此一律以 SSE 的 `control.updated` 為準，
@@ -91,14 +95,15 @@ export function useConversationView(conversationId: Ref<string>) {
    *
    * 後端的 `fetchSince()` 在錨點失效時回傳整批（寧可重送也不漏送，§9.4），
    * 所以這裡一定會收到已經有的訊息 —— 直接 append 的話畫面上會出現重複。
+   *
+   * @returns 這次**真正新增**的則數。⚠️ 凡是要回答「有沒有新訊息」的呼叫端
+   *          MUST 用這個回傳值，MUST NOT 以「事件到了」代替 —— 理由與那個
+   *          缺陷的實際症狀寫在 `app/utils/message-merge.ts` 的檔頭。
    */
-  function merge(incoming: Message[]): void {
-    if (incoming.length === 0) return
-    const byId = new Map(messages.value.map(m => [m.id, m]))
-    for (const m of incoming) byId.set(m.id, m)
-    messages.value = [...byId.values()].sort(
-      (a, b) => new Date(a.at).getTime() - new Date(b.at).getTime(),
-    )
+  function merge(incoming: Message[]): number {
+    const result = mergeMessages(messages.value, incoming)
+    messages.value = result.messages
+    return result.added
   }
 
   // ── 載入 ──────────────────────────────────────────────────────────
@@ -174,15 +179,23 @@ export function useConversationView(conversationId: Ref<string>) {
     if (!('conversationId' in evt) || evt.conversationId !== conversationId.value) return
 
     switch (evt.type) {
-      case 'messages.appended':
-        merge(evt.messages)
+      case 'messages.appended': {
+        const added = merge(evt.messages)
         /*
           ⚠️ 結案期間有新訊息**只標記過期，MUST NOT 自動重新產生摘要**（FR-020／FR-044）。
              自動重產會讓客服正在編輯的內容被無聲蓋掉，而且每一則新訊息都多跑一次 AI。
              「要不要把它納入摘要」是客服的決定，畫面上只提供那個提示。
+
+          ⚠️ **判斷依據 MUST 是 `added > 0`，MUST NOT 是「事件到了」**（2026-09-07 回報）：
+             `messages.appended` 的契約允許整批重送（見檔頭 ①），而 pipeline 每次因
+             `{priority, joined}` 改變被拆掉重建（切走再切回、分頁切到背景、SSE 重連）
+             錨點都會歸零 —— 於是整段歷史被當成新訊息推上來，畫面憑空冒出
+             「對話有新內容，建議重新產生」。訊息列表當年就是為了同一個原因去重的，
+             這一行只是補上它漏掉的那一半。
         */
-        if (evt.conversationId) closure.markStale(evt.conversationId)
+        if (added > 0 && evt.conversationId) closure.markStale(evt.conversationId)
         break
+      }
       case 'presence.updated':
         presence.value = evt.presence
         break
