@@ -270,6 +270,36 @@ const failMeta = computed(() => {
       })
 })
 
+/**
+ * 候選查詢失敗的**真正原因**（R1.4）。
+ *
+ * ⚠️ 固定文案只說得出「查不到這個對話過去的結案紀錄……請重試」，但 `loadScopes()`
+ *    把**任何**失敗都收斂成 `scopesError`：設定缺失（500）、找不到對話（404）、
+ *    Board 查詢真的失敗（502）在畫面上長得一模一樣，而只有最後一種重試才有意義。
+ *    2026-09-08 的實例：`IMBRACE_CLOSURE_BOARD_ID` 沒填，每一個對話按結案都回 500，
+ *    畫面卻說「這不代表沒有結案過，請重試」—— 重試一萬次都不會好，
+ *    而截圖裡沒有任何線索指向設定。
+ *
+ * ⚠️ 原因**本來就在** `error.message` 裡（store 的 `messageOf()` 早就取出來了），
+ *    只是沒有任何地方顯示它。這裡比照 B7／B8 的 `failMeta` 把它露出來 ——
+ *    客服未必看得懂那句技術訊息，但看不懂也比看到一句錯的好：至少轉給 IT 的截圖是對的。
+ *
+ * ⚠️ 這條路徑**沒有** `reqId`（那是寫入三步才有的，FR-035a），因此樣板只有時間與原因，
+ *    MUST NOT 為了與 `failMeta` 對稱而補一個 `—` 上去 —— 那會讓人以為它有而取不到。
+ */
+const scopesErrorMeta = computed(() => {
+  const err = session.value?.error
+  if (!err) return ''
+  const time = new Intl.DateTimeFormat(locale.value, {
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).format(new Date(err.at))
+  // ⚠️ `err.message` 為空 ＝ 從回應裡取不到原因，與 `failMeta` 同一個判斷與同一句補字
+  return t('closure.scopesError.meta', {
+    time,
+    reason: err.message || t('closure.fail.unknownReason'),
+  })
+})
+
 const failFallback = computed(() => {
   if (failKind.value !== 'unverified') return t('closure.fail.failed.fallback')
   return t('closure.fail.unverified.fallback', {
@@ -367,6 +397,17 @@ async function onCommit(): Promise<void> {
         <p class="text-[0.9063rem] font-medium">{{ $t('closure.scopesError.title') }}</p>
         <p class="mt-1 text-[0.875rem] leading-relaxed" :style="{ color: 'var(--text-2)' }">
           {{ $t('closure.scopesError.body') }}
+        </p>
+        <!--
+          真正的原因（見 `scopesErrorMeta` 的說明）。取不到就整行不出現 ——
+          MUST NOT 留一個只有時間的空殼，那會讓人以為原因是「沒有原因」。
+        -->
+        <p
+          v-if="scopesErrorMeta"
+          class="ac-mono mt-1.5 text-[0.8125rem] break-all"
+          :style="{ color: 'var(--text-3)' }"
+        >
+          {{ scopesErrorMeta }}
         </p>
         <UButton size="xs" class="mt-2" color="neutral" variant="outline" @click="onRetryScopes">
           {{ $t('closure.buttons.retry') }}
