@@ -43,6 +43,10 @@ function closure(closedAt: string, over: Partial<ClosureRecordRow> = {}): Closur
     category: '發票補寄',
     reviewedBy: 'u_1',
     createdAt: iso(closedAt),
+    // 候選推導不看情緒欄；補上只為滿足型別（見 ClosureRecordRow 的說明）
+    sentimentStart: null,
+    sentimentEnd: null,
+    sentimentTrough: null,
     ...over,
   }
 }
@@ -202,6 +206,7 @@ describe('R1.3：超過 500 則 → messageCount 為 null ＋ truncated，且序
       recordId: 'rec_recent', itemId: 'bi_recent', draftId: 'draft_recent',
       conversationId: 'conv_1', closedAt: recentClosureAt, category: '發票補寄',
       reviewedBy: 'u_1', createdAt: recentClosureAt,
+      sentimentStart: null, sentimentEnd: null, sentimentTrough: null,
     }
     const set = buildCandidates([recent], messages[0]!, resolveName)
     const counts = await countByCandidate(

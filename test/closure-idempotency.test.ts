@@ -268,6 +268,10 @@ describe('R3.10：newClosuresSincePanelOpen 只列面板開啟後新出現的紀
     category: '訂單查詢',
     reviewedBy: 'u_other',
     createdAt: '2026-09-03T11:00:00.000Z',
+    // 基準線比對不看情緒欄；補上只為滿足型別（見 ClosureRecordRow 的說明）
+    sentimentStart: null,
+    sentimentEnd: null,
+    sentimentTrough: null,
     ...over,
   })
 

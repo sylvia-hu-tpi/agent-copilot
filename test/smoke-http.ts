@@ -20,17 +20,19 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
-import { startMockGateway, type MockGateway } from './mock-gateway.js'
-import { MOCK_SECRETS } from './redact-assert.js'
+import { MOCK_CONV_BARE, startMockGateway, type MockGateway } from './mock-gateway.js'
+import { leakedSecrets } from './redact-assert.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
 /**
- * ⚠️ 自 2026-09-04（specs/006）起與 `test/redact-assert.ts` 共用同一份清單 ——
- *    寫入失敗路徑的憑證掃描在 vitest 那邊，兩份清單分岔的話會有一邊掃不到東西。
+ * 假 gateway 的探測用對話。
+ *
+ * ⚠️ **MUST 從 `mock-gateway.ts` import，MUST NOT 再抄一次字面值**（2026-09-08 改）。
+ *    以前這裡寫死一串 UUID 並用註解宣稱它等於 `MOCK_CONV_BARE` —— 而那個常數
+ *    正是為了「測試共用同一組值」才匯出的。兩份差一個字元的症狀是 smoke 收到 404／401，
+ *    與 route 真的壞掉完全分不出來（§9.3 的失效形態）。
  */
-const SECRETS = MOCK_SECRETS
-/** 假 gateway 的探測用對話（與 `test/mock-gateway.ts` 的 `MOCK_CONV_BARE` 同一個） */
-const CONV_ID = '68e39cf1-68df-47a0-9e68-6e19c72eff8a'
+const CONV_ID = MOCK_CONV_BARE
 
 let failures = 0
 
@@ -42,7 +44,13 @@ function check(label: string, ok: boolean, detail = ''): void {
 /** M0 驗收：憑證絕不可出現在任何回應中（body 或 cookie） */
 function assertNoSecrets(label: string, body: string, setCookie: string[]): void {
   const haystack = `${body}\n${setCookie.join('\n')}`
-  const leaked = SECRETS.filter(s => haystack.includes(s))
+  /*
+    ⚠️ 掃描邏輯共用 `redact-assert.ts` 的 `leakedSecrets()`，本檔 MUST NOT 自己再寫一份
+       （2026-09-08 改）。以前這裡內聯了一段逐字相同的 `filter`，於是
+       「要不要忽略大小寫、要不要比對 URL 編碼」這種改動會只落在其中一邊，
+       而另一邊仍然回報「沒有外洩」。
+  */
+  const leaked = leakedSecrets(haystack)
   check(`${label}：回應不含任何 token`, leaked.length === 0, leaked.join(', '))
 }
 

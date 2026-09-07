@@ -683,10 +683,29 @@ describe('006 FR-045：PresenceState 維持三值，closing 與 state 正交', (
     const view = stripComments(readFileSync(resolve(ROOT, 'app/composables/useConversationView.ts'), 'utf8'))
     const beats = [...view.matchAll(/'\/api\/presence'/g)]
     expect(beats.length, 'presence 心跳的呼叫點抓不到 —— 守衛會恆真').toBeGreaterThan(0)
-    // 每一個 body 裡都要有 closing —— 用出現次數比對是近似的，但方向是漏抓不是誤抓
-    const closingCount = [...view.matchAll(/\bclosing:/g)].length
-    expect(closingCount, `presence 呼叫有 ${beats.length} 處，closing 只出現 ${closingCount} 次`)
-      .toBeGreaterThanOrEqual(beats.length)
+
+    /*
+      ⚠️ **把檔案依呼叫點切成互斥的區段，每一段各自要有 `closing:`**（2026-09-08 改）。
+
+      舊寫法是「`closing:` 的總數 ≥ `/api/presence` 的總數」，於是檔案裡任何一個
+      無關的 `closing:`（含另一處的 `closing: false`）都能把數字補滿 ——
+      真的漏帶一處時守衛照樣是綠的。切成區段之後，每個 `closing:` 只算給一個呼叫點。
+
+      ⚠️ 用「前一個呼叫點之後到這一個之間」而不是「這一個之後的 N 個字」：
+         `sendBeacon()` 那一處是**先組好 body、再把 URL 當參數傳**，
+         往後看的視窗會剛好錯過它自己的 `closing:`（第一版守衛就是這樣誤報的）。
+
+      ⚠️ 這仍是靜態近似，但方向仍是漏抓不是誤抓，而且現在指得出是哪一處。
+         server 端那一半已由型別保證：`reportViewing()` 的 `closing` 沒有預設值。
+    */
+    const at = beats.map(m => m.index ?? 0)
+    const missing = at.filter((pos, i) => {
+      const from = i === 0 ? 0 : at[i - 1]! + 1
+      return !/\bclosing:/.test(view.slice(from, pos))
+        && !/\bclosing:/.test(view.slice(pos, at[i + 1] ?? view.length))
+    })
+    expect(missing, `這些 /api/presence 呼叫點的 body 沒帶 closing（字元位置）：${missing.join('、')}`)
+      .toEqual([])
   })
 
   it('server 端把 closing 一路帶到 PresenceEntry（不是收下就丟掉）', () => {

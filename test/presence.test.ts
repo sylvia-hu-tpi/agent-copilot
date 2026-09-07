@@ -106,7 +106,7 @@ describe('來源合併', () => {
 
   it('② 不可覆蓋同一個人的 ① —— 那是資訊降級', async () => {
     const s = makeStore()
-    await reportViewing(s, CONV, { id: 'u_lee', name: '李小華' }, 'composing', true)
+    await reportViewing(s, CONV, { id: 'u_lee', name: '李小華' }, 'composing', true, false)
     await inferFromMessages(s, CONV, [agentMessage('m1', 'u_lee')], { orgId: ORG })
 
     const [entry] = await s.listPresence(CONV)
@@ -133,8 +133,8 @@ describe('來源合併', () => {
 
   it('snapshotOf 把自己排除掉 —— PresenceBar 回答的是「還有誰」', async () => {
     const s = makeStore()
-    await reportViewing(s, CONV, { id: 'u_me', name: '我' }, 'viewing', false)
-    await reportViewing(s, CONV, { id: 'u_lee', name: '李小華' }, 'viewing', false)
+    await reportViewing(s, CONV, { id: 'u_me', name: '我' }, 'viewing', false, false)
+    await reportViewing(s, CONV, { id: 'u_lee', name: '李小華' }, 'viewing', false, false)
 
     const snap = await snapshotOf(s, CONV, { mode: 'manual', excludeOperatorId: 'u_me' })
     expect(snap.operators.map(o => o.operatorId)).toEqual(['u_lee'])
@@ -143,7 +143,7 @@ describe('來源合併', () => {
   it('① 排在 ② 前面 —— 可信度高的先顯示', async () => {
     const s = makeStore()
     await inferFromMessages(s, CONV, [agentMessage('m1', 'u_lee')], { orgId: ORG })
-    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'composing', true)
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'composing', true, false)
 
     const snap = await snapshotOf(s, CONV, { mode: 'manual' })
     expect(snap.operators.map(o => o.source)).toEqual(['sse', 'message'])
@@ -151,7 +151,7 @@ describe('來源合併', () => {
 
   it('viewerJoined 未明講時，從自己的 presence 條目推得出來', async () => {
     const s = makeStore()
-    await reportViewing(s, CONV, { id: 'u_me', name: '我' }, 'joined', true)
+    await reportViewing(s, CONV, { id: 'u_me', name: '我' }, 'joined', true, false)
 
     const snap = await snapshotOf(s, CONV, { mode: 'manual', excludeOperatorId: 'u_me' })
     // 我 JOIN 了 → manual 是我造成的 → 不可報告「有同事」
@@ -181,11 +181,16 @@ describe('FR-045：composing 不會把 closing 覆寫成 false', () => {
     expect(entry?.joined).toBe(true)
   })
 
-  it('⚠️ 心跳漏帶 closing 就會被清成 false —— 這正是它 MUST 每次都帶的理由', async () => {
+  it('⚠️ 心跳帶錯 closing 就會被清成 false —— 這正是它 MUST 每次都帶對的理由', async () => {
+    /*
+      ⚠️ 2026-09-08：`closing` 的預設值已被拿掉，因此「**漏帶**」現在是 tsc 錯誤，
+         在這裡示範不出來了。這條測試改為驗「帶錯值」——整筆覆寫的語意不變，
+         而那才是這顆地雷真正的形狀（`joined` 當年也是被覆寫掉的，不是被省略掉的）。
+    */
     const s = makeStore()
     await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'viewing', true, true)
-    // 模擬「只在進入結案時帶一次」的錯誤寫法
-    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'composing', true)
+    // 模擬「只在進入結案時帶一次、其餘心跳沿用 false」的錯誤寫法
+    await reportViewing(s, CONV, { id: 'u_wang', name: '王大明' }, 'composing', true, false)
 
     const snap = await snapshotOf(s, CONV, { mode: 'manual' })
     expect(snap.operators.find(o => o.operatorId === 'u_wang')?.closing).toBe(false)
