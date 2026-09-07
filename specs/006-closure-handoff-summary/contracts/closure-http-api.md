@@ -107,6 +107,11 @@
 
 `ClosureDraft`（見 data-model §2）。`draftId` **由本端點以 `crypto.randomUUID()` 產生**。
 
+⚠️ `period.firstCustomerAt` 是**區間內第一則客戶文字發言**的時間（無則為 `null`）。
+它與 `period.messageCount` 一樣是本次快照的事實，前端 MUST 原樣保存並在 commit 時帶回 ——
+`commit` 端點受 R3.3 限制不得讀訊息，情緒涵蓋判定（R2.4）沒有它就只能退回比 `periodStart`，
+而那會讓回頭客的三個情緒欄恆為空。
+
 ### 硬性規則
 
 - **R2.1（FR-020）** 訊息快照 MUST 在**本次請求內**取得。
@@ -117,12 +122,28 @@
 - **R2.3（FR-022、FR-022a）** `readonly.sentiment*` MUST 只由**區間內**的
   `CopilotAnalysisState.sentimentBlock.timeline` 的 point 算出。
   ⚠️ **MUST NOT 讀 `sentimentBlock.stats.lowestScore`** —— 那是整條時間軸的最低點。
-- **R2.4（FR-022b）** 區間起點未被 timeline 涵蓋時，三個數值 MUST 一起為 `null`
-  且 `sentimentNote` MUST 有值。三者部分有值是實作錯誤。
+- **R2.4（FR-022b）** timeline 未涵蓋到**區間內第一則客戶文字發言**時，三個數值 MUST 一起為
+  `null` 且 `sentimentNote` MUST 有值。三者部分有值是實作錯誤。
+  ⚠️ **比較對象 MUST 是 `period.firstCustomerAt`，MUST NOT 是 `periodStart`**（2026-09-08 訂正）。
+  `periodStart` 是客服選的時間戳，`closure` origin 取的是上一次結案時間 —— 回頭客隔幾天回來時，
+  中間那段沒有任何訊息，區間內每一個評分點都必然晚於它，判定於是**恆為「未涵蓋」**，
+  三個情緒欄永遠是空的，而資料其實是完整的。真正要防的是「區間前半段有訊息但沒被評分」
+  （冷啟動只讀最新 50 則、或 2 小時 sliding TTL 已回收），那唯一的判別依據就是
+  區間內第一則客戶文字發言有沒有被評到。
 - **R2.5（FR-015、憲法 4.6）** 模型回的受控詞彙不在 `config/categories.ts` 白名單內時，
   **該欄位留空**（空字串／空陣列），MUST NOT 寫入模型自由生成的值。
 - **R2.6（FR-046）** 產生失敗 MUST 回 **502**，MUST NOT 回一份欄位全空的 200。
-- **R2.7（憲法 4.3）** `citedSopIds` MUST 經白名單後驗；不在檢索命中內者丟棄該 id。
+- **R2.7（憲法 4.3、2026-09-08 改）** `citedSopIds` MUST **由 server 以本次知識庫檢索命中直接填入**，
+  MUST NOT 取自模型輸出。理由：結案 agent 的 system prompt 逐字列出
+  「不要輸出 `citedSopIds` —— 由系統填入」，因此舊做法（把命中當白名單去過濾模型輸出）
+  永遠在過濾一個空清單 —— 正式環境的欄位恆為空、面板區塊恆不顯示，
+  只有退回 `MockAIProvider` 的環境看得到值。面板只提供「移除」而沒有「新增」，
+  本來就是為「系統先填、客服再刪」設計的。
+  ⚠️ 對外文案 MUST 是「**相關的**知識庫來源」而非「引用的」—— 模型沒看過這份清單，
+  寫成「引用」是在稽核紀錄上宣稱一件沒有發生過的事。
+  ⚠️ 檢索與 AI 呼叫因此互不相依，MUST 併行（舊寫法是串行 await，白等一次檢索）。
+  ⚠️ 要改成「讓模型自己挑」的話，MUST 先改 iMBrace 後台的 system prompt ——
+  那不在這個 repo 裡，改了不會有 commit（CLAUDE.md 地雷 4）。
 - **R2.8（憲法 1.5）** 錯誤訊息與日誌 MUST NOT 含訊息全文。
 - **R2.9（FR-046a、SC-004）** 本端點**不設固定秒數上限** —— 耗時由涵蓋區間長度決定
   （實測短區間中位數 9.4 秒，長區間逾 1 分鐘可接受）。
@@ -130,6 +151,10 @@
   MUST NOT 在完成前顯示完成訊號、**MUST 全程可取消**（FR-040a）。
   ⚠️ 取消 MUST 真的中止在途的 AI 呼叫（比照 `server/services/blocks/suggestion.ts` 的
   `tailAbort`），MUST NOT 只是把畫面關掉 —— 後者的呼叫照送、錢照付、結果無人看，且不會報錯。
+  ⚠️ **斷線偵測 MUST 掛在 `event.node.res` 的 `close` 上，MUST NOT 掛在 `event.node.req`**
+  （2026-09-08 修，Node v24.19 實測）：`IncomingMessage` 在 **body 被讀完的當下**就發出
+  `close`，因此 `readBody()` 之後才註冊的 listener **永遠不會觸發** —— 取消從來沒有中止過
+  任何呼叫，499 分支不可達。移到 `readBody()` 之前也是錯的：那樣每一個正常請求都會 abort。
 
 ---
 
@@ -143,6 +168,10 @@
 {
   "draftId": "…",
   "periodStart": "…", "periodOrigin": "closure", "periodMessageCount": 25,
+  // ⚠️ 區間內第一則客戶文字發言；null ＝ 區間內客戶沒有文字發言。
+  //    與 periodMessageCount 同屬「本次快照的事實」，由 draft 端算好、前端原樣帶回。
+  //    本端點受 R3.3 限制不得讀訊息，因此**自己算不出來**（見 R2.4）。
+  "periodFirstCustomerAt": "2026-09-04T02:00:00.000Z",
   "summary": "…", "intent": "…", "category": "…",
   "resolution": "resolved", "actionsTaken": ["…"],
   "sentimentOutcome": "appeased", "citedSopIds": ["…"], "followUps": [],

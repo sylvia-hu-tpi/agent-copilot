@@ -294,6 +294,21 @@ Task: "T028 ClosureLeaveFailedBanner.vue"
 
 ---
 
+## ⚠️ 2026-09-08 審查後的四處訂正（本檔的任務敘述**保留原文不改**，但下列四點已被推翻）
+
+> 本檔是**已完成任務的紀錄**，不是實作規格 —— 逐條改寫會失去「當時是怎麼想的」。
+> 但下面四點若照本檔的字面重做一次，會把已修好的缺陷再放回去，因此在這裡集中標示。
+> 正典以 `contracts/closure-http-api.md`、`data-model.md` 與程式碼註解為準。
+
+| 原任務 | 本檔寫的 | 現況（2026-09-08 起） |
+|---|---|---|
+| T003／T007／T020 | `summarizeClosure({ …, knowledgeHits, signal })`；`citedSopIds` 取 `knowledgeHits` 前兩個 | **不再收 `knowledgeHits`**。結案 agent 的 system prompt 逐字禁止它輸出 `citedSopIds`，該欄位改由 route 以檢索命中直接填入，檢索與 AI 呼叫並行（契約 R2.7） |
+| T006 | `parseClosureDraftAiPart(raw, vocabulary, knowledgeHitIds)`；`citedSopIds` 不在命中內者丟棄 | 簽章去掉第三個參數，schema 也不再含 `citedSopIds` —— 那道後驗永遠在過濾一個空清單 |
+| T011 | `sentimentRange(timeline, periodStart)`；最早一點晚於 **`periodStart`** 即判未涵蓋 | 改比 **區間內第一則客戶文字發言**（`period.firstCustomerAt`，第三個參數）。比 `periodStart` 會讓回頭客的三個情緒欄恆為空（契約 R2.4） |
+| T020 | `signal` 綁 `event.node.req.on('close')` | 改綁 **`event.node.res`** 的 `close` 並以 `writableEnded` 排除正常結束。Node 24 實測：`req` 的 `close` 在 body 讀完當下就發出，`readBody()` 之後掛的 listener 永遠不會觸發，取消從未生效過（契約 R2.9） |
+
+---
+
 ## Notes
 
 - **[P]** ＝ 不同檔案、不依賴未完成任務

@@ -47,6 +47,16 @@ export interface ClosurePeriod {
   messageCount: number | null
   /** 掃描上限截斷時為 true —— UI 逐字呈現「超過 500 則」（憲法 4.5：不猜） */
   truncated: boolean
+  /**
+   * 區間內**第一則客戶文字發言**的時間；`null` ＝ 區間內客戶沒有文字發言。
+   *
+   * ⚠️ 它是情緒涵蓋判定（契約 R2.4）唯一正確的比較對象，MUST NOT 改用 `start`：
+   *    `start` 是客服選的時間戳，可能落在一段沒人說話的空白期裡，
+   *    拿它比會把「這段期間客戶本來就沒發言」誤判成「評分資料漏了」。
+   * ⚠️ 與 `messageCount` 同屬「本次快照的事實」，由 `draft` 端算出、前端原樣帶回 ——
+   *    `commit` 端點不得 import 任何取數模組（R3.3、守衛 G1），自己算不出來。
+   */
+  firstCustomerAt: string | null
 }
 ```
 
@@ -88,7 +98,7 @@ export interface ClosureDraft {
   resolution: ClosureResolution     // 受控詞彙
   actionsTaken: string[]            // 受控詞彙（多選）
   sentimentOutcome: ClosureSentimentOutcome  // 受控詞彙
-  citedSopIds: string[]
+  citedSopIds: string[]              // ⚠️ 由 server 以檢索命中填入，非模型輸出（2026-09-08）
   followUps: Array<{ action: string, owner?: string, dueHint?: string }>
 
   // ── 唯讀欄位（FR-010a）——由系統計算，客服 MUST NOT 能改 ──
@@ -125,7 +135,7 @@ export interface ClosureDraftReadonly {
 |---|---|---|
 | `category`／`resolution`／`actionsTaken`／`sentimentOutcome` | MUST ∈ `config/categories.ts` 的白名單 | 模型給的值不在白名單 → **該欄位留空**並要求客服選擇（憲法 4.6、FR-015）。MUST NOT 寫入模型自由生成的值 |
 | `summary`／`intent` | 非空字串 | 模型回空 → 整份草稿視為產生失敗（FR-046），比照 `ConversationSummary` 的 `intent.min(1)` |
-| `citedSopIds` | 白名單後驗（憲法 4.3） | 不在檢索命中內者**丟棄該 id**，不丟棄整份草稿 |
+| `citedSopIds` | **由 server 以本次知識庫檢索命中直接填入**（2026-09-08 改，契約 R2.7） | 不適用 —— 值不再來自模型，因此沒有可丟棄的 id。⚠️ 舊規則是「以檢索命中為白名單過濾模型輸出」，但結案 agent 的 system prompt 逐字禁止它輸出這個欄位，那道後驗永遠在過濾一個空清單：正式環境的欄位恆為空，只有退回 Mock 的環境看得到值 |
 | `sentimentStart/End/Trough` | 三者**同時**有值或**同時**為 null | 只有部分有值 → 視為實作錯誤，三者一律轉 null 並填 `sentimentNote` |
 | `followUps[].action` | 非空字串 | 丟棄該筆 |
 
@@ -136,7 +146,7 @@ export interface ClosureDraftReadonly {
 
 ## 3. `ClosureSummary` —— 正式結案紀錄
 
-已定義於 `docs/ARCHITECTURE.md` §11.5（尚未落到程式碼）。本規格落地時 **MUST 一併新增 `periodOrigin` 一欄**（research #21）。
+已定義於 `docs/ARCHITECTURE.md` §11.5。**2026-09-08 起以下區塊已與 `shared/types/copilot.ts` 對齊**（此前寫的是「尚未落到程式碼」，而 §11.5 與型別在 2026-09-04 就已落地並改成 nullable，留著會讓下一個依它實作的人把已完成的事當成待辦）。
 
 ```ts
 export interface ClosureSummary {
@@ -144,7 +154,7 @@ export interface ClosureSummary {
   draftId: string
   conversationId: string          // ⚠️ 可重複的索引，不是唯一鍵
   periodStart: string
-  periodMessageCount: number
+  periodMessageCount: number | null   // null ＝ 超過掃描上限，數不完（不是 0）
   periodOrigin: 'closure' | 'first' | 'custom'   // 🆕 本規格新增
   channel: string
   contactId: string
@@ -157,20 +167,22 @@ export interface ClosureSummary {
   resolution: 'resolved' | 'workaround' | 'escalated' | 'unresolved' | 'customer_abandoned'
   actionsTaken: string[]
   sentimentOutcome: 'appeased' | 'satisfied' | 'still_negative' | 'escalated'
-  sentimentStart: number
-  sentimentEnd: number
-  sentimentTrough: number
+  // ⚠️ 四個數值欄一律 nullable（FR-022b）—— 非 nullable 會逼實作者填 0，正是該條禁止的事
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null
+  sentimentNote: string | null       // 🆕 有值 ⇔ 上面三個一起留空
   citedSopIds: string[]
   followUps: Array<{ action: string, owner?: string, dueHint?: string }>
-  confidence: number
+  confidence: number | null
   reviewedBy: string | null
   reviewedAt: string | null
 }
 ```
 
-⚠️ **§11.5 現行的三個 `sentiment*: number` 與 `confidence: number` 落地時 MUST 改為 `number | null`**
+⚠️ **四個數值欄的 `number | null` 已於 2026-09-04 落地**（§11.5 與 `shared/types/copilot.ts` 皆是）
 —— FR-022b 要求留空，而非 nullable 的型別會逼實作者填 0，正是該條禁止的事。
-這是本規格對 §11.5 的第二筆訂正（第一筆是 `periodOrigin`）。
+這是本規格對 §11.5 的第二筆訂正（第一筆是 `periodOrigin`，第三筆是 `sentimentNote`）。
 
 ### 冪等的三種情形（憲法 5.3、FR-030）
 
@@ -217,14 +229,18 @@ export interface AIProvider {
     history: Message[]
     vocabulary: { categories: readonly string[], resolutions: readonly string[],
                   actionsTaken: readonly string[], sentimentOutcomes: readonly string[] }
-    knowledgeHits: KnowledgeHit[]
   }): Promise<ClosureDraftAiPart>
 }
 ```
 
+⚠️ **2026-09-08 起不再收 `knowledgeHits`。** 結案 agent 的 system prompt 逐字要求
+「不要輸出 `citedSopIds` —— 由系統填入」，把命中交給模型也不會有人引用它；
+`ClosureDraft.citedSopIds` 改由 `closure/draft.post.ts` 以檢索命中直接填入（契約 R2.7），
+檢索與這支呼叫因此互不相依、一律並行。
+
 `ClosureDraftAiPart` ＝ `ClosureDraft` 去掉 `draftId`／`conversationId`／`period`／`readonly`
-—— **模型只產內容欄位**，其餘一律由系統填（比照 `analyzeSentiment()` 不信任模型給的
-`messageId`／`at`、`suggest()` 不信任模型給的 `id`，是同一條既有原則）。
+**與 `citedSopIds`** —— **模型只產內容欄位**，其餘一律由系統填（比照 `analyzeSentiment()`
+不信任模型給的 `messageId`／`at`、`suggest()` 不信任模型給的 `id`，是同一條既有原則）。
 
 ### 4.3 `config/categories.ts`（research #19）
 

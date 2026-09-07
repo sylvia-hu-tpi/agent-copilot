@@ -269,11 +269,14 @@ AgentCopilot/
 │   │   ├── messages/
 │   │   │   ├── index.get.ts         # 支援 since=<messageId> 增量拉取
 │   │   │   └── index.post.ts        # 送出（含撞單檢查）
+│   │   ├── knowledge-search.post.ts # 自然語言快查
 │   │   ├── copilot/
-│   │   │   ├── analyze.post.ts      # 手動重新分析
-│   │   │   ├── knowledge.post.ts    # 自然語言快查
-│   │   │   ├── handover.post.ts     # 交接摘要（⚠️ 規劃中、未實作，見 §13.4 ②）
-│   │   │   └── closure.post.ts      # 結案摘要（產生 / 確認寫入）
+│   │   │   ├── retry.post.ts        # 單一區塊手動重試
+│   │   │   └── handover.post.ts     # 交接摘要（⚠️ 規劃中、未實作，見 §13.4 ②）
+│   │   ├── closure/                 # 結案摘要（specs/006）—— ⚠️ 三支，不是一支
+│   │   │   ├── scopes.post.ts       # 涵蓋區間候選（面板開啟時）
+│   │   │   ├── draft.post.ts        # 產生草稿（改區間／重新產生都走這支）
+│   │   │   └── commit.post.ts       # 寫入 Data Board（⚠️ 唯一會寫正式紀錄的端點）
 │   │   ├── presence.post.ts         # 上報 viewing / composing
 │   │   ├── stream.get.ts            # SSE
 │   │   ├── health.get.ts
@@ -322,7 +325,7 @@ AgentCopilot/
 │   └── supervisors.yaml             # 主管 email 白名單（隨主管接管功能）
 └── docs/
     ├── ARCHITECTURE.md              # 本文件
-    ├── AGENT_PROMPTS.md             # 四個 agent 的 prompt／模型快照（生成物，見 §11）
+    ├── AGENT_PROMPTS.md             # 五個 agent 的 prompt／模型快照（生成物，見 §11）
     ├── IMBRACE_QUESTIONS.md         # 待向 iMBrace 確認的清單
     └── CONSTITUTION.md              # Spec Kit 憲法
 ```
@@ -647,7 +650,7 @@ export interface AIProvider {
 
 #### ⚠️ agent 的 system prompt 也不在版本控制裡，而它的措辭會直接改變折線的形狀
 
-> ✅ **2026-09-02 起有快照可以 diff 了。** 四個 agent 的 `personality_role`／`core_task`／
+> ✅ **2026-09-02 起有快照可以 diff 了。** 五個 agent（2026-09-04 起含結案摘要）的 `personality_role`／`core_task`／
 > `model_id` 全部存進 `docs/AGENT_PROMPTS.md`，由 `npm run spike:agent-prompts` 抓線上值
 > 逐字元比對，不一致就以非零離開並指出差在第幾行（只呼叫一次 `listAiAgents()`，約 1 秒）。
 > 單向流程：**改後台 → `npm run spike:agent-prompts -- --write` → commit（寫清楚為什麼改）**。
@@ -688,7 +691,7 @@ sparkline 換一個形狀。現行情緒 prompt 有三組**不可拿掉**的規�
 
 #### ⚠️ agent 背後的模型不在版本控制裡
 
-四個 agent 的模型設定存在 **iMBrace 後台**，`.env.local` 只存 `assistant_id`。換句話說
+五個 agent 的模型設定存在 **iMBrace 後台**，`.env.local` 只存 `assistant_id`。換句話說
 **模型換掉時 git 完全看不出來** —— 若不寫在這裡，沒有人知道它被改過、原值是什麼、為什麼改。
 **MUST 在每次變更後更新下表。**
 

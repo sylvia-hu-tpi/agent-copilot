@@ -47,7 +47,7 @@
 | `sentiment_end` | Number | `sentimentEnd` | 同上 |
 | `sentiment_trough` | Number | `sentimentTrough` | 同上 |
 | `period_sentiment_note` | ShortText | `readonly.sentimentNote` | 🆕 情緒留空的原因與實際涵蓋範圍 |
-| `cited_sops` | LongText（JSON 陣列） | `citedSopIds` | — |
+| `cited_sops` | LongText（JSON 陣列） | `citedSopIds` | **系統檢索到的相關來源**，客服可刪；⚠️ 不是「模型引用過的」（契約 R2.7） |
 | `follow_ups` | LongText（JSON） | `followUps` | — |
 | `confidence` | Number | `confidence` | 留空 ＝ 無真實依據（憲法 4.4） |
 | `reviewed_by` | ShortText | `reviewedBy` | **留空 ＝ 未經人審**（憲法 5.2） |
