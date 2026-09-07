@@ -55,7 +55,7 @@ M2 交付的「結案」目前只等同「離開 ＋ 停止分析 ＋ 隱藏面�
 
 | 排除項 | 原因 | 何時能做 |
 |---|---|---|
-| 知識庫改用 `VikiKnowledgeProvider` | 卡在 `docs/IMBRACE_QUESTIONS.md` 0-3f（🔴 未回覆） | 回覆到位後另議；`ARCHITECTURE.md` §18 M3 的該項驗收不由本規格認領 |
+| 知識庫改用 `VikiKnowledgeProvider` | ⚠️ **2026-09-07 更新：已決定暫不換入，且與 0-3f 的回覆脫鉤**（見 `ARCHITECTURE.md` §18 M3 驗收第一條）。原記載：卡在 `docs/IMBRACE_QUESTIONS.md` 0-3f（🔴 未回覆） | 回覆到位後另議；`ARCHITECTURE.md` §18 M3 的該項驗收不由本規格認領 |
 | **交接摘要**（`HandoverSummary`） | **沒有設計落點** —— 畫布 artboard 2a／`DESIGN_TOKENS.md` §7.2 的右欄區塊沒有它，1c 的結案相關狀態沒有它，i18n 與元件裡沒有任何「交接／轉接」字串。它只存在於 `ARCHITECTURE.md` 的紙上規劃（§11.5 型別、§5 目錄的 `handover.post.ts`、§13.4 ②、§18 M3 驗收）。⚠️ `PLATFORM_CAPABILITY.md` §2 那列「AI 轉接摘要／左欄」是 **demo 畫面上 iMBrace 平台自己的功能**，不是我方的 Copilot 面板 | 重啟條件：畫布補上該區塊，或出現實際的多客服交接需求。見下方「本規格造成的文件改判義務」 |
 | 圖片／PDF 的 vision／文件分析 | 量體 5～10 人日，是獨立的一條管線 | 另開規格 |
 | 429 全域退避佇列 | 卡在 `docs/IMBRACE_QUESTIONS.md` G-2（🔴 未回覆），佇列參數無從設計 | 書面 rate limit 規格到位後另開；本規格期間 429 仍依 §15.2 直接轉錯誤狀態供手動重試 |

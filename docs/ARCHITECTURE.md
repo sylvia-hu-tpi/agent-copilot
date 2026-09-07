@@ -592,12 +592,12 @@ export interface KnowledgeProvider {
 }
 ```
 
-**實作優先序**：第一階段採 `AgentKnowledgeProvider`（iMBrace）。是否換成 `VikiKnowledgeProvider` 取決於 iMBrace 對 RAG 檢索品質的回覆（`IMBRACE_QUESTIONS.md` §0-3f），不是時程排定的第二階段，見 `PLATFORM_CAPABILITY.md` §6。
+**實作優先序**：第一階段採 `AgentKnowledgeProvider`（iMBrace）。⚠️ **2026-09-07 決策：暫不換入 `VikiKnowledgeProvider`，且此決策與 `IMBRACE_QUESTIONS.md` §0-3f 的回覆脫鉤** —— 原本寫的是「取決於 iMBrace 對 RAG 檢索品質的回覆」，現在不論 0-3f 怎麼回覆本期都不換（0-3f 仍在等待回覆，只是不再是這件事的觸發器）。重啟條件與理由見 §18 M3 驗收第一條。
 
 | 順位 | 實作 | 狀態 |
 |---|---|---|
 | 1 | `AgentKnowledgeProvider` | ✅ **M2 採用** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。可取得引用來源（檔名＋chunk 原文），但 `score` 恆為 `null` |
-| 備援 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作——若 #19 RAG 品質調不動，換上此實作即可取得真實 `score`，介面不用改 |
+| 備援 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 ——**2026-09-07 決策：暫不換入**（與 0-3f 回覆脫鉤，見 §18 M3）。日後若重啟，換上此實作即可取得真實 `score`，介面不用改 |
 | 備案 | `BoardsSearchProvider` | 🟡 未採用——`boards.search()` 為 Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
 | 開發期 | `MockKnowledgeProvider` | ✅ **M2 採用** —— 缺 `IMBRACE_API_KEY`／`IMBRACE_ORGANIZATION_ID`／`IMBRACE_KNOWLEDGE_AGENT_ID` 任一時由 `useKnowledgeProvider()` 自動退回並印警告。**僅供本機開發**，正式環境出現該行警告即為設定錯誤 |
 | — | ~~`StaticSopProvider`~~（讀 `config/sop.yaml`） | ❌ **已撤銷**（2026-08-28，`specs/002-suggestion-knowledge-search` plan.md「二、外部依賴的抽象邊界」）—— `MockKnowledgeProvider` 已完整承擔離線 fallback，多一條讀 yaml 的路徑不增加任何能力，只多一處要維護。`config/sop.yaml` 因此不會建立 |
@@ -2012,7 +2012,7 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 | 路徑 | 狀態 | 說明 |
 |---|---|---|
 | 掛 Knowledge Hub 給 AI Agent 再問它 | ✅ **M2 採用** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub。可取得引用來源，但取不到分數（§0-3c 仍待 iMBrace 回覆） |
-| `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。若 #19 RAG 品質調不動，換上此實作即可 |
+| `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。⚠️ **2026-09-07 決策：暫不換入**，且與 0-3f 的回覆脫鉤（見 §18 M3 驗收第一條） |
 | `boards.search(boardId, {q, filter, limit})` | 🟡 備案，未採用 | Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
 | `MockKnowledgeProvider` | ✅ 開發期 | 缺憑證／agent id 時自動退回並印警告，僅供本機開發（`server/services/knowledge/index.ts`） |
 | ~~`StaticSopProvider`~~ | ❌ 已撤銷 | 原規劃讀 `config/sop.yaml`；2026-08-28 由 002 決定不做，離線 fallback 由 `MockKnowledgeProvider` 承擔 |
@@ -2907,7 +2907,12 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 **內容**：依 #19 RAG 品質的回覆結果，視情況將知識庫來源由 `AgentKnowledgeProvider` 換上 `VikiKnowledgeProvider`（見 §8.2、§12.2 —— ⚠️ **本項僅指「換 provider」這個決策，快查功能本身已隨 M2 落地**，兩者是兩件事）；結案摘要 ＋ 人審面板（⚠️ **交接摘要已於 2026-09-03 確認不實作**，見 §13.4 ②）；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11 —— 平台已確認無內建 OCR，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已列為排除範圍）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前一律讓 429 直接轉錯誤狀態，見 §15.2）。
 
 **驗收**：
-- [ ] 若換上 `VikiKnowledgeProvider`：知識庫快查與建議卡的 `score`／`confidence` 欄位開始出現真實數值（不再恆為 `null`），且 UI 不需改動即可正確顯示（**本項只驗換 provider 後分數欄位的行為**，快查本身的功能驗收在 M2）
+- [ ] ~~若換上 `VikiKnowledgeProvider`：知識庫快查與建議卡的 `score`／`confidence` 欄位開始出現真實數值~~ —— **暫不換入（2026-09-07 使用者決策）**。
+      ⚠️ **本決策與 0-3f 的回覆脫鉤**：原本的條件是「若 #19／0-3f 的 RAG 品質調不動就換」，
+      現在改為**不論 0-3f 怎麼回覆，本期都不換** —— 0-3f 仍在等待回覆，但它的答案不再是這一條的觸發器。
+      因此本條**標為不適用、MUST NOT 打勾**（勾起會讓下一個人以為換過了）。
+      重啟條件：`score`／`confidence` 恆為 `null` 真的擋到某個使用情境，或 viki 側先建好知識庫與 AI 助理。
+      ⚠️ `KnowledgeProvider` 介面保持不變（憲法 1.2 的抽象邊界），換入成本因此仍只是一個實作類別。
 - [x] 摘要可編輯後才寫入 Board —— ✅ 2026-09-04 由 `specs/006-closure-handoff-summary` 交付（`app/components/copilot/ClosureBlock.vue` ＋ `server/api/conversations/[id]/closure/commit.post.ts`；`test/closure-commit-guard.test.ts` 掃描全 repo 只有寫入按鈕會呼叫 commit）
 - [x] **UI 上已經有一行文案在對客服承諾這個尚未實作的行為** —— ✅ **2026-09-04 落差已消除**：
       `closeConversation()` 現在只開結案面板（不再 LEAVE、不停止分析），寫入成功後才 LEAVE，
@@ -2953,8 +2958,9 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 >
 > ⚠️ **M3 尚未完成**：本節仍有四條未勾，皆不屬 `specs/006` 範圍，
 > **MUST NOT 因為結案那幾條齊了就押 `m3-done`**：
-> ① Viki provider；②③ 附件 vision／文件分析兩條；④ 429 全域佇列（卡 `IMBRACE_QUESTIONS.md` G-2 🔴）。
-> 四條的處置待 `specs/006` 合回 `main` 後，於 007 的規格範圍討論時一併決定。
+> ① Viki provider —— **2026-09-07 決策：暫不換入**，見該條；
+> ②③ 附件 vision／文件分析兩條；④ 429 全域佇列（卡 `IMBRACE_QUESTIONS.md` G-2 🔴）。
+> ②③④ 的處置待 `specs/006` 合回 `main` 後，於 007 的規格範圍討論時一併決定。
 
 **外部依賴**：Data Board schema 需先建立；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格；涵蓋區間選擇器需先進 Design 畫布（阻塞 UI，不阻塞行為與後端）
 

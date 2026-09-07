@@ -280,9 +280,9 @@ viki 補的正好是方案 A 缺的兩項：`answer-attribution` 提供 SOP 引�
 ```
 現在：對話層與 AI 層皆先接 iMBrace，KnowledgeProvider / AIProvider 收斂所有呼叫
 
-依 iMBrace 回覆二擇一（介面不變，只換實作）
-  可用   → 沿用 iMBrace；score 有值時顯示信心度，無值時留空
-  不可用 → 換上 VikiKnowledgeProvider / VikiAIProvider；score 開始有值
+⚠️ 2026-09-07 決策：暫不換入 Viki，且與 0-3f 的回覆脫鉤（見 ARCHITECTURE.md §18 M3）
+  現況   → 沿用 iMBrace；score 有值時顯示信心度，無值時留空
+  已擱置 → 換上 VikiKnowledgeProvider / VikiAIProvider；score 開始有值
 ```
 
 信心度這個 UI 欄位不隨方案拿掉——它綁定「有沒有真實分數來源」而非「用哪個方案」，這樣兩個方案才能無縫切換。這正是「所有尚未確定規格的外部依賴都必須藏在 provider 介面之後」的價值兌現點（`ARCHITECTURE.md` §8）。
