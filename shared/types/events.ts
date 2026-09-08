@@ -66,6 +66,21 @@ export interface CollisionReport {
 export type CopilotEvent =
   | { type: 'session.opened', conversationId: string, reason: 'join' | 'resume' }
   | { type: 'session.closed', conversationId: string, reason: 'leave' | 'resolved' }
+  /**
+   * ⚠️ **`messages` 不保證都是新的，事件本身也不代表「有新訊息」。**
+   *    `PollingMessageSource.sliceNew()` 在首次拉取（pipeline 建立）與錨點失效時
+   *    一律回傳整批 —— 寧可重送也不可漏送（§9.4），而 `session-manager.ts` 的
+   *    fan-out 明文「MUST NOT 一起濾」。**去重責任在消費端。**
+   *
+   * ⚠️ 而 pipeline 每次因 `{priority, joined}` 改變被拆掉重建，錨點就歸零：
+   *    分頁切到背景／切到別的對話／SSE 重連都會觸發。也就是說，**對話什麼都沒發生時
+   *    照樣會收到一整批**，且觸發它的是使用者離開畫面的動作，事後極難對應。
+   *
+   * ⚠️ 因此凡是要回答「有沒有新訊息」的消費端，MUST 以自己的去重結果為準
+   *    （前端見 `app/utils/message-merge.ts` 的 `added`）。
+   *    這個坑已經踩過兩次：訊息列表當年為此去重了，**結案的過期標記沒跟上**，
+   *    症狀是「按下結案後憑空冒出『對話有新內容』且抓不到規律」（2026-09-07 修）。
+   */
   | { type: 'messages.appended', conversationId: string, messages: Message[] }
   | { type: 'presence.updated', conversationId: string, presence: PresenceSnapshot }
   | { type: 'control.updated', conversationId: string, control: ConversationControl }

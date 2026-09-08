@@ -38,6 +38,7 @@ const presenceEntry = (operatorId: string) => ({
   joined: false,
   source: 'sse' as const,
   at: new Date().toISOString(),
+  closing: false,
 })
 
 afterEach(() => {

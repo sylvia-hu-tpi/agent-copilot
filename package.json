@@ -47,7 +47,12 @@
     "spike:sentiment-dispersion": "tsx scripts/spike/24-sentiment-dispersion.ts",
     "spike:agent-prompts": "tsx scripts/spike/25-agent-prompt-drift.ts",
     "spike:sentiment-concurrency": "tsx scripts/spike/26-sentiment-concurrency.ts",
-    "spike:citation-quality": "tsx scripts/spike/27-citation-quality.ts"
+    "spike:citation-quality": "tsx scripts/spike/27-citation-quality.ts",
+    "spike:board-write": "tsx scripts/spike/29-board-write-path.ts",
+    "spike:closure-agent": "tsx scripts/spike/31-closure-agent-shape.ts",
+    "spike:closure-latency": "tsx scripts/spike/30-closure-latency.ts",
+    "board:setup": "tsx scripts/setup-closure-board.ts",
+    "board:verify": "tsx scripts/setup-closure-board.ts --verify"
   },
   "dependencies": {
     "@imbrace/sdk": "^1.4.0",

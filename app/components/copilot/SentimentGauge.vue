@@ -13,10 +13,13 @@
  *    `dc-import` 動態渲染、擷取不到內部逐字內容」的限制**已經解除**：畫布匯出的 HTML
  *    把該元件存成獨立的 `CopilotPanel.dc.html` 資產（gzip＋base64），解出來就是完整原始碼。
  *    本檔的幾何、色票與字級自此以那份為準。
- *    ⚠️ 仍刻意不同之處全部登記於 `docs/DESIGN_FEEDBACK.md`（C-19～C-25；漸層寫法列在 A-1），
- *    例如示警 pill 的文案用五級分類而非畫布逐字的「焦慮偏高」、走勢摘要的 `advice` 半段加粗、
- *    以及漸層 `stop-color` 的寫法（畫布是 attribute，瀏覽器裡無效）。**不要在這裡重數一次數量** ——
- *    那個數字每加一條偏離就過期一次，而不會有任何東西提醒你。
+ *    ⚠️ 仍刻意不同之處全部登記於 `docs/DESIGN_FEEDBACK.md` C 段，例如示警 pill 的文案
+ *    用五級分類而非畫布逐字的「焦慮偏高」、走勢摘要的 `advice` 半段加粗、
+ *    以及 `vector-effect="non-scaling-stroke"`。**不要在這裡重數一次數量或抄編號** ——
+ *    兩者都會在下一次改版時過期，而不會有任何東西提醒你。
+ * ⚠️ **2026-09-07 對 2026-09-04 版畫布重核**：五段量表的「生氣」配色、標籤語言、
+ *    `score` 刻度、輪數、漸層 `stop-color` 的寫法**五項畫布都已採納**，
+ *    因此本檔這幾處已不再是偏離 —— 下面的註解不要再讀成「我方與畫布不同」。
  */
 
 import type { SentimentBlock, SentimentPoint, SentimentTimelineEntry } from '#shared/types/copilot'
@@ -40,13 +43,13 @@ const { t } = useI18n()
  *
  *    ⚠️ 中欄的「載入更早的訊息」**只影響顯示，不會補算情緒點** ——
  *       分析的輸入永遠是 JOIN 當下那 50 則。
- *    ⚠️ 實際點數還可能更少：自動恢復不補算先前失敗的批次（ARCHITECTURE §18 已記載的未修缺陷），
+ *    ⚠️ 實際點數還可能更少：批次失敗後由自動恢復補算（`sentimentGap`，005 US2），但每輪最多補 18 則、剩下的留給下一次自然觸發，
  *       而那一段缺席不會有任何提示。
  *
  *    要涵蓋更長的歷史就得提高 `DEFAULT_MESSAGE_LIMIT`，代價是情緒分析的批次數
  *    （`SENTIMENT_CHUNK_SIZE = 6`）跟著加倍。
  *    ⚠️ **但冷啟動時間不會跟著加倍** —— 批次自 2026-09-01 起以**有上限的並行**送出
- *    （`SENTIMENT_CONCURRENCY = 3`，`server/services/copilot-analysis.ts`），
+ *    （`SENTIMENT_CONCURRENCY = 3`，`server/services/blocks/sentiment.ts`），
  *    總時間隨 **⌈批次數 ÷ 3⌉ 個波次**成長而非隨批次數線性成長，批次數加倍多半只多一個波次。
  *    ⚠️ 這不代表提高上限是免費的：並發可能讓平台側排隊而抬高**單次**延遲，
  *    單次一超過 FR-014 的 15 秒就會觸發重試、用盡則整批轉 error ——
@@ -92,7 +95,7 @@ interface Positioned { entry: SentimentTimelineEntry, x: number }
 const windowEntries = computed(() => recentWindow(props.block.timeline))
 
 /**
- * 區塊 tag（畫布 2a：示範值「近 50 輪」）。
+ * 區塊 tag（畫布 2a：示範值「近 25 輪」，與軸標籤右端、折線點數三者一致）。
  *
  * ⚠️ 數字是**這張圖實際畫了幾輪**（`windowEntries.length`），不是寫死的值，
  *    也不是完整 `timeline` 的長度 —— 圖上只畫得下視窗內的那一段（`MAX_POINTS`），
@@ -163,8 +166,9 @@ const alertBd = computed(() => (alertLabel.value === 'angry' ? 'var(--danger-bd)
  * ⚠️ **標籤用中文，不用畫布的 `calm`／`neutral`／…英文。** 與 D-17（語氣標籤）
  *    同一個理由：這是給客服看的即時輔助，不是給工程師看的列舉值。
  *    i18n 的 `copilot.sentiment.label.*` 早就是這五個中文詞，沿用同一組不另立。
- * ⚠️ 「生氣」在畫布上是反白的 `--warn`，這裡改用 `--danger` 系 ——
- *    FR-003 要求「挫折」與「生氣」可互相區分，兩級共用 `--warn` 就分不出來了。
+ * ⚠️ 「生氣」用 `--danger` 系 —— FR-003 要求「挫折」與「生氣」可互相區分，
+ *    兩級共用 `--warn` 就分不出來了。**畫布 2026-09-04 版已改成同一組**
+ *    （曾是反白的 `--warn`），這裡不再是偏離。
  */
 const SCALE = [
   { key: 'calm', fg: 'var(--active)', bg: 'var(--active-bg)', bd: 'var(--border)', strong: false },
@@ -232,11 +236,11 @@ const currentLabel = computed(() => {
 })
 
 /**
- * 分數與走向（畫布 2a：`score 0.72 ↑`）。
+ * 分數與走向（畫布 2a 示範值 `score 35 ↓`）。
  *
- * ⚠️ **我方的 score 是 0–100，畫布示範的是 0.72（0–1）。這裡照我方的刻度顯示 72，
- *    不做 /100 的換算** —— 換算出來的 `0.72` 與 `SentimentPoint.score` 的定義不一致，
- *    對照日誌或 API 回應時會變成兩套數字。
+ * ⚠️ **刻度是 0–100，MUST NOT 做 /100 的換算** —— 換算出來的 `0.35` 與
+ *    `SentimentPoint.score` 的定義不一致，對照日誌或 API 回應時會變成兩套數字。
+ *    畫布 2026-09-04 版已同為 0–100（曾示範 `score 0.72`），兩邊現在是同一套數字。
  */
 /** 折線末端（最新的一個評分點）—— 供圖上的實心端點 */
 const lastPoint = computed(() => pointsOnly.value.at(-1) ?? null)
@@ -368,9 +372,10 @@ const statusColor = computed(() => (props.block.status === 'error' || props.bloc
             ⚠️ **`stop-color` MUST 寫在 `style` 裡，不能當成屬性。** presentation attribute
                不做 `var()` 代換（`stop-color="var(--active)"` 在瀏覽器裡是無效值），
                而無效的 `stop-color` 會靜默退回黑色 —— 不會報錯，只會得到一條黑線。
-               ⚠️ 畫布逐字是屬性寫法，這一處**刻意不照抄**：畫布在自己的渲染器裡有效，
-               在瀏覽器裡沒有。已回報給 Design（`DESIGN_FEEDBACK.md` A-1）——
-               不是視覺偏離，但畫布若匯出成瀏覽器可開的 HTML，那五個 stop 會整組失效。
+               ⚠️ 畫布 2026-09-04 版**已改成同樣的 `style` 寫法**（我方回報後採納），
+               兩邊現在一致。先前畫布用的是屬性寫法，在它自己的渲染器裡有效、
+               匯出成瀏覽器可開的 HTML 就整組失效 —— 留著這段是為了讓下一個人知道
+               「為什麼這裡看起來多此一舉」，不要順手改回屬性。
           -->
           <defs>
             <linearGradient :id="gradId" gradientUnits="userSpaceOnUse" x1="0" :y1="VB.yTop" x2="0" :y2="VB.yBase">

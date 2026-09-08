@@ -73,7 +73,14 @@ describe('FR-016：可見性 ⟺ viewerJoined', () => {
    *    拿不到就寫不出那種判斷。
    */
   it('可見性只吃 viewerJoined —— composable 完全接觸不到區塊內容', () => {
-    expect(useCopilotPanel.length).toBe(2)
+    /*
+      ⚠️ 2026-09-04（specs/006）由 2 改為 3：新增第三個參數 `closing`
+         —— 「這個對話是否正在結案」的布林 ref，決定面板走 `expanded` 還是
+         `closing` 版面（`docs/DESIGN_TOKENS.md` §7.4）。
+         **它不是區塊內容**，因此這條守衛要防的事（用 Block 是否 empty 推可見性）
+         一點都沒有被放寬 —— 真正在守的是下面那個禁字掃描。
+    */
+    expect(useCopilotPanel.length).toBe(3)
     const source = codeOnly(COMPOSABLE)
     for (const forbidden of ['summary', 'sentiment', 'suggestion', 'status', 'Block']) {
       expect(source).not.toContain(forbidden)

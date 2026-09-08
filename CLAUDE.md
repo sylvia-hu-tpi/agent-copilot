@@ -14,7 +14,7 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 | `docs/CONSTITUTION.md` | 程式碼約束（九條憲法）＋命名慣例＋修憲流程。寫 code 前必讀。條號是穩定介面，程式碼註解直接引用 |
 | `docs/IMBRACE_QUESTIONS.md` | 待向 iMBrace 確認的清單。⚠️ **會離開這個 repo** |
 | `docs/DESIGN_FEEDBACK.md` | 給 Design 的畫布回饋（實作刻意偏離畫布之處＋理由）。⚠️ **會離開這個 repo** |
-| `docs/AGENT_PROMPTS.md` | 四個 iMBrace agent 的 system prompt 與模型**快照**。⚠️ 生成物，改它不會改變 agent 行為；用 `npm run spike:agent-prompts` 維護與比對 |
+| `docs/AGENT_PROMPTS.md` | 五個 iMBrace agent 的 system prompt 與模型**快照**。⚠️ 生成物，改它不會改變 agent 行為；用 `npm run spike:agent-prompts` 維護與比對 |
 | `docs/PLATFORM_CAPABILITY.md`、`docs/SDK_FINDINGS.md` | 平台能力與 SDK 的實測記錄 |
 | `docs/DESIGN_TOKENS.md` | 設計規格。⚠️ 衍生自 Claude Design 畫布，可能與畫布脫鉤 |
 | `scripts/spike/out/` | 實測原始產出。**結論有疑慮時以此為準，不以文件敘述為準** |
@@ -74,11 +74,11 @@ grep -rln "<被撤銷方案的名稱/端點>" docs/   # 例：撤銷 ai.embed() 
 3. **SDK 的型別與實際 API 不一致**（欄位名不同、必填標錯、參數未宣告）。
    照型別寫會 400 或 401，而錯誤訊息無法反推原因。
    所有繞道一律關在 `server/services/imbrace.ts` 的防腐層，**不得散落到 route**。
-4. **四個 agent 的 system prompt 與模型都在 iMBrace 後台，不在這個 repo 裡** ——
+4. **五個 agent 的 system prompt 與模型都在 iMBrace 後台，不在這個 repo 裡** ——
    被改掉不會有 commit、不會有型別錯誤，只會安靜地改變摘要的形狀、情緒的刻度、
    建議卡的引用規則。**動 AI 路徑或判讀 AI 相關量測數字前，先跑 `npm run spike:agent-prompts`**
    （約 1 秒），它會把後台現況與 `docs/AGENT_PROMPTS.md` 的快照逐字元比對。
-   → **§11 「agent 的 system prompt 也不在版本控制裡」**
+   → **§8.2b 「agent 的 system prompt 也不在版本控制裡」**
 
    ⚠️ 這一條是 2026-09-02 補的，起因是**沒有它就得靠量測數字反推 prompt 有沒有被改**：
    情緒 24-B 的批次偏離由 3.6 分升到 11.7 分，被誤讀成絕對分數帶失效，於是花三分鐘重跑

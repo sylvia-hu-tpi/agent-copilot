@@ -27,7 +27,7 @@ import type { Unsubscribe, WatchPriority } from '../sources/types.js'
 import { useEventBus, useStateStore } from '../state/index.js'
 import { conversationTopic } from '../state/types.js'
 import type { CopilotSession } from '../state/types.js'
-import { checkSuggestionsSuperseded, scheduleIncremental } from './copilot-analysis.js'
+import { checkSuggestionsSuperseded, newCustomerMessagesSince, scheduleIncremental } from './copilot-analysis.js'
 import { useCopilotRuntime } from './copilot-runtime.js'
 import { inferFromMessages } from './presence.js'
 import {
@@ -187,7 +187,26 @@ async function onMessages(
   // specs/002-suggestion-knowledge-search T019、T021）——
   // ⚠️ 只有客戶發言才觸發重新分析；客服自己送出的訊息 MUST NOT 觸發（FR-005）。
   //    debounce（1 秒聚合）由 scheduleIncremental() 內部處理，這裡只負責過濾。
-  const customerMessages = messages.filter(m => m.sender.type === 'customer')
+  //
+  // ⚠️ **這裡 MUST 以「已涵蓋」而非「是客戶發言」為準**（2026-09-07 手動走查定位）：
+  //    `PollingMessageSource.sliceNew()` 在**首次拉取**時刻意把整批當成新的推上來
+  //    （那是訊息流的初始內容，必須整批推），而 `entry` 是 pipeline 層級的 ——
+  //    唯一分頁重新整理就會讓 refcount 歸零、pipeline 拆掉，重連時錨點回到 null。
+  //    只濾 `sender.type` 的話，每一次重新整理都會把**整段歷史的客戶發言**當成新訊息，
+  //    對三個區塊各重跑一輪 AI：不報錯、沒有型別錯誤，只是每次重連白燒一輪呼叫，
+  //    而摘要每次都被整段換掉。
+  //
+  //    去重基準刻意複用 `newCustomerMessagesSince()`（＝ SSE 重連快照那條路用的同一個定義，
+  //    `server/api/stream.get.ts`）—— 兩條路對「什麼算新訊息」MUST NOT 各有一套。
+  //    2026-08-26 使用者回報的「同一筆事實在 keyFacts 裡重複累加」正是這個洞，
+  //    當時只補了 SSE 那一半（見 `blocks/sentiment.ts` 該函式的註解）。
+  //
+  //    ⚠️ 只影響**分析觸發**。訊息流的 fan-out（下方 `messages.appended`）與
+  //    `checkSuggestionsSuperseded()` 維持吃整批，MUST NOT 一起濾。
+  const analysisState = await store.getAnalysisState(conversationId)
+  const customerMessages = analysisState
+    ? newCustomerMessagesSince(analysisState, messages)
+    : messages.filter(m => m.sender.type === 'customer')
   if (customerMessages.length > 0) {
     // ⚠️ 兩者刻意在同一處一次算齊：priority 取自 messageSource（§9.2 聚合規則同一份），
     //    aiReplies MUST 一律以 controlFromMode() 推導，MUST NOT 寫成 mode === 'hybrid'

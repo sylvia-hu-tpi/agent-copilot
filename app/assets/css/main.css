@@ -89,9 +89,20 @@
   --font-ui: 'Noto Sans TC', 'Helvetica Neue', Helvetica, sans-serif;
   /* 代號、ID、驗證碼、倒數計時一律等寬 —— 這些是要逐字核對的東西 */
   --font-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /*
+    ⚠️ **原生控制項的配色由 `color-scheme` 決定，不吃上面任何一個 token。**
+       結案面板的四個受控詞彙欄位是原生 `<select>`（畫布 §7.2 ⑥ 逐字），
+       而展開後的選項清單是**作業系統畫的** —— 不設這一行的話，深色模式下
+       那份清單會是白底黑字，跟面板完全脫節，而且沒有任何 CSS 管得到它。
+       同一行也讓原生捲軸與日期輸入跟著主題走。
+  */
+  color-scheme: light;
 }
 
 .dark {
+  color-scheme: dark;
+
   --bg: #101319;
   --surface: #181c23;
   --surface-2: #1e232c;
@@ -238,7 +249,7 @@ button:disabled {
   /*
    * Eyebrow 徽章：AGENTCOPILOT / 選擇組織。
    *
-   * ⚠️ 2026-08-26 修正：畫布截圖（docs/wireframe/01-login_*.png、02-organization_*.png）
+   * ⚠️ 2026-08-26 修正：畫布 artboard 1a／1b
    *    是藍底白字的實心徽章，先前這裡只抄到字級，漏了背景色 —— DESIGN_TOKENS.md §2 的
    *    表格同樣只列字級，一併補正。
    */
@@ -347,6 +358,48 @@ button:disabled {
     outline: none;
     border-color: var(--navy-2);
     background: var(--surface);
+  }
+
+  /*
+    結案面板第 6 區塊的表單控制項（畫布 §7.2 ⑥ 逐字）。
+
+    ⚠️ **與 `.ac-input` 是刻意分開的兩套尺寸，不要合併。**
+       `.ac-input` 是登入頁與搜尋框的 40px／radius 8px／16px；
+       這裡是面板內的 34px／radius 9px／0.9063rem。面板寬度可縮到 320px，
+       套用 40px 的那一套會讓第 6 區塊比其他五塊都笨重。
+       合成一個 class 之後，任何一邊要調整都會把另一邊拉走。
+
+    ⚠️ **畫布沒有畫 focus** —— 它的 `outline:none` 是 mockup 的靜態呈現，不是規格。
+       照抄等於讓鍵盤使用者看不出焦點在哪（憲法 8.2）。
+       焦點沿用 `.ac-input` 既有的做法：框線轉 `--navy-2` ＋ 底色轉 `--surface`。
+
+    ⚠️ 高度／padding 不寫在這裡 —— textarea 是 `min-height` ＋ 上下 padding，
+       input 與 select 是固定 34px ＋ 只有左右 padding，三者不同。
+       這個 class 只放三者**共通**的框線、圓角、底色與字色。
+  */
+  .ac-field {
+    width: 100%;
+    box-sizing: border-box;
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    background: var(--surface-2);
+    color: var(--text);
+    font-size: 0.9063rem;
+  }
+
+  .ac-field:focus {
+    outline: none;
+    border-color: var(--navy-2);
+    background: var(--surface);
+  }
+
+  /*
+    ⚠️ placeholder 的預設灰是**瀏覽器決定的**，各家不同且不吃主題 ——
+       深色模式下 Chromium 的預設值疊在 `--surface-2` 上會低於 AA。
+       釘成 `--text-3`（與「請選擇」空值態的層級一致）。
+  */
+  .ac-field::placeholder {
+    color: var(--text-3);
   }
 
   .ac-btn-primary {

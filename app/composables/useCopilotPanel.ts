@@ -52,11 +52,42 @@ function safeWrite(conversationId: string, collapsed: boolean): void {
   }
 }
 
-export function useCopilotPanel(conversationId: Ref<string>, viewerJoined: Ref<boolean>) {
+/*
+  ⚠️ **`PanelSavedLayout`／`saved`／`scrollTop`／`rememberOpenState()` 與那個
+     `watch(variant)` 已於 2026-09-08 移除 —— 它們是死程式碼。**
+
+     整套機制沒有任何呼叫端：page 從來沒有繫結 `scrollTop`、也從來沒有呼叫
+     `rememberOpenState()`，因此 `saved.open` 恆為 `{}`、`scroll` 恆為 0。
+     `docs/DESIGN_TOKENS.md` §7.4 描述的「五塊的來回、取消結案與寫入成功都原樣還原」
+     於是是一份**從未生效過的契約**：下一個人要嘛以為它已經在運作，
+     要嘛去 debug 為什麼收合狀態沒有被還原。
+
+     ⚠️ 更根本的問題是它本來就還原不了：page 是用 `v-if`／`v-else` 依 `variant`
+     切換那四個區塊的，元件會被**卸載重掛**，內部狀態不是「被覆蓋」而是「不存在了」。
+     真要做這件事，得先把區塊狀態提到 page 或 store，再連同呼叫端一起加回來 ——
+     只把這幾個欄位放回來不會有任何效果。
+*/
+
+export function useCopilotPanel(
+  conversationId: Ref<string>,
+  viewerJoined: Ref<boolean>,
+  /** `true` ＝ 這個對話正在結案（由 `useClosureStore().isClosing()` 提供） */
+  closing?: Ref<boolean>,
+) {
   const collapsed = ref(false)
 
   /** FR-016：未 JOIN → 整欄不存在。MUST NOT 用變灰／空狀態／骨架代替 */
   const visible = computed(() => viewerJoined.value)
+
+  /**
+   * 面板的兩種版面（`docs/DESIGN_TOKENS.md` §7.4）。
+   *
+   * `closing`：第 6 區塊**置頂**展開可編輯，其餘五塊全部收合成單行。
+   * ⚠️ **不在畫面上解釋「為什麼其他區塊收合了」** —— 收合與還原是可預期的模式切換，
+   *    不需要每次結案都說明一次（畫布 2b 的裁示）。
+   */
+  const variant = computed<'expanded' | 'closing'>(() =>
+    (closing?.value ? 'closing' : 'expanded'))
 
   // 切換對話時重讀該對話自己的偏好（未存過 → 展開）
   watch(conversationId, (id) => {
@@ -76,5 +107,5 @@ export function useCopilotPanel(conversationId: Ref<string>, viewerJoined: Ref<b
     collapsed.value = !collapsed.value
   }
 
-  return { visible, collapsed, toggle }
+  return { visible, collapsed, toggle, variant }
 }

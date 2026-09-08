@@ -1,0 +1,141 @@
+/**
+ * SC-007 的自動化部分：`--verify` **同時**比對名稱、型別與選項（契約 B2／B3／B4）。
+ *
+ * ⚠️ 只比名稱的話，`sentiment_trough` 被建成 `ShortText` 一樣不會報錯 ——
+ *    只會讓報表無法對它做數值統計，與少建一欄的後果同級。
+ *
+ * ⚠️ 這裡驗的是**純函式** `diffBoardFields()`：它是 setup 與 verify 兩個模式的
+ *    共同判準，也是「手動移除任一欄位後 100% 指出缺漏」那條驗收的實際依據。
+ *    對真實 Board 的那一半（T046）是人工驗收，需要在 stable 環境執行。
+ */
+
+import { describe, expect, it } from 'vitest'
+import { diffBoardFields, isDiffClean } from '../scripts/setup-closure-board.js'
+import {
+  CLOSURE_BOARD_FIELDS,
+  CLOSURE_BOARD_FIELD_COUNT,
+} from '../server/services/closure/board-schema.js'
+import type { BoardFieldInfo } from '../server/services/imbrace.js'
+
+/**
+ * 由欄位表造一份「Board 上實際長這樣」的 fixture。
+ * ⚠️ 預設**帶上選項** —— 以 `data: [{ value }]` 建立的欄位，`boards.get()` 讀得到選項
+ *    （2026-09-04 真實環境實測）。`dropOptions` 造的才是「這一欄整組沒有選項」那種落差。
+ */
+function actualFields(
+  over: { omit?: string[], retype?: Record<string, string>, options?: Record<string, string[]>, dropOptions?: string[] } = {},
+): BoardFieldInfo[] {
+  const omit = new Set(over.omit ?? [])
+  const dropOptions = new Set(over.dropOptions ?? [])
+  return CLOSURE_BOARD_FIELDS
+    .filter(f => !omit.has(f.name))
+    .map(f => ({
+      id: `fid_${f.name}`,
+      name: f.name,
+      type: over.retype?.[f.name] ?? f.type,
+      options: dropOptions.has(f.name)
+        ? undefined
+        : over.options?.[f.name] ?? (f.options ? [...f.options] : undefined),
+    }))
+}
+
+describe('B2：齊全時空差集、離開碼 0', () => {
+  it('26 個欄位全部相符 → 四個桶都是空的', () => {
+    const diff = diffBoardFields(actualFields())
+    expect(diff.missing).toEqual([])
+    expect(diff.typeMismatch).toEqual([])
+    expect(diff.optionMismatch).toEqual([])
+    expect(diff.optionsEmpty).toEqual([])
+    expect(isDiffClean(diff)).toBe(true)
+  })
+
+  it('欄位表本身就是 26 欄（契約 §2 的那張表）', () => {
+    expect(CLOSURE_BOARD_FIELD_COUNT).toBe(26)
+  })
+})
+
+describe('B2：缺欄位時 MUST 逐欄列出名稱與型別', () => {
+  it('缺 period_origin／period_sentiment_note → missing 兩筆，各帶名稱與型別', () => {
+    const diff = diffBoardFields(actualFields({ omit: ['period_origin', 'period_sentiment_note'] }))
+    expect(diff.missing.map(f => f.name)).toEqual(['period_origin', 'period_sentiment_note'])
+    expect(diff.missing.map(f => f.type)).toEqual(['SingleSelection', 'ShortText'])
+    expect(isDiffClean(diff)).toBe(false)
+  })
+
+  it('⚠️ 手動移除**任一**欄位都被指出（SC-007 的「100%」逐欄窮舉）', () => {
+    for (const target of CLOSURE_BOARD_FIELDS) {
+      const diff = diffBoardFields(actualFields({ omit: [target.name] }))
+      expect(diff.missing.map(f => f.name), `移除 ${target.name} 沒有被指出`).toEqual([target.name])
+      expect(isDiffClean(diff)).toBe(false)
+    }
+  })
+})
+
+describe('B3：型別不符 MUST 被指出（欄位存在但不能做數值統計）', () => {
+  it('sentiment_trough 被建成 ShortText → typeMismatch 列出實際與應為', () => {
+    const diff = diffBoardFields(actualFields({ retype: { sentiment_trough: 'ShortText' } }))
+    expect(diff.typeMismatch).toEqual([
+      { name: 'sentiment_trough', actual: 'ShortText', expected: 'Number' },
+    ])
+    expect(diff.missing).toEqual([])
+    expect(isDiffClean(diff)).toBe(false)
+  })
+
+  it('型別不符時不再比對選項 —— 先把型別修好（否則會多噴一堆噪音）', () => {
+    const diff = diffBoardFields(actualFields({ retype: { category: 'ShortText' } }))
+    expect(diff.typeMismatch.map(m => m.name)).toEqual(['category'])
+    expect(diff.optionMismatch).toEqual([])
+  })
+})
+
+describe('B4：受控詞彙的選項也 MUST 比對', () => {
+  it('category 少一個選項 → optionMismatch 列出缺的值', () => {
+    const withoutOne = CLOSURE_BOARD_FIELDS.find(f => f.name === 'category')!.options!
+      .filter(o => o !== '退款進度')
+    const diff = diffBoardFields(actualFields({ options: { category: [...withoutOne] } }))
+
+    expect(diff.optionMismatch).toEqual([
+      { name: 'category', missing: ['退款進度'], extra: [] },
+    ])
+    expect(isDiffClean(diff)).toBe(false)
+  })
+
+  it('Board 多出設定檔沒有的選項 → 列在 extra，⚠️ 只報不移除', () => {
+    const plusOne = [
+      ...CLOSURE_BOARD_FIELDS.find(f => f.name === 'category')!.options!,
+      '營運手動加的分類',
+    ]
+    const diff = diffBoardFields(actualFields({ options: { category: plusOne } }))
+    expect(diff.optionMismatch).toEqual([
+      { name: 'category', missing: [], extra: ['營運手動加的分類'] },
+    ])
+  })
+})
+
+describe('⚠️ 「整組沒有選項」與「選項不符」分開報，但兩者都算不通過', () => {
+  it('受控詞彙欄位一個選項都沒有 → 進 optionsEmpty 且**計入不通過**', () => {
+    /*
+      ⚠️ **2026-09-04 訂正**：這一格原本的前提是「平台不回選項」，那是錯的。
+         真相是 spike 29 送錯 key（`options`，被平台**靜默忽略**），
+         所以那些欄位**真的**沒有選項。正確的送法是 `data: [{ value }]`，
+         而那樣建立的欄位 `boards.get()` 是讀得到選項的。
+
+         因此這裡驗的是：欄位在、型別對，但沒有選項 —— 那是一個要修的落差。
+         值仍寫得進去（實測平台會照收清單外的值，006-E5），
+         但 **Board 的篩選器裡看不到它們**，正是 B4 要防的事。
+         獨立成一格只是為了讓輸出讀得懂（「這一欄整組沒有選項」比「缺少 12 個選項」清楚）。
+    */
+    const selectionFields = CLOSURE_BOARD_FIELDS.filter(f => f.options).map(f => f.name)
+    const diff = diffBoardFields(actualFields({ dropOptions: selectionFields }))
+
+    expect(diff.optionsEmpty.sort()).toEqual([...selectionFields].sort())
+    // 不重複報成「缺少 N 個選項」—— 那會讓輸出被淹沒
+    expect(diff.optionMismatch).toEqual([])
+    expect(isDiffClean(diff), '整組沒有選項 MUST 算不通過').toBe(false)
+  })
+
+  it('空陣列與 undefined 同義 —— 兩種都是「沒有選項」', () => {
+    const diff = diffBoardFields(actualFields({ options: { category: [] } }))
+    expect(diff.optionsEmpty).toEqual(['category'])
+  })
+})

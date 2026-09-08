@@ -20,10 +20,19 @@
 
 import { spawn, type ChildProcess } from 'node:child_process'
 import { resolve } from 'node:path'
-import { startMockGateway, type MockGateway } from './mock-gateway.js'
+import { MOCK_CONV_BARE, startMockGateway, type MockGateway } from './mock-gateway.js'
+import { leakedSecrets } from './redact-assert.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
-const SECRETS = ['acc_TESTTOKEN', 'login_acc_TESTTOKEN', 'refresh_TESTTOKEN']
+/**
+ * 假 gateway 的探測用對話。
+ *
+ * ⚠️ **MUST 從 `mock-gateway.ts` import，MUST NOT 再抄一次字面值**（2026-09-08 改）。
+ *    以前這裡寫死一串 UUID 並用註解宣稱它等於 `MOCK_CONV_BARE` —— 而那個常數
+ *    正是為了「測試共用同一組值」才匯出的。兩份差一個字元的症狀是 smoke 收到 404／401，
+ *    與 route 真的壞掉完全分不出來（§9.3 的失效形態）。
+ */
+const CONV_ID = MOCK_CONV_BARE
 
 let failures = 0
 
@@ -35,7 +44,13 @@ function check(label: string, ok: boolean, detail = ''): void {
 /** M0 驗收：憑證絕不可出現在任何回應中（body 或 cookie） */
 function assertNoSecrets(label: string, body: string, setCookie: string[]): void {
   const haystack = `${body}\n${setCookie.join('\n')}`
-  const leaked = SECRETS.filter(s => haystack.includes(s))
+  /*
+    ⚠️ 掃描邏輯共用 `redact-assert.ts` 的 `leakedSecrets()`，本檔 MUST NOT 自己再寫一份
+       （2026-09-08 改）。以前這裡內聯了一段逐字相同的 `filter`，於是
+       「要不要忽略大小寫、要不要比對 URL 編碼」這種改動會只落在其中一邊，
+       而另一邊仍然回報「沒有外洩」。
+  */
+  const leaked = leakedSecrets(haystack)
   check(`${label}：回應不含任何 token`, leaked.length === 0, leaked.join(', '))
 }
 
@@ -72,6 +87,9 @@ async function main(): Promise<void> {
         NUXT_SESSION_SECRET: 'smoke-test-secret',
         NUXT_IMBRACE_BASE_URL: gateway.baseUrl,
         NUXT_PUBLIC_IMBRACE_ENV: 'stable',
+        // specs/006：沒有它，三支結案端點會在讀設定時就 500 而測不到後面的東西。
+        // 值就是假 gateway 上那個 board 的 id（`MockGateway.boardId()`）。
+        NUXT_IMBRACE_CLOSURE_BOARD_ID: gateway.boardId(),
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -115,6 +133,20 @@ async function main(): Promise<void> {
 
     const guarded = await call('/api/conversations')
     check('未登入時 GET /api/conversations 回 401', guarded.status === 401, `實際 ${guarded.status}`)
+
+    /*
+      specs/006：三支結案端點的認證界線。
+      ⚠️ `commit` 是本專案唯一會寫入正式 CRM 的端點 —— 它在未登入時回什麼，
+         是這支 smoke 唯一能驗到的那一層（vitest 測不到 cookie 往返）。
+    */
+    for (const path of ['scopes', 'draft', 'commit']) {
+      const res = await call(`/api/conversations/${CONV_ID}/closure/${path}`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      })
+      check(`未登入時 POST /closure/${path} 回 401`, res.status === 401, `實際 ${res.status}`)
+      assertNoSecrets(`未登入的 /closure/${path}`, res.body, res.setCookie)
+    }
 
     console.log('\n── ① 寄送 OTP ──────────────────────────────────────')
     const otp = await call('/api/auth/otp', {
@@ -454,6 +486,23 @@ async function main(): Promise<void> {
     })
     check('body 夾帶 token 會被忽略、不外洩、也不改變回應', beatWithToken.status === 200 && beatWithToken.body === '{"ok":true}',
       `實際 ${beatWithToken.status} ${beatWithToken.body}`)
+
+    console.log('\n── 結案端點（specs/006）─────────────────────────')
+    const scopes = await call(`/api/conversations/${CONV_ID}/closure/scopes`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    })
+    check('登入後 POST /closure/scopes 回 200', scopes.status === 200, `實際 ${scopes.status} ${scopes.body.slice(0, 200)}`)
+    /*
+      ⚠️ 驗的是 `fallback` 與 `baselineAt` **存在**，不是它們的值：
+         「Board 查不到」被實作成「回一個只有 fallback 的 200」時（契約 R1.4 禁止的事），
+         這裡看起來一樣會通過 —— 那條由 `scopes` 端點自己的 502 分支與
+         `test/closure-scope-selection.test.ts` 守。這裡守的是 HTTP 層真的接得起來。
+    */
+    check('scopes 回應含 fallback 與 baselineAt',
+      scopes.body.includes('"fallback"') && scopes.body.includes('"baselineAt"'),
+      scopes.body.slice(0, 200))
+    assertNoSecrets('登入後的 /closure/scopes', scopes.body, scopes.setCookie)
 
     console.log('\n── 登出 ────────────────────────────────────────────')
     const logout = await call('/api/auth/logout', { method: 'POST' })

@@ -10,7 +10,7 @@
  *    而「靜默跳過」正是這些守衛要防的失效形態。本檔不依賴任何建置產物。
  */
 
-import { readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -563,5 +563,213 @@ describe('對話清單查詢 MUST 走防腐層（skip → offset）', () => {
     expect(CALL.test(stripNonCode('/* conversations.search() 已被防腐層取代 */'))).toBe(false)
     // business-unit.ts:59 就是這一種 —— 錯誤訊息的字串裡提到它
     expect(CALL.test(stripNonCode("throw new Error('無法組出 conversations.search() 的查詢範圍')"))).toBe(false)
+  })
+})
+
+/**
+ * ── 006 契約守衛 G1～G4（`specs/006-closure-handoff-summary/plan.md`）─────
+ *
+ * 四條守的都是同一類事故：**不報錯但做錯事**。四個被防的錯誤在型別層完全合法，
+ * 在畫面上看不出來，而且都會把錯的東西寫進正式 CRM。
+ *
+ * ⚠️ 每一條 MUST 先斷言目標檔案**存在**。少了那一句，檔案被改名或搬走時
+ *    守衛會靜默變成恆真 —— 那正是它要防的事故的同一個形狀。
+ */
+describe('006 契約守衛：四條「不報錯但做錯事」的防線', () => {
+  const CLOSURE_SERVICES = resolve(ROOT, 'server/services/closure')
+  const COMMIT_ROUTE = 'server/api/conversations/[id]/closure/commit.post.ts'
+  const CLOSURE_STORE = 'app/stores/closure.ts'
+
+  const mustExist = (rel: string): string => {
+    const full = resolve(ROOT, rel)
+    expect(existsSync(full), `${rel} 不存在 —— 守衛會靜默恆真，先修檔名`).toBe(true)
+    return readFileSync(full, 'utf8')
+  }
+
+  it('G1：commit.post.ts 不得接觸任何訊息取數（FR-020 的快照語意）', () => {
+    /*
+      ⚠️ 「送出時取最新」與「取當初的快照」在型別上完全相同，兩者都是 `Message[]`。
+         這條守衛是那個錯誤唯一會變紅的地方 —— 摘要一旦被實作成寫入時重取，
+         客服看過的內容與寫進 CRM 的內容會不一樣，而畫面上分不出來。
+    */
+    const source = stripNonCode(mustExist(COMMIT_ROUTE))
+    for (const forbidden of ['fetchLatest', 'fetchSince', 'rawList', 'message-fetch', '/api/messages']) {
+      expect(source, `commit.post.ts 不得出現 ${forbidden}`).not.toContain(forbidden)
+    }
+  })
+
+  it('G2：server/services/closure/** 不得出現 lowestScore（FR-022a）', () => {
+    /*
+      ⚠️ `stats.lowestScore` 是**整條時間軸**的最低點；區間最低點要的是
+         **本次涵蓋區間內**的最低點。兩者都是 `number`、都叫「最低分」。
+         對服務過三次的客戶，取錯會把半年前那次最生氣的分數寫進今天這份報告。
+    */
+    expect(existsSync(CLOSURE_SERVICES)).toBe(true)
+    const offenders = filesUnder(CLOSURE_SERVICES, ['.ts'])
+      .filter(f => stripNonCode(readFileSync(f, 'utf8')).includes('lowestScore'))
+      .map(toRel)
+    expect(offenders).toEqual([])
+  })
+
+  it('G3：app/stores/closure.ts 不得持久化（FR-040 vs 憲法 8.4）', () => {
+    /*
+      ⚠️ 憲法 8.4「草稿絕不遺失」的標的是 **Composer 草稿**（客服自己打的字，
+         遺失無從復原）；結案草稿是**模型產物**，重按一次即可重生且尚未寫入
+         任何紀錄。FR-040 因此逐字要求「重新整理等同取消」。
+         下一個人看到「草稿」就會依 8.4 加上持久化 —— 這條守衛是那件事會變紅的地方。
+    */
+    const source = stripNonCode(mustExist(CLOSURE_STORE))
+    for (const forbidden of ['localStorage', 'sessionStorage']) {
+      expect(source, `closure store 不得出現 ${forbidden}`).not.toContain(forbidden)
+    }
+  })
+
+  it('G4：server/services/closure/** 不得出現 filter: 或 sort:（實測皆被靜默忽略）', () => {
+    /*
+      ⚠️ 2026-09-03 實測：`boards.search()` 的 `filter` 回整批不報錯；
+         `sort` 拿一個**不存在的欄位**去排會得到完全相同的順序（決定性證據）。
+         平台回的是合法的 200 ＋ 一批合法但沒過濾／沒排序的紀錄。
+    */
+    expect(existsSync(CLOSURE_SERVICES)).toBe(true)
+    const offenders = filesUnder(CLOSURE_SERVICES, ['.ts'])
+      .filter((f) => {
+        const code = stripNonCode(readFileSync(f, 'utf8'))
+        return code.includes('filter:') || code.includes('sort:')
+      })
+      .map(toRel)
+    expect(offenders).toEqual([])
+  })
+
+  it('⚠️ 這四條守衛本身是有效的 —— 抓得到真程式碼，且不會被註解或字串騙', () => {
+    expect(stripNonCode('const x = fetchLatest(c, id)')).toContain('fetchLatest')
+    expect(stripNonCode('// 本檔不得呼叫 fetchLatest')).not.toContain('fetchLatest')
+    expect(stripNonCode('await search(id, { filter: "a = 1" })')).toContain('filter:')
+    expect(stripNonCode('/* MUST NOT 用 filter: 與 sort: */')).not.toContain('filter:')
+    expect(stripNonCode('localStorage.setItem("k", v)')).toContain('localStorage')
+    expect(stripNonCode("throw new Error('不得用 localStorage')")).not.toContain('localStorage')
+  })
+})
+
+/**
+ * ── 006 FR-045：`closing` 是 `PresenceEntry` 的欄位，不是 `PresenceState` 的第四個值 ──
+ *
+ * ⚠️ 這條守的錯誤與 `joined` 曾經差點犯的完全相同：把「正在結案」做成第四個狀態值。
+ *    做成第四個值之後，**結案期間打一個字，心跳送出 `composing` 就會把它蓋掉** ——
+ *    症狀是同事畫面上的「正在結案」提示在對方每次打字時閃掉，而型別檢查一聲都不吭。
+ */
+describe('006 FR-045：PresenceState 維持三值，closing 與 state 正交', () => {
+  const SHARED = resolve(ROOT, 'shared/types/conversation.ts')
+
+  it('PresenceState 的字面聯集恰為三值', () => {
+    const source = readFileSync(SHARED, 'utf8')
+    const line = /export type PresenceState\s*=\s*([^\n]+)/.exec(stripComments(source))
+    expect(line?.[1], 'PresenceState 的宣告抓不到 —— 守衛會恆真').toBeTruthy()
+
+    const values = [...line![1]!.matchAll(/'([^']+)'/g)].map(m => m[1])
+    expect(values).toEqual(['viewing', 'composing', 'joined'])
+  })
+
+  it('PresenceEntry 有 closing 欄位（否則上面那條可以靠「根本沒實作」而通過）', () => {
+    const source = stripComments(readFileSync(SHARED, 'utf8'))
+    expect(source).toMatch(/closing:\s*boolean/)
+  })
+
+  it('心跳每一次都帶 closing —— 少帶一次就等於把它清成 false', () => {
+    /*
+      ⚠️ `reportViewing()` 會**整筆覆寫** presence 條目（`joined` 曾經踩過同一顆地雷）。
+         因此前端每一支送出 `/api/presence` 的呼叫都 MUST 帶 `closing`，
+         而不是「只有進入結案時帶一次」。
+    */
+    const view = stripComments(readFileSync(resolve(ROOT, 'app/composables/useConversationView.ts'), 'utf8'))
+    const beats = [...view.matchAll(/'\/api\/presence'/g)]
+    expect(beats.length, 'presence 心跳的呼叫點抓不到 —— 守衛會恆真').toBeGreaterThan(0)
+
+    /*
+      ⚠️ **把檔案依呼叫點切成互斥的區段，每一段各自要有 `closing:`**（2026-09-08 改）。
+
+      舊寫法是「`closing:` 的總數 ≥ `/api/presence` 的總數」，於是檔案裡任何一個
+      無關的 `closing:`（含另一處的 `closing: false`）都能把數字補滿 ——
+      真的漏帶一處時守衛照樣是綠的。切成區段之後，每個 `closing:` 只算給一個呼叫點。
+
+      ⚠️ 用「前一個呼叫點之後到這一個之間」而不是「這一個之後的 N 個字」：
+         `sendBeacon()` 那一處是**先組好 body、再把 URL 當參數傳**，
+         往後看的視窗會剛好錯過它自己的 `closing:`（第一版守衛就是這樣誤報的）。
+
+      ⚠️ 這仍是靜態近似，但方向仍是漏抓不是誤抓，而且現在指得出是哪一處。
+         server 端那一半已由型別保證：`reportViewing()` 的 `closing` 沒有預設值。
+    */
+    const at = beats.map(m => m.index ?? 0)
+    const missing = at.filter((pos, i) => {
+      const from = i === 0 ? 0 : at[i - 1]! + 1
+      return !/\bclosing:/.test(view.slice(from, pos))
+        && !/\bclosing:/.test(view.slice(pos, at[i + 1] ?? view.length))
+    })
+    expect(missing, `這些 /api/presence 呼叫點的 body 沒帶 closing（字元位置）：${missing.join('、')}`)
+      .toEqual([])
+  })
+
+  it('server 端把 closing 一路帶到 PresenceEntry（不是收下就丟掉）', () => {
+    const route = stripComments(readFileSync(resolve(ROOT, 'server/api/presence.post.ts'), 'utf8'))
+    expect(route).toMatch(/closing:\s*z\.boolean\(\)/)
+    // 解構出來並傳給 reportViewing —— 只在 schema 宣告而不轉交是最容易漏的一步
+    expect(route).toMatch(/closing\b[^\n]*\}\s*=\s*await readBodyAs/)
+
+    const service = stripComments(readFileSync(resolve(ROOT, 'server/services/presence.ts'), 'utf8'))
+    expect(service).toMatch(/closing/)
+  })
+})
+
+/**
+ * 「什麼算新訊息」只有一個定義 —— 2026-09-07 手動走查（T054 前置）定位。
+ *
+ * ⚠️ 這條守衛的存在理由：`PollingMessageSource.sliceNew()` 在**首次拉取**時刻意把整批
+ *    訊息當成新的推給訂閱者（那是訊息流的初始內容），而 `entry` 是 pipeline 層級的 ——
+ *    唯一分頁重新整理就會讓 refcount 歸零、pipeline 被拆掉，重連時錨點回到 `null`。
+ *    `onMessages()` 若只以 `sender.type === 'customer'` 過濾就交給 `scheduleIncremental()`，
+ *    **每一次重新整理都會對整段歷史重跑摘要／情緒／建議**：不報錯、沒有型別錯誤，
+ *    只是每次重連白燒一輪三個 agent 呼叫，而摘要每次都被整段換掉。
+ *
+ * ⚠️ 這個洞 2026-08-26 就由使用者在真實環境回報過一次（症狀是「同一筆事實在 `keyFacts`
+ *    裡重複累加」），當時只補了 SSE 重連那一半（`newCustomerMessagesSince()`），
+ *    輪詢這一半留到 2026-09-07 才被走查抓到。**兩條路 MUST 用同一個定義。**
+ *
+ * ⚠️ 為什麼是掃原始碼而不是單元測試：`session-manager.ts` 經 `copilot-runtime.ts`
+ *    用到 Nitro auto-import，vitest／tsc 碰不得（理由見 `session-registry.ts` 檔頭）。
+ */
+describe('分析觸發的「新訊息」只有一個定義（輪詢與 SSE 兩條路）', () => {
+  const MANAGER = resolve(ROOT, 'server/services/session-manager.ts')
+  const STREAM = resolve(ROOT, 'server/api/stream.get.ts')
+
+  it('兩條路都用 newCustomerMessagesSince() 判定', () => {
+    for (const [rel, file] of [['session-manager.ts', MANAGER], ['stream.get.ts', STREAM]] as const) {
+      const source = stripNonCode(readFileSync(file, 'utf8'))
+      expect(source, `${rel} 沒有用 newCustomerMessagesSince() 判定新訊息`)
+        .toMatch(/newCustomerMessagesSince\s*\(/)
+    }
+  })
+
+  it('session-manager.ts 交給 scheduleIncremental() 的不是「只濾 sender.type」的那份', () => {
+    const source = stripNonCode(readFileSync(MANAGER, 'utf8'))
+
+    const decl = /const\s+customerMessages\s*=\s*([\s\S]*?)\n\s*if\s*\(customerMessages\.length/.exec(source)
+    expect(decl?.[1], 'customerMessages 的宣告抓不到 —— 守衛會恆真').toBeTruthy()
+    expect(decl![1]!, '退回「只濾 sender.type」等於把整段歷史當新訊息')
+      .toMatch(/newCustomerMessagesSince/)
+
+    // 傳進 scheduleIncremental() 的必須就是這一份
+    expect(source).toMatch(/scheduleIncremental\(conversationId,\s*customerMessages/)
+  })
+
+  it('訊息流的 fan-out 與撞單檢查 MUST 維持吃整批（一起濾會漏訊息／漏搶答）', () => {
+    const source = stripNonCode(readFileSync(MANAGER, 'utf8'))
+    expect(source, 'checkSuggestionsSuperseded() 應吃整批 messages').toMatch(/checkSuggestionsSuperseded\(conversationId,\s*messages\)/)
+    expect(source, 'messages.appended 應送整批 messages').toMatch(/messages,\s*\n\s*\}\)/)
+  })
+
+  it('⚠️ 這支守衛本身是有效的 —— 退回舊寫法必須抓得出來', () => {
+    const regressed = "const customerMessages = messages.filter(m => m.sender.type === 'customer')\n  if (customerMessages.length > 0) {"
+    const decl = /const\s+customerMessages\s*=\s*([\s\S]*?)\n\s*if\s*\(customerMessages\.length/.exec(stripNonCode(regressed))
+    expect(decl?.[1]).toBeTruthy()
+    expect(decl![1]!).not.toMatch(/newCustomerMessagesSince/)
   })
 })

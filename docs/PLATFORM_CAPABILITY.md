@@ -231,7 +231,7 @@ created_at/updated_at  2026-08-24T06:15:30.283Z      ← **真實時間戳，不
 納入。範本更適合做成**輸入框旁的獨立快速插入功能**（鄰近夾帶檔案按鈕）。
 
 > ⚠️ **2026-08-31 訂正：畫布上的「常用回覆」按鈕已經不存在了。**
-> 本段原本寫「與設計稿 `docs/wireframe/03-workspace_lightTheme.png` 已畫出的『常用回覆』按鈕吻合」——
+> 本段原本寫「與設計稿 1c 已畫出的『常用回覆』按鈕吻合」——
 > 那張截圖是 08-28 版；畫布 08-31 版**已把「常用回覆」與字數一併移除**，該位置現在是
 > **夾帶檔案按鈕**（`docs/DESIGN_TOKENS.md` §8.4）。實作側也早已於 2026-08-29 裁定
 > 「常用回覆」與字數「N 字」兩者都不做，因此畫布這次的移除反而讓兩邊一致。
@@ -280,9 +280,9 @@ viki 補的正好是方案 A 缺的兩項：`answer-attribution` 提供 SOP 引�
 ```
 現在：對話層與 AI 層皆先接 iMBrace，KnowledgeProvider / AIProvider 收斂所有呼叫
 
-依 iMBrace 回覆二擇一（介面不變，只換實作）
-  可用   → 沿用 iMBrace；score 有值時顯示信心度，無值時留空
-  不可用 → 換上 VikiKnowledgeProvider / VikiAIProvider；score 開始有值
+⚠️ 2026-09-07 決策：暫不換入 Viki，且與 0-3f 的回覆脫鉤（見 ARCHITECTURE.md §18 M3）
+  現況   → 沿用 iMBrace；score 有值時顯示信心度，無值時留空
+  已擱置 → 換上 VikiKnowledgeProvider / VikiAIProvider；score 開始有值
 ```
 
 信心度這個 UI 欄位不隨方案拿掉——它綁定「有沒有真實分數來源」而非「用哪個方案」，這樣兩個方案才能無縫切換。這正是「所有尚未確定規格的外部依賴都必須藏在 provider 介面之後」的價值兌現點（`ARCHITECTURE.md` §8）。

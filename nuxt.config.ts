@@ -1,7 +1,7 @@
 /**
  * Nuxt 設定 —— 對應 docs/ARCHITECTURE.md §6。
  *
- * 與文件 §6 的三處差異（實作時確認，文件待同步）：
+ * 文件 §6 已與本檔同步（2026-09-08）；以下三點是設定背後的理由：
  *
  *  1. `@nuxt/icon` 與 `@nuxtjs/color-mode` 已由 `@nuxt/ui@4` 內建並自動註冊，
  *     重複列在 modules 會產生「module already registered」警告 → 此處移除。
@@ -42,6 +42,11 @@ const ENV_BRIDGE: Record<string, string> = {
   // specs/002-suggestion-knowledge-search 新增：知識庫檢索／建議卡生成 agent
   NUXT_IMBRACE_KNOWLEDGE_AGENT_ID: 'IMBRACE_KNOWLEDGE_AGENT_ID',
   NUXT_IMBRACE_SUGGESTION_AGENT_ID: 'IMBRACE_SUGGESTION_AGENT_ID',
+  // specs/006-closure-handoff-summary 新增：結案摘要 agent ＋ 結案紀錄的 Data Board。
+  // ⚠️ Board 以 **id** 指定而非名稱（契約 closure-board-schema.md §1）——
+  //    名稱不是唯一鍵，同名 board 會讓寫入靜默落到錯的地方，而那是正式 CRM。
+  NUXT_IMBRACE_CLOSURE_AGENT_ID: 'IMBRACE_CLOSURE_AGENT_ID',
+  NUXT_IMBRACE_CLOSURE_BOARD_ID: 'IMBRACE_CLOSURE_BOARD_ID',
 }
 for (const [nuxtKey, plainKey] of Object.entries(ENV_BRIDGE)) {
   const plain = process.env[plainKey]
@@ -69,6 +74,26 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  /*
+   * 主題（畫布 2026-09-08 16:08 版在 1c 頂列新增切換鈕，見 DESIGN_TOKENS.md §8.1）。
+   *
+   * 畫布是即時狀態，沒有回答「重新整理後記不記得」與「首次進入預設哪一個」，
+   * 兩題由使用者裁示（2026-09-08）：**記得上次的選擇**、**首次進入固定 light**。
+   *
+   * ⚠️ `preference: 'light'` 不是預設值 —— @nuxtjs/color-mode 的預設是 `'system'`（跟隨作業系統）。
+   *    留著預設會讓「首次進入固定 light」這條裁示在深色系統上靜默失效：沒有錯誤、
+   *    沒有型別問題，只是第一次打開就是深色。
+   * ⚠️ 「記得上次的選擇」由模組的 `localStorage['nuxt-color-mode']` 承擔，
+   *    我方不另外存 —— 但**前提是切換時寫的是 `colorMode.preference`**（會持久化），
+   *    不是 `colorMode.value`（只改當下畫面）。守衛見 `test/theme-toggle.test.ts`。
+   * ⚠️ `classSuffix: ''` 由 `@nuxt/ui` 設定，因此 class 是 `.dark` 而非 `.dark-mode`。
+   *    `app/assets/css/main.css` 的深色 token 掛在 `.dark` 上，兩者 MUST 一致。
+   */
+  colorMode: {
+    preference: 'light',
+    fallback: 'light',
+  },
+
   i18n: {
     defaultLocale: 'zh-TW',
     locales: [{ code: 'zh-TW', file: 'zh-TW.json' }],
@@ -86,6 +111,11 @@ export default defineNuxtConfig({
     redisUrl: '',
     imbraceSummaryAgentId: '',
     imbraceSentimentAgentId: '',
+    // specs/006：⚠️ 憲法 1.1 —— 兩者 MUST NOT 移入 public。
+    //   `imbraceClosureBoardId` 由 `server/api/conversations/[id]/closure/*` 讀取；
+    //   `imbraceClosureAgentId` 由 `server/services/ai/index.ts` 讀取（走 process.env，見該檔）。
+    imbraceClosureAgentId: '',
+    imbraceClosureBoardId: '',
 
     public: {
       appName: 'AgentCopilot',
@@ -93,7 +123,7 @@ export default defineNuxtConfig({
     },
   },
 
-  // §6 寫的是 typeCheck: true，此處必須關掉 —— 但保證沒有放鬆：
+  // typeCheck 關掉不是放鬆（§6 ②）：
   // `npm run build` 已改成先跑 `npm run typecheck` 再 `nuxt build`。
   //
   // ⚠️ 為何不能用 typeCheck: true / 'build'：本專案路徑含空白

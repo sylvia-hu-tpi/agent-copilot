@@ -30,6 +30,12 @@ const Body = z.object({
   state: z.enum(['viewing', 'composing', 'joined', 'away']),
   /** ⚠️ 與 state 正交，見 PresenceEntry.joined。心跳每次都要帶對 */
   joined: z.boolean().default(false),
+  /**
+   * specs/006 FR-045：這個人正在走結案流程。
+   * ⚠️ 同樣與 `state` 正交（見 `PresenceEntry.closing`）。`.default(false)` 是刻意的 ——
+   *    舊版前端不帶這個欄位時視為「沒有在結案」，而不是讓整個心跳 400。
+   */
+  closing: z.boolean().default(false),
   /** 分頁是否在前景 —— 決定輪詢頻率 */
   visible: z.boolean().default(true),
   /**
@@ -44,7 +50,7 @@ const Body = z.object({
 })
 
 export default defineEventHandler(async (event) => {
-  const { conversationId, state, joined, visible, clientId } = await readBodyAs(event, Body)
+  const { conversationId, state, joined, visible, clientId, closing } = await readBodyAs(event, Body)
   const convId = assertConversationId(conversationId)
   const session = await requireActiveBffSession(event)
 
@@ -65,6 +71,7 @@ export default defineEventHandler(async (event) => {
       { id: session.operatorId, name: session.operatorName },
       state,
       joined,
+      closing,
     )
   }
 

@@ -2,10 +2,10 @@
 
 > iMBrace 平台 Conversations 模組的即時客服輔助擴充
 >
-> 版本：v1.0 ｜ 制定日期：2026-08-24 ｜ 狀態：M1 完成，M2 進行中
+> 版本：v1.0 ｜ 制定日期：2026-08-24 ｜ 狀態：M2 完成（`m2-done`，2026-09-03），M3 進行中（`specs/006` 已交付，尚未合回 `main`）
 >
-> 本文件只保留**目前有效**的架構決策與規格。被推翻的推論與逐步修正的敘事收在
-> **附錄 B**，只在正文用不到的量測數字收在**附錄 C**，正文不重複。
+> 本文件只保留**目前有效**的架構決策與規格。被推翻的推論收在**附錄 B**，
+> 只在正文用不到的量測數字收在**附錄 C**，正文不重複。
 >
 > **未完成／未通過／已知落差的索引在 §19.3**，各項的正典敘述留在原章節。
 > ⚠️ **章節編號是穩定介面**（程式碼註解與 `CONSTITUTION.md` 直接引用），移除項目時留缺不遞補。
@@ -56,7 +56,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | AI 語意即時建議 | 依對話上下文產生可直接送出的回覆建議，引用具體 SOP 條目與信心度 |
 | 知識庫自然語言快查 | 客服以自然語言詢問，即時檢索 SOP 與知識庫 |
 | 一鍵帶入 | 建議回覆一鍵填入輸入框，送出前做撞單檢查 |
-| 交接／結案摘要 | LEAVE 或結案時自動產生摘要，人審後寫入 Data Board |
+| 結案摘要 | 結案時產生摘要，**經客服編輯確認**後寫入 Data Board。⚠️ 不是「自動產生後寫入」——人審是規則本身（憲法 5.1）。交接摘要已於 `specs/006-closure-handoff-summary` 確認不實作（§13.4 ②） |
 
 ### 1.3 產品形態
 
@@ -95,11 +95,11 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 執行環境 | **Node.js 24 LTS**（Krypton） | 見 §3.3 |
 | 伺服器 | Nitro（`node-server` preset） | |
 | iMBrace | `@imbrace/sdk` | **僅在 server 端使用** |
-| 狀態管理 | Pinia | `auth` / `conversations` / `sessions` / `presence` |
+| 狀態管理 | Pinia | `auth` / `conversations` / `stream` / `closure` |
 | 樣式 | Tailwind CSS v4 | |
 | 元件庫 | Nuxt UI | v4 起 Pro 已併入主套件，125+ 元件全免費 MIT，商用無需額外授權 |
-| 圖示 | `@nuxt/icon` + Lucide | 按需載入 |
-| 深色模式 | `@nuxtjs/color-mode` | Nuxt UI 內建 |
+| 圖示 | `@nuxt/icon` + Lucide | 按需載入；由 `@nuxt/ui` 內建註冊，不另列 modules |
+| 深色模式 | `@nuxtjs/color-mode` | 由 `@nuxt/ui` 內建。切換入口是頂列的主題鈕（`app/layouts/console.vue`，畫布規格見 `DESIGN_TOKENS.md` §8.1）。⚠️ `preference: 'light'` 是**刻意覆寫**模組預設的 `'system'`（使用者裁示：首次進入固定淺色）；持久化走模組的 `localStorage`，我方不另外存（守衛 `test/theme-toggle.test.ts`） |
 | i18n | `@nuxtjs/i18n`，預設 `zh-TW` | 第一版即導入 |
 | 工具函式 | VueUse | `useVirtualList`、`useEventSource`、`useDebounceFn` |
 | 驗證 | Zod | API 邊界與 AI 輸出的 schema 驗證 |
@@ -170,6 +170,8 @@ Node 26 轉 LTS 後不建議立即跟進，Node 24 支援至 2028-04 時間充�
 
 ### 4.2 JOIN 事件的完整資料流
 
+⚠️ 下圖是 **M4 webhook 到位後**的目標形狀；M1–M3 的 ① 由本地快路徑（我方客服按下 JOIN）與清單輪詢（§9.3.1）取代。
+
 ```
   iMBrace 平台                        AgentCopilot
  ┌──────────────┐
@@ -210,121 +212,80 @@ JOIN 有兩個來源，**同一個動作可能兩邊都收到**：
 
 **必須去重**：以 `conversationId + operatorId` 為鍵，10 秒時間窗內視為同一事件。
 
-> 未實作去重的後果：面板閃爍兩次、AI 分析重複執行（成本翻倍）、presence 出現重複項目，且極難追查，務必在 M1 就處理。
+> 未實作去重的後果：面板閃爍兩次、AI 分析重複執行（成本翻倍）、presence 出現重複項目，且極難追查。
 
 ---
 
 ## 5. 目錄結構
 
+以實際檔案為準（2026-09-08 快照）；標 **（M4）** 的尚未建立，隨對應功能一起產生。⚠️ 此樹只列與架構決策相關的檔案，不是完整清單——要知道現在有什麼，`ls` 比讀這裡準。
+
 ```
 AgentCopilot/
-├── nuxt.config.ts
+├── nuxt.config.ts                   # §6：ssr:false、.env 橋接、typeCheck 關閉的理由
+├── config/
+│   └── categories.ts                # 結案分類受控詞彙（specs/006）
+│   （supervisors.yaml —— 主管 email 白名單，隨主管接管功能建立，尚未建立）
 ├── app/
-│   ├── layouts/
-│   │   ├── default.vue              # 登入／選組織頁（未進工作區前）
-│   │   └── console.vue              # 頂欄 + 側欄 + 三欄工作區
-│   ├── pages/
-│   │   ├── login.vue                # ①寄 OTP → ②驗證 OTP（見 §7.1）
-│   │   ├── organization.vue         # ③選擇組織 —— 一律顯示，即使只有一個
-│   │   ├── index.vue                # 對話列表
-│   │   └── c/[conversationId].vue   # 主工作區
+│   ├── layouts/                     # default（登入／選組織）、console（頂欄 + 三欄工作區）
+│   ├── pages/                       # login、organization（§5.1 ①）、index、c/[conversationId]
 │   ├── components/
-│   │   ├── conversation/
-│   │   │   ├── MessageList.vue      # 虛擬滾動訊息流
-│   │   │   ├── MessageBubble.vue
-│   │   │   ├── Composer.vue         # 輸入框 + 送出前撞單檢查
-│   │   │   └── PresenceBar.vue      # 誰在看／誰在輸入
-│   │   ├── copilot/
-│   │   │   ├── SummaryCard.vue
-│   │   │   ├── SentimentGauge.vue   # 手刻 SVG sparkline
-│   │   │   ├── SuggestionList.vue
-│   │   │   ├── SuggestionCard.vue   # 含「一鍵帶入」
-│   │   │   ├── KnowledgeSearch.vue  # inline 面板
-│   │   │   └── ClosurePanel.vue     # 結案摘要人審面板
-│   │   └── common/
-│   ├── composables/
-│   │   ├── useCopilotStream.ts      # SSE 連線 + 自動重連 + 重連後對帳（§9.5）
-│   │   ├── useCopilotSession.ts     # 單一對話的 copilot 狀態
-│   │   ├── usePresence.ts
-│   │   └── useDraft.ts              # 草稿保存於 localStorage
-│   └── stores/
-│       ├── auth.ts
-│       ├── conversations.ts
-│       ├── sessions.ts
-│       └── presence.ts
+│   │   ├── conversation/            # Sidebar、MessageList（虛擬滾動）、MessageBubble、Composer、
+│   │   │                            # PresenceBar、ModeSelect、CollisionDialog（撞單攔截）、ResizeHandle…
+│   │   └── copilot/                 # PanelHeader、BlockShell、SummaryCard、SentimentGauge（手刻 SVG）、
+│   │                                # SuggestionList/Card（一鍵帶入）、KnowledgeSearch（inline）、
+│   │                                # ClosureBlock、ClosureScopePicker、ClosureCustomStart（specs/006）
+│   ├── composables/                 # useConversationView、useCopilotSession、useCopilotPanel、
+│   │                                # useKnowledgeSearch、useDraft（草稿存 localStorage）、usePaneSize…
+│   ├── stores/                      # auth、conversations、stream（SSE 連線 + 重連 + 對帳，§9.5）、closure
+│   └── utils/                       # message-merge（§9.5 ③ 的去重）、operator-id…
 ├── server/
 │   ├── api/
-│   │   ├── auth/
-│   │   │   ├── otp.post.ts          # client.requestOtp(email)
-│   │   │   ├── login.post.ts        # client.loginWithOtp() → 回傳 organizations[]
-│   │   │   ├── organization.post.ts # 手動 exchange（保留 refresh_token）
-│   │   │   ├── me.get.ts
-│   │   │   └── logout.post.ts
+│   │   ├── auth/                    # otp、login、organization（保留 refresh_token）、reselect-organization、me、logout
 │   │   ├── conversations/
 │   │   │   ├── index.get.ts         # list / search
 │   │   │   ├── [id].get.ts
-│   │   │   ├── [id]/join.post.ts
-│   │   │   ├── [id]/leave.post.ts
-│   │   │   └── [id]/status.patch.ts
-│   │   ├── messages/
-│   │   │   ├── index.get.ts         # 支援 since=<messageId> 增量拉取
-│   │   │   └── index.post.ts        # 送出（含撞單檢查）
-│   │   ├── copilot/
-│   │   │   ├── analyze.post.ts      # 手動重新分析
-│   │   │   ├── knowledge.post.ts    # 自然語言快查
-│   │   │   ├── handover.post.ts     # 交接摘要
-│   │   │   └── closure.post.ts      # 結案摘要（產生 / 確認寫入）
+│   │   │   └── [id]/
+│   │   │       ├── join.post.ts / leave.post.ts / mode.post.ts   # §10.6 同一支平台端點
+│   │   │       ├── knowledge-search.post.ts                      # 自然語言快查
+│   │   │       ├── copilot/retry.post.ts                         # 單一區塊手動重試
+│   │   │       └── closure/                                      # 結案摘要（specs/006）—— ⚠️ 三支
+│   │   │           ├── scopes.post.ts   # 涵蓋區間候選（面板開啟時）
+│   │   │           ├── draft.post.ts    # 產生草稿（改區間／重新產生都走這支）
+│   │   │           └── commit.post.ts   # 寫入 Data Board（⚠️ 唯一會寫正式紀錄的端點）
+│   │   ├── messages/                # index.get（since=<messageId> 對帳）、index.post（送出，含撞單檢查）
+│   │   ├── connection/beat.post.ts  # 連線心跳（005 FR-005a）
 │   │   ├── presence.post.ts         # 上報 viewing / composing
 │   │   ├── stream.get.ts            # SSE
 │   │   ├── health.get.ts
-│   │   └── hooks/
-│   │       └── imbrace/
-│   │           └── conversation.post.ts   # webhook 收口
+│   │   └── hooks/imbrace/conversation.post.ts   # （M4）webhook 收口
 │   ├── sources/
-│   │   ├── types.ts                 # Provider 介面定義
+│   │   ├── types.ts                 # Provider 介面（§8.1）
 │   │   ├── conversation-list-poller.ts  # 第一層：清單輪詢（§9.3.1）
-│   │   ├── polling-message-source.ts
-│   │   ├── webhook-event-source.ts  # 骨架先備好
+│   │   ├── polling-message-source.ts    # 第二層：逐對話輪詢 + 共享訂閱
 │   │   ├── message-fetch.ts         # 取數策略（raw-conversation-id，§9.3）
 │   │   ├── mappers.ts               # 防腐層：識別碼正規化、發送者判別、附件
-│   │   ├── agent-knowledge-provider.ts  # M2（§8.2）
-│   │   └── static-sop-provider.ts
+│   │   └── webhook-event-source.ts  # （M4）
 │   ├── services/
-│   │   ├── imbrace.ts               # SDK client factory（依 session token）
-│   │   ├── session-manager.ts       # CopilotSession 生命週期 + refcount
-│   │   ├── board-repository.ts      # Data Board 讀寫（冪等）
-│   │   └── ai/
-│   │       ├── summarize.ts
-│   │       ├── sentiment.ts
-│   │       ├── suggest.ts
-│   │       ├── closure.ts
-│   │       └── prompts/             # prompt 集中管理，與程式邏輯分離
-│   ├── state/
-│   │   ├── types.ts                 # StateStore / EventBus 介面
-│   │   ├── memory-store.ts
-│   │   ├── memory-bus.ts
-│   │   ├── redis-store.ts           # M4
-│   │   └── redis-bus.ts             # M4
-│   ├── utils/
-│   │   ├── session.ts               # cookie session
-│   │   ├── signature.ts             # webhook HMAC 驗簽
-│   │   ├── dedupe.ts                # event 去重
-│   │   └── retry.ts                 # 指數退避
-│   └── middleware/
-│       └── auth.ts
-├── shared/
-│   └── types/
-│       ├── copilot.ts               # AI 輸出契約（前後端共用）
-│       ├── conversation.ts
-│       └── events.ts                # SSE 事件型別
-├── config/                          # ⚠️ 兩個檔案皆尚未建立，隨對應功能一起產生
-│   ├── categories.yaml              # 結案分類受控詞彙（M3）
-│   └── supervisors.yaml             # 主管 email 白名單（隨主管接管功能）
-└── docs/
-    ├── ARCHITECTURE.md              # 本文件
-    ├── AGENT_PROMPTS.md             # 四個 agent 的 prompt／模型快照（生成物，見 §11）
-    ├── IMBRACE_QUESTIONS.md         # 待向 iMBrace 確認的清單
-    └── CONSTITUTION.md              # Spec Kit 憲法
+│   │   ├── imbrace.ts               # SDK client factory ＋ 所有 SDK 不一致的防腐層（CLAUDE.md 地雷 3）
+│   │   ├── copilot-runtime.ts       # 每組織一份 runtime（清單輪詢、憑證借用）
+│   │   ├── copilot-analysis.ts      # 分析管線 barrel（摘要 + 對外入口 + debounce）
+│   │   ├── analysis-state.ts / analysis-dedupe.ts / blocks/{sentiment,suggestion}.ts   # §18 M2「分析管線拆檔」
+│   │   ├── session-manager.ts / session-registry.ts   # CopilotSession 生命週期 + 以 connectionId 計數
+│   │   ├── viewer-joined.ts         # 左欄「我 JOIN 的對話」判定快取（§10.2.1a）
+│   │   ├── directory.ts / presence.ts / credentials.ts / conversation-context.ts
+│   │   ├── ai/                      # index（裝配、缺憑證退回 Mock）、imbrace-agent-provider、
+│   │   │                            # mock-ai-provider、schemas（Zod）、retry-policy（FR-014）
+│   │   ├── knowledge/               # index、agent-knowledge-provider、mock-knowledge-provider、resolve-search
+│   │   └── closure/                 # board-repository（冪等寫入）、board-schema（§13.3）、period、
+│   │                                # sentiment-range、cited-sops、readonly-fields、config
+│   ├── state/                       # types（StateStore / EventBus 介面）、memory-store、memory-bus；（M4）redis-*
+│   └── utils/                       # session、session-signature、dedupe、citation-audit、redact、validate…
+├── shared/types/                    # copilot（AI 契約）、conversation、events（SSE）、knowledge、auth
+├── scripts/
+│   ├── setup-closure-board.ts       # npm run board:setup / board:verify（§13.3）
+│   └── spike/                       # 實測腳本；out/ 為原始產出（gitignored）
+└── docs/                            # 文件地圖見 CLAUDE.md
 ```
 
 ### 5.1 登入流程的三個實作約束
@@ -361,56 +322,12 @@ AgentCopilot/
 
 ## 6. Nuxt 設定
 
-```ts
-// nuxt.config.ts
-export default defineNuxtConfig({
-  compatibilityDate: '2026-08-24',
+正典是 `nuxt.config.ts` 本身（含每一項設定的理由註解），本節不複製一份會過期的副本。只有四件事**必須先知道**：
 
-  // SPA 模式，但保留完整 Nitro server
-  ssr: false,
-
-  nitro: {
-    preset: 'node-server',
-  },
-
-  modules: [
-    '@nuxt/ui',
-    '@nuxt/icon',
-    '@nuxtjs/color-mode',
-    '@nuxtjs/i18n',
-    '@pinia/nuxt',
-    '@vueuse/nuxt',
-  ],
-
-  i18n: {
-    defaultLocale: 'zh-TW',
-    locales: [{ code: 'zh-TW', file: 'zh-TW.json' }],
-    strategy: 'no_prefix',
-  },
-
-  runtimeConfig: {
-    // ⚠️ 以下僅存在於 server，絕不可移入 public
-    imbraceApiKey: '',
-    imbraceOrganizationId: '',
-    sessionSecret: '',
-    webhookSecret: '',
-    aiApiKey: '',
-    redisUrl: '',
-
-    public: {
-      appName: 'AgentCopilot',
-      imbraceEnv: 'stable',
-    },
-  },
-
-  // ⚠️ 實際的 nuxt.config.ts 是 `typeCheck: false`，不是筆誤——本專案路徑含空白
-  //    （`03 FE products`），vue-tsc 的路徑處理會出錯。型別檢查改由 build script
-  //    串接（`npm run typecheck`），並未放鬆，理由詳見 nuxt.config.ts 的註解。
-  typescript: { strict: true, typeCheck: false },
-})
-```
-
-> **`ssr: false` 的常見誤解**：這不等於靜態網站。只要用 `nuxt build`（而非 `nuxt generate`）並以 `node .output/server/index.mjs` 啟動，`server/api/**` 的所有路由完全正常運作。你得到的是「SPA 前端 + 完整 Node BFF」。
+1. **`ssr: false` + `nitro.preset = 'node-server'`**，以 `nuxt build`（不是 `nuxt generate`）建置、`node .output/server/index.mjs` 啟動。這不等於靜態網站：`server/api/**` 完全正常運作，得到的是「SPA 前端 + 完整 Node BFF」。
+2. **`typescript.typeCheck: false` 不是放鬆**——專案路徑含空白（`03 FE products`），Nuxt 把路徑未加引號傳給 vue-tsc 會裂成三段（TS5083）。型別檢查改由 `npm run build` 先跑 `npm run typecheck` 串接。
+3. **秘密只在 server 端 `runtimeConfig`，預設值一律空字串**，實際值由執行環境的 `NUXT_*` 注入；`nuxt.config.ts` 會把 `.env.local` 的 `IMBRACE_*` 橋接成 `NUXT_*`（spike 腳本與 Nuxt 共用同一份）。填進預設值會被烘進 `.output`（憲法 1.1、§16.2）。五個 agent 的 `assistant_id` 與結案 board 的 **id**（不是名稱）也走這裡。
+4. **`@nuxt/icon` 與 `@nuxtjs/color-mode` 不列在 `modules`**，`@nuxt/ui@4` 已內建註冊，重複列會警告。`colorMode.preference = 'light'` 是刻意覆寫（§3.1）。
 
 ---
 
@@ -467,32 +384,21 @@ setCookie(event, 'ac_session', signed(sessionId), {
 
 ### 7.2b 客服的顯示名稱 —— **平台沒有人名，只有 email**
 
-> ⚠️ **實測結論（2026-08-31）**：我們探測過的兩個來源都拿不到客服的人名。
-> 這不是我方的對應寫錯，而是資料本身就沒有。
+> ⚠️ **實測結論（2026-08-31）**：探測過的兩個來源都拿不到客服的人名。這不是對應寫錯，而是資料本身就沒有。
 
 | 來源 | 欄位 | 實測 |
 |---|---|---|
 | `loginWithOtp()` 的回應 | `display_name`／`name` | **兩個欄位都不存在** → `server/services/imbrace.ts` 退回 `email` |
 | `conversations.get()` 的 `users[]`（團隊名冊） | `display_name` | **12/12 全部是 email 格式**（`scripts/spike/out/03-operators-snapshot.json`，兩個對話的樣本，經 `scrubPii()` 全數命中 email 規則） |
 
-**影響三個位置**，全都是客服彼此辨識的關鍵處：頂列的「我是誰」、
-presence 列的「誰在這個對話裡」（`server/services/directory.ts`）、訊息泡泡上的真人客服姓名。
+**影響三個位置**，全都是客服彼此辨識的關鍵處：頂列的「我是誰」、presence 列的「誰在這個對話裡」（`server/services/directory.ts`）、訊息泡泡上的真人客服姓名。
 
 #### 三條處理原則
 
-1. **MUST NOT 從 email 推導人名。** `agent.lin@company.com` → 「Lin」在同名同姓、
-   共用信箱、非英文名字的情況下都會產生錯的名字 —— 而**認錯同事**正是撞單防護（§10.4）
-   與 presence（§10.2）最不能出錯的地方。這與「查不到名字時用通稱、不可編一個名字」
-   （`directory.ts`）是同一條規則。
-2. **頭像縮寫可以用 email，那是縮寫不是名字。** `avatarLabel()` 取前兩碼只是一個視覺錨點，
-   不宣稱那是誰的姓名，因此不受上一條約束。
-   ⚠️ 頂列（`app/layouts/console.vue`）因此**只放頭像**，姓名／email 文字收進下拉選單 ——
-   畫布畫的是頭像＋常駐姓名，但我們沒有人名可放，把一串 email 攤在頂列上
-   既佔寬度、又讓「身分」看起來像一個沒設定好的欄位。這是刻意偏離畫布的決定。
-3. **這是待對方回覆的問題，不是待實作的功能** —— 見 `IMBRACE_QUESTIONS.md` 的 **H-9**：
-   平台有沒有讓 operator 設定顯示名稱的地方、有沒有單一使用者資料端點。
-   若對方回覆「設計上就只有 email」，我方改為**明示地**顯示 email
-   （例如加上「以帳號顯示」的說明），而不是繼續讓它看起來像一個名字。
+1. **MUST NOT 從 email 推導人名。** `agent.lin@company.com` → 「Lin」在同名同姓、共用信箱、非英文名字的情況下都會產生錯的名字 —— 而**認錯同事**正是撞單防護（§10.4）與 presence（§10.2）最不能出錯的地方。這與「查不到名字時用通稱、不可編一個名字」（`directory.ts`）是同一條規則。
+2. **頭像縮寫可以用 email，那是縮寫不是名字。** `avatarLabel()` 取前兩碼只是一個視覺錨點，不宣稱那是誰的姓名，因此不受上一條約束。
+   ⚠️ 頂列（`app/layouts/console.vue`）的**身分區因此只放頭像**，姓名／email 文字收進下拉選單（「只放頭像」講的是身分這一格，不是整個右上角：頭像左側分隔線外還有主題切換鈕，見 `DESIGN_TOKENS.md` §8.1）。畫布畫的是頭像＋常駐姓名，但我們沒有人名可放，把一串 email 攤在頂列上既佔寬度、又讓「身分」看起來像一個沒設定好的欄位。這是刻意偏離畫布的決定。
+3. **這是待對方回覆的問題，不是待實作的功能** —— 見 `IMBRACE_QUESTIONS.md` **H-9**。若對方回覆「設計上就只有 email」，我方改為**明示地**顯示 email（例如加上「以帳號顯示」的說明），而不是繼續讓它看起來像一個名字。
 
 ### 7.3 SDK Client Factory
 
@@ -511,7 +417,6 @@ export function clientForSession(session: Session) {
 > **不要建立全域單例 client。** 每位客服的操作必須以自己的身分執行，否則 `join()` 與訊息送出的歸屬會全部錯亂，稽核軌跡失去意義。
 
 ---
-
 ## 8. 抽象層：Provider 介面
 
 這是整份架構最重要的設計。**所有尚未確定規格的外部依賴，都必須藏在一個 provider 介面之後。** 如此一來，iMBrace 的 webhook 與 Knowledge API 開通與否，都不會阻塞開發進度——屆時只需替換實作，上層邏輯一行不動。
@@ -568,7 +473,7 @@ export interface MessageSource {
 
 ```ts
 export interface KnowledgeHit {
-  /** 僅供系統內部白名單核對（憲法 4.3）使用，不對客服顯示——見下方 2026-08-27 訂正 */
+  /** 僅供系統內部白名單核對（憲法 4.3）使用，不對客服顯示 */
   id: string
   title: string
   snippet: string
@@ -592,22 +497,20 @@ export interface KnowledgeProvider {
 }
 ```
 
-**實作優先序**：第一階段採 `AgentKnowledgeProvider`（iMBrace）。是否換成 `VikiKnowledgeProvider` 取決於 iMBrace 對 RAG 檢索品質的回覆（`IMBRACE_QUESTIONS.md` §0-3f），不是時程排定的第二階段，見 `PLATFORM_CAPABILITY.md` §6。
-
 | 順位 | 實作 | 狀態 |
 |---|---|---|
-| 1 | `AgentKnowledgeProvider` | ✅ **M2 採用** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。可取得引用來源（檔名＋chunk 原文），但 `score` 恆為 `null` |
-| 備援 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作——若 #19 RAG 品質調不動，換上此實作即可取得真實 `score`，介面不用改 |
+| 1 | `AgentKnowledgeProvider` | ✅ **採用** —— 透過掛載 Knowledge Hub 的 AI Agent 查詢。可取得引用來源（檔名＋chunk 原文），但 `score` 恆為 `null` |
+| 備援 | `VikiKnowledgeProvider` | 🟡 介面已預留，未實作。**2026-09-07 決策：本期不換入，且與 `IMBRACE_QUESTIONS.md` 0-3f（RAG 品質）的回覆脫鉤**——不論 0-3f 怎麼回覆都不換。重啟條件見 §18 M3 驗收第一條；日後換上即可取得真實 `score`，介面不用改 |
 | 備案 | `BoardsSearchProvider` | 🟡 未採用——`boards.search()` 為 Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
-| 開發期 | `MockKnowledgeProvider` | ✅ **M2 採用** —— 缺 `IMBRACE_API_KEY`／`IMBRACE_ORGANIZATION_ID`／`IMBRACE_KNOWLEDGE_AGENT_ID` 任一時由 `useKnowledgeProvider()` 自動退回並印警告。**僅供本機開發**，正式環境出現該行警告即為設定錯誤 |
-| — | ~~`StaticSopProvider`~~（讀 `config/sop.yaml`） | ❌ **已撤銷**（2026-08-28，`specs/002-suggestion-knowledge-search` plan.md「二、外部依賴的抽象邊界」）—— `MockKnowledgeProvider` 已完整承擔離線 fallback，多一條讀 yaml 的路徑不增加任何能力，只多一處要維護。`config/sop.yaml` 因此不會建立 |
+| 開發期 | `MockKnowledgeProvider` | ✅ 缺 `IMBRACE_API_KEY`／`IMBRACE_ORGANIZATION_ID`／`IMBRACE_KNOWLEDGE_AGENT_ID` 任一時由 `useKnowledgeProvider()` 自動退回並印警告。**僅供本機開發**，正式環境出現該行警告即為設定錯誤 |
+| — | ~~`StaticSopProvider`~~（讀 `config/sop.yaml`） | ❌ **已撤銷**（2026-08-28，`specs/002` plan.md）—— `MockKnowledgeProvider` 已完整承擔離線 fallback，多一條讀 yaml 的路徑不增加任何能力。`config/sop.yaml` 因此不會建立 |
 | — | ~~`BoardsRagProvider`~~／~~`LocalVectorProvider`~~ | ❌ 已撤銷——`processEmbedding()` 之後無檢索 API；`ai.embed()` 回 404 |
 
 > 無論最終選哪一條，`KnowledgeProvider` 介面本身不變——這正是抽象層的目的：外部能力邊界未定時，開發不必停下來等。
 
-### 8.2b AI 推論（摘要／情緒／建議卡）
+### 8.2b AI 推論（摘要／情緒／建議卡／結案）
 
-與知識庫檢索同理，摘要、情緒分析、建議卡生成也收斂到單一介面，讓 iMBrace AI Agent 與 viki 的切換只需換一個實作：
+摘要、情緒分析、建議卡、結案摘要收斂到單一介面（正典 `shared/types/copilot.ts`），讓 iMBrace AI Agent 與 viki 的切換只需換一個實作：
 
 ```ts
 export interface AIProvider {
@@ -615,643 +518,140 @@ export interface AIProvider {
   analyzeSentiment(input: { messages: Message[] }): Promise<SentimentPoint[]>
   narrateSentiment(input: { points: Array<Pick<SentimentPoint, 'score' | 'label' | 'drivers'>> }): Promise<SentimentNarrative>
   suggest(input: { history: Message[]; knowledgeHits: KnowledgeHit[]; aiReplies: boolean }): Promise<SuggestionCard[]>
+  summarizeClosure(input: { history: Message[]; vocabulary: ClosureVocabulary; signal?: AbortSignal }): Promise<…>   // specs/006
 }
 ```
 
-> 四個方法皆已落地。
->
 > ### `narrateSentiment()` 的三條硬性規則
 >
 > 它產出情緒區塊的一段走勢文字摘要（畫布 2a「近 3 輪情緒持續上升…建議先安撫語氣…」）。
-> 這是**唯一一個被允許失敗而不影響所屬區塊狀態**的 AI 呼叫，因此規則要寫清楚：
+> 這是**唯一一個被允許失敗而不影響所屬區塊狀態**的 AI 呼叫：
 >
 > 1. **輸入是評分結果，不是訊息原文。** 走勢與建議可以從 `score`／`label`／`drivers` 推出來；
 >    重送一次全部訊息只是把同一批個資再送一趟，prompt 也長好幾倍（憲法 1.5 的精神）。
-> 2. **分數先發、敘述後補。** 折線與示警是有時效的（客戶正在生氣），MUST NOT 為了一段散文
->    多等一次 AI 往返。`finishSentimentSuccess()` 先發 `ready`（`narrative: null`），
->    `narrateSentimentTrend()` 完成後再發一次。
-> 3. **失敗一律吞掉，`sentimentBlock` 維持 `ready`。** 分數與示警是這個區塊的主體，
->    為了一段敘述把折線圖一起打掉是本末倒置。
+> 2. **分數先發、敘述後補。** 折線與示警是有時效的，MUST NOT 為了一段散文多等一次 AI 往返。
+>    `finishSentimentSuccess()` 先發 `ready`（`narrative: null`），`narrateSentimentTrend()` 完成後再發一次。
+> 3. **失敗一律吞掉，`sentimentBlock` 維持 `ready`。** 分數與示警是這個區塊的主體。
 >
-> ⚠️ 另有一條同樣重要的資料規則：**新的評分點落地時 `narrative` MUST 歸零**。
-> 敘述描述的是「當時那條時間軸」，多了幾點之後「近 3 輪持續上升」可能已經不成立——
-> 留著舊敘述是在畫面上放一句可能已經錯了的斷言，而空白只是暫時沒有資訊。
+> ⚠️ 另有一條資料規則：**新的評分點落地時 `narrative` MUST 歸零**。敘述描述的是「當時那條時間軸」，
+> 多了幾點之後「近 3 輪持續上升」可能已經不成立——留著舊敘述是在畫面上放一句可能已經錯了的斷言。
+
+⚠️ `summarizeClosure()` **刻意不收 `knowledgeHits`**：結案 agent 的 system prompt 逐字要求「不要輸出 citedSopIds，由系統填入」，`ClosureDraft.citedSops` 由呼叫端直接以檢索命中填入，檢索與這支呼叫因此完全獨立、可並行。`history` 是**涵蓋區間內**的訊息，不是全對話（§13.4 ④）。
 
 | 順位 | 實作 | 狀態 |
 |---|---|---|
-| 1 | `ImbraceAgentProvider` | ✅ **已實作**（`server/services/ai/imbrace-agent-provider.ts`，2026-08-27）——呼叫 `aiAgent.streamChat`，兩個 agent 由使用者於 iMBrace 後台手動建立（`AgentCopilot_摘要_agent`／`AgentCopilot_情緒評分_agent`，`assistant_id` 存於 `.env.local` 的 `IMBRACE_SUMMARY_AGENT_ID`／`IMBRACE_SENTIMENT_AGENT_ID`）。結構化輸出靠 prompt（非平台原生 `response_format`），Zod 驗證 + 重試 + 降級見 §11.7 與下方「JSON 抽取」小節。⚠️ `narrateSentiment()` 與 `analyzeSentiment()` **共用同一個情緒 agent**（`IMBRACE_SENTIMENT_AGENT_ID`），只是 prompt 不同——沒有為它另開一個 agent，因為那會多一個要在後台手動建立、且忘了建就整段安靜消失的相依。實測 `summarize()`／`analyzeSentiment()` 各 9/9 次成功（`scripts/spike/15-copilot-agents.ts`，3 個案例 × 3 次，含真實語意品質，如「客戶多次反應網路斷線」正確標出 `repeat_contact`／`churn` 風險旗標）。走完 provider 全路徑（JSON 抽取 → 欄位組裝 → Zod 驗證）的迴歸檢查是另一支 `scripts/spike/16-verify-copilot-provider.ts`（`RUNS` 為 3，2026-09-02 重跑 3/3） |
-| 開發期／降級 | `MockAIProvider` | ✅ 保留——`useAIProvider()` 缺 `IMBRACE_API_KEY`／組織 id／兩個 agent id 任一項時自動退回，並印出警告（`server/services/ai/index.ts`），供沒有正式憑證的開發環境使用 |
+| 1 | `ImbraceAgentProvider` | ✅ `server/services/ai/imbrace-agent-provider.ts`——呼叫 `aiAgent.streamChat`，五個 agent 由使用者於 iMBrace 後台手動建立，`assistant_id` 存於 `.env.local`（`IMBRACE_{SUMMARY,SENTIMENT,SUGGESTION,KNOWLEDGE,CLOSURE}_AGENT_ID`）。結構化輸出靠 prompt（非平台原生 `response_format`），Zod 驗證 + 重試 + 降級見 §11.7 與下方「JSON 抽取」。⚠️ `narrateSentiment()` 與 `analyzeSentiment()` **共用同一個情緒 agent**，只是 prompt 不同——另開一個 agent 會多一個「忘了建就整段安靜消失」的相依。迴歸檢查：`npm run spike:verify-provider`（走完 JSON 抽取 → 欄位組裝 → Zod 全路徑） |
+| 開發期／降級 | `MockAIProvider` | ✅ `useAIProvider()` 缺 `IMBRACE_API_KEY`／組織 id／agent id 任一項時自動退回並印警告（`server/services/ai/index.ts`） |
 | 備援 | `VikiAIProvider` | 🟡 介面已預留，未實作——打 viki public API，`SuggestionCard.confidence` 會開始有真實值 |
 
-> `AIProvider` 與 `KnowledgeProvider` 合起來，是「所有 AI 相關外部依賴」的唯一收斂點——不管未來走 iMBrace 還是 viki，上層都不用重寫。
+> `AIProvider` 與 `KnowledgeProvider` 合起來，是「所有 AI 相關外部依賴」的唯一收斂點。
 
 #### ⚠️ agent 的 system prompt 也不在版本控制裡，而它的措辭會直接改變折線的形狀
 
-> ✅ **2026-09-02 起有快照可以 diff 了。** 四個 agent 的 `personality_role`／`core_task`／
-> `model_id` 全部存進 `docs/AGENT_PROMPTS.md`，由 `npm run spike:agent-prompts` 抓線上值
-> 逐字元比對，不一致就以非零離開並指出差在第幾行（只呼叫一次 `listAiAgents()`，約 1 秒）。
-> 單向流程：**改後台 → `npm run spike:agent-prompts -- --write` → commit（寫清楚為什麼改）**。
-> ⚠️ 那份 md 是**快照不是設定檔** —— 改它不會改變任何 agent 的行為。
->
-> 它解決的是本節最貴的問題：後台被改動時，症狀只會出現在量測數字上，而**量測數字有很多種
-> 解釋**。2026-09-02 就因為沒有這份 diff，把「情緒 24-B 由 3.6 分升到 11.7 分」誤讀成絕對
-> 分數帶失效，實際上 prompt 完好無缺（見附錄 C-3）。**先跑這支拿直接證據，再決定要不要花
-> 三分鐘跑 spike 24。**
+五個 agent 的 `personality_role`／`core_task`／`model_id` 都在 **iMBrace 後台**，repo 只存 `assistant_id`。
+快照在 `docs/AGENT_PROMPTS.md`，由 `npm run spike:agent-prompts` 抓線上值逐字元比對，不一致就以非零離開並指出差在第幾行（約 1 秒）。
+單向流程：**改後台 → `npm run spike:agent-prompts -- --write` → commit（寫清楚為什麼改）**。
+⚠️ 那份 md 是**快照不是設定檔**——改它不會改變任何 agent 的行為。
 
-模型不在版本控制裡（見下一節），**system prompt 同樣不在**——而後者改一句話就能讓
-sparkline 換一個形狀。現行情緒 prompt 有三組**不可拿掉**的規則，各自解決一個實際症狀
-（證據見 `scripts/spike/24-sentiment-dispersion.ts`，數據在附錄 C）：
+**它解決的是本節最貴的問題**：後台被改動時，症狀只會出現在量測數字上，而量測數字有很多種解釋（附錄 C-3 記著一次誤讀）。
+**量測數字是間接證據，快照 diff 是直接證據；先跑這支再決定要不要重量。**
+
+現行情緒 prompt 有三組**不可拿掉**的規則，各自解決一個實際症狀（證據 `npm run spike:sentiment-dispersion`，數據附錄 C-3）：
 
 | 規則 | 沒有它會怎樣 |
 |---|---|
 | 判斷 MUST 參考同批的前後文，特別留意語氣客套但問題未解決的句子 | 逐則孤立判斷會把「好，那我再等等」判成 85／`calm`，在兩則抱怨之間拉出一個 55 分落差的假尖峰並觸發示警 |
 | 絕對分數帶（`calm` 80–100 … `angry` 0–19） | 模型改拿同批其他訊息當相對基準，同一則訊息換一個批次就差 25 分 —— 折線在**每個批次邊界**都會出現假斷層 |
-| 兩條 tie-breaker（`concerned`／`frustrated`、`frustrated`／`angry` 拿不定主意時取輕的那級） | 界線上的句子會在重跑之間翻面，客服看到的示警圖示在 ⚠️ 與 🔥 之間跳 |
+| 兩條 tie-breaker（`concerned`／`frustrated`、`frustrated`／`angry` 拿不定主意時取輕的那級） | 界線上的句子會在重跑之間翻面，客服看到的示警圖示在 ⚠️ 與 🔥 之間跳——`isSentimentAlerting()` 只分有無示警（`frustrated` 與 `angry` 都算），開關本身穩定，翻面影響的是等級（`--warn`＋⚠️ 對 `--danger`＋🔥，001 FR-003 要求可區分）。取捨是讓真正該顯示 🔥 的少一些，換取圖示不在重跑之間跳；實測補上後 24-A 兩輪皆 0/6 翻面 |
 
-⚠️ 分數帶 MUST 與 `SENTIMENT_BANDS`（`shared/types/copilot.ts`）同一組 —— 折線的分帶上色
-吃的是同一份定義（§14.5）。後台改了而這裡沒改，只會安靜地讓顏色與 agent 的判斷不一致。
+⚠️ 分數帶 MUST 與 `SENTIMENT_BANDS`（`shared/types/copilot.ts`）同一組——折線的分帶上色吃的是同一份定義（§14.5）。後台改了而這裡沒改，只會安靜地讓顏色與 agent 的判斷不一致。
 
-> ⚠️ **不要用程式碼去補批次之間的接縫 —— 已經試過並移除了。** 2026-09-01 曾為
-> `AIProvider.analyzeSentiment()` 加上 `priorPoints`（把前一批尾端的 `score`／`label`
-> 帶進下一批的 prompt）。它是在「只加了看上下文、還沒加絕對分數帶」的中間狀態加的，
-> 當時 n=3 看似大幅有效；補完 prompt 之後同一個量測**差距落在雜訊內**，該參數與其測試已整個移除。
->
-> 留這一段是因為「批次之間沒有上下文」這個直覺很強，日後很容易有人再加一次。
-> **要加之前先跑 `npm run spike:sentiment-dispersion` 看 24-B 的偏離現在是多少** ——
-> 若仍是個位數，那個洞不存在，補它只是多一段要維護的程式碼（前情還帶著一條隱性
-> 正確性規則：MUST 排除本批自己的訊息，否則手動重試會參考到自己上次的答案而永遠翻不了案）。
-
-⚠️ **量測方法上的教訓（與下方「n=5 被 n=15 推翻」是同一類錯誤）**：要偵測的訊號與 agent
-自身的擺動同一個量級時，**單一樣本不構成證據，n=3 也還不夠** —— 同一支 probe 在 n=3 下
-兩次執行給出過方向相反的結論。**效果量與雜訊同級時，先把 n 加大到能分辨，再談結論**，
-否則量測本身會製造出方向隨機的「發現」。
+> ⚠️ **不要用程式碼去補批次之間的接縫——已經試過並移除了。** 曾為 `analyzeSentiment()` 加上 `priorPoints`（把前一批尾端的評分帶進下一批的 prompt）。
+> 它是在「只加了看上下文、還沒加絕對分數帶」的中間狀態加的，補完 prompt 之後同一個量測**差距落在雜訊內**（3.6 對 3.9 分），該參數與其測試已整個移除。
+> 「批次之間沒有上下文」這個直覺很強，日後很容易有人再加一次。**要加之前先跑 `spike:sentiment-dispersion` 看 24-B 的偏離現在是多少**——
+> 若仍是個位數，那個洞不存在（前情還帶著一條隱性正確性規則：MUST 排除本批自己的訊息，否則手動重試會參考到自己上次的答案而永遠翻不了案）。
 
 #### ⚠️ agent 背後的模型不在版本控制裡
 
-四個 agent 的模型設定存在 **iMBrace 後台**，`.env.local` 只存 `assistant_id`。換句話說
-**模型換掉時 git 完全看不出來** —— 若不寫在這裡，沒有人知道它被改過、原值是什麼、為什麼改。
-**MUST 在每次變更後更新下表。**
+`model_id` 同樣只在後台。`docs/AGENT_PROMPTS.md` 的快照記得「現在是什麼」，**記不得「為什麼換」**——下表是變更理由的唯一去處，**MUST 在每次變更後更新**。現值以 `npm run spike:agent-prompts` 為準，MUST NOT 靠人工記錄（`chatAi.listAiAgents()` 的 `model_id` 欄位才是模型；`model` 欄位是用途分類如 `rag`）。
 
-⚠️ `model_id` 自 2026-09-02 起也進了 `docs/AGENT_PROMPTS.md` 的快照，`npm run spike:agent-prompts`
-會偵測到換模型。**但快照只記得「現在是什麼」，記不得「為什麼換」** —— 下表仍是變更理由的
-唯一去處，兩者不重複也不互相取代。
-
-以下為 2026-08-28 由 `chatAi.listAiAgents()` 實際讀出的值（不是推斷）：
-
-| agent | 目前模型 | 變更紀錄 |
+| agent | 模型（2026-09-08 快照） | 變更紀錄 |
 |---|---|---|
 | `AgentCopilot_摘要_agent` | `google.gemma-3-27b-it` | 未變更 |
-| `AgentCopilot_情緒評分_agent` | **`openai.gpt-oss-20b-1:0`** | 2026-08-28 由 `google.gemma-3-27b-it` 改為此值，理由見下 |
-| `AgentCopilot_建議回覆_agent` | `google.gemma-3-27b-it` | 2026-08-29 曾暫時改為 `openai.gpt-oss-20b-1:0` 做 A／B 比較，**當日已換回**。比較結論見下方與附錄 C-2：n=15 下兩者中位數實質相同，gemma 變異度小 3.6 倍、引用覆蓋 15/15 對 3/5 |
-| `AgentCopilot_知識庫檢索_agent` | `us.amazon.nova-pro-v1:0` | 變更時間不明 —— 見下方警告 |
+| `AgentCopilot_情緒評分_agent` | `openai.gpt-oss-20b-1:0` | 2026-08-28 由 `gemma-3-27b` 改為此值，純粹為了延遲（附錄 C-1）：兩者合規與標籤正確率同為 8/8，gemma 中位 ≈ 10.5 秒、最慢 12.7 秒，乘上平台漂移 36% 即破 FR-014 的 15 秒。代價是輸出失去決定性（同批重跑 ±10 分） |
+| `AgentCopilot_建議回覆_agent` | `google.gemma-3-27b-it` | 2026-08-29 曾暫時改為 `gpt-oss-20b` 做 A／B，**當日已換回**（附錄 C-2）：n=15 下兩者中位數只差 8ms，gemma 變異度小 3.6 倍、第二段引用覆蓋 15/15 對 3/5 |
+| `AgentCopilot_知識庫檢索_agent` | `us.amazon.nova-pro-v1:0` | 變更時間不明——2026-08-27 交接筆記記為 `qwen.qwen3-32b-v1:0`，08-28 實讀已是 nova-pro，中間無任何紀錄。這張表就是在那次失去紀錄之後建立的；據 qwen3-32b 量到的數字不得再視為現行效能資料 |
+| `AgentCopilot_結案摘要_agent` | `google.gemma-3-27b-it` | 2026-09-04 建立（specs/006） |
 
-⚠️ **這張表是在「已經失去一次紀錄」之後才建立的。** 2026-08-27 的交接筆記記載知識庫 agent
-「停在 `qwen.qwen3-32b-v1:0`」，2026-08-28 實際讀取卻是 `us.amazon.nova-pro-v1:0` ——
-中間的變更沒有任何紀錄，也無從得知是誰、何時、為什麼改。當時據 `qwen3-32b` 量到的
-20.5／13.0／18.6 秒因此**不能再視為現行設定的效能資料**。
+> **逾時是被最慢值打死的，不是中位數。** 平台延遲實測會隨時間漂移約 36%（同模型同輸入，30 分鐘內 7.5 秒 ↔ 10.2 秒）。**這條原則適用於本文所有延遲判斷。**
 
-模型 id 可由 API 讀取，**MUST NOT 靠人工記錄**：`chatAi.listAiAgents()` 的每個 agent 都帶
-`model_id` 欄位（欄位 `model` 是用途分類如 `rag`，不是模型）。`npm run spike:agent-latency`
-會自動印出並寫進輸出檔名。⚠️ 2026-08-28 曾因人工歸因出錯而讓一整組模型比較作廢重測，
-這條規則是那次的產物。
+⚠️ **`gemma-3-27b` 並非全面不可用。** 它**不能**用於知識庫檢索（缺原生 function calling，見 §12.4 ②-2），但在**不呼叫工具**的摘要／情緒／建議卡／結案上完全正常，情緒任務上甚至是候選裡輸出最穩定的。
 
-**情緒 agent 換用 `gpt-oss-20b` 的理由**（2026-08-28，數據見附錄 C）：純粹是延遲。
-兩者的 schema 合規與標籤正確率同為 8/8，但 gemma 的中位數 ≈ 10.5 秒、最慢 12.7 秒。
+**建議卡的兩段 MUST 共用同一個 agent，不要拆成兩個。** 「第一段要快、第二段要引用準，所以掛不同模型」這個直覺沒有標的：實測沒有更快的模型可放第一段（附錄 C-2）。拆開唯一剩下的槓桿是「第一段用更短的 prompt」，但第一段已經是短的那份（`knowledgeHits: []`），要再縮只能動後台 prompt——不可版控、無法在 CI 重現，且兩份 prompt 各自漂移會讓第二段整批替換第一段時語氣不一致，客服會直接看見。**回頭重議的條件**：實測到在建議卡任務上確實更快的模型。
 
-> **逾時是被最慢值打死的，不是中位數。** 平台延遲實測會隨時間漂移約 36%（同模型同輸入，
-> 30 分鐘內 7.5 秒 ↔ 10.2 秒），12.7 × 1.36 ≈ 17.2 秒即破 FR-014 的 15 秒 —— 這正是
-> 2026-08-28 真實對話上情緒分析連續兩次逾時的成因。**這條原則適用於本文所有延遲判斷。**
+#### 延遲門檻與逾時常數：現行決定
 
-代價是失去輸出的決定性：同一批訊息重跑會得到略為不同的分數（±10），sparkline 高度與
-`stats.lowestScore` 會跟著變。
-
-> ⚠️ **分數漂移不影響「要不要示警」，但會影響「示警等級」。**
-> `isSentimentAlerting()` 只分有無示警，而 `frustrated` 與 `angry` 都算示警，開關因此穩定；
-> 但 `SentimentGauge` 把兩級畫成不同東西（`--warn` ＋ ⚠️ 對 `--danger` ＋ 🔥，文案也不同，
-> 這是 001 FR-003 明文要求的可區分性）。卡在兩級界線上的句子實測會在重跑之間翻面
-> （同一則三次跑出 30／30／10），客服看到的圖示就跟著在 ⚠️ 和 🔥 之間變。
->
-> **處置已定案**：後台 prompt 補上「`frustrated` 與 `angry` 之間拿不定主意時取 `frustrated`」。
-> 取捨是**讓真正該顯示 🔥 的少一些，換取圖示不在重跑之間跳**。
-> ✅ **已重測，翻面歸零** —— 2026-09-01 與 2026-09-02 各一輪 `spike:sentiment-dispersion`，
-> 24-A 兩輪都是 **0/6 則翻面**（分數擺動分別 ≤ 5 分、≤ 10 分）。
-> ⚠️ 後台 prompt 不在版控裡，這條規則被改掉不會有任何 commit 看得出來 —— 但 2026-09-02 起
-> `npm run spike:agent-prompts` 會把它與 `docs/AGENT_PROMPTS.md` 的快照逐字元比對。
-> **先跑那支（1 秒、直接證據），再考慮重跑這支（3 分鐘、間接證據）。**
-
-⚠️ **`google.gemma-3-27b-it` 並非全面不可用，別把兩件事混為一談。** 它**不能**用於知識庫
-檢索（缺原生 function calling，機制與判斷方式見 §12.4 ②-2 的「能不能檢索」），但在**不呼叫
-任何工具**的摘要／情緒／建議卡上完全正常 —— 2026-08-28 實測它在情緒 agent 上是所有候選裡
-輸出最穩定的（8/8 合規、連分數都完全一致、`drivers` 中文精準），換掉它純粹是為了延遲。
-
-**建議回覆 agent 為什麼是 `gemma-3-27b`**（2026-08-29，
-`npm run spike:agent-latency -- suggestion|suggestion-kb <n>`，四組背靠背、n=15／n=5，
-完整表格見附錄 C）—— 004 FR-001 兩段式設計的前提數據。三個結論：
-
-1. **⛔ 情緒 agent 換模型省下的 −48% 完全沒有移植過來。** gpt-oss 在建議卡任務上
-   **連中位數優勢都不存在**（第一段 9217 對 9209ms，差 8ms），只剩**變異度大 3.6 倍**
-   （σ 3042 對 849ms、最慢 18130 對 11756ms）—— 而逾時是被最慢值打死的。
-2. **⛔ `gpt-oss` 的引用覆蓋會漏，`gemma` 不會。** 第二段帶三筆命中時，gemma 15/15 完整引用
-   同樣三筆、卡片結構幾乎一致；gpt-oss 只有 3/5（一次漏掉客戶明確問到的費用減免 SOP，
-   一次漏一筆卻把另一筆引用兩次）。**兩者都沒有編造 id（憲法 4.3 皆通過），漏的是覆蓋而非
-   正確性** —— 但第二段存在的唯一理由就是提供引用，覆蓋不全等於它沒做到本份工作。
-3. **裁決（2026-08-29，004 clarify）：002 SC-001 的建議卡門檻由 10 秒改為 20 秒（p90）**，
-   3 秒骨架不變。理由：gemma 第一段 p90 為 **10310ms**，只超出原門檻 310ms，但缺口是模型
-   延遲，換模型更差（gpt-oss p90 10439ms）、repo 內唯一的固定成本槓桿也只值 54ms
-   （見下方 `user_id` 小節），留著是一條明知達不到的門檻。
-   20 秒對 p90 10.31 秒有近一倍餘裕，平台漂移 36% 後（≈14 秒）仍在內。
-   ⚠️ 與 001 FR-014 的 15 秒逾時耦合：逾時不動時 20 秒實質＝「首次呼叫逾時率 ≤10%」；
-   **逾時若提到 20 秒，退避預算 MUST 同步提到 ≥45 秒**（`1+20+4+20`）。
-   ⚠️ **2026-09-02：這條耦合已解除，上面那句「實質＝逾時率 ≤10%」不再成立。**
-   第一段改由獨立常數 `SUGGESTION_STAGE1_CALL_TIMEOUT_MS = 20_000` 承載自己的單次逾時
-   （比照第二段的先例），FR-014 的共用 15 秒**一字未動**，因此「退避預算 MUST 同步提到 ≥45 秒」
-   這個連動條件**沒有被觸發**：40 秒預算自第一次失敗起算，第二次失敗時 elapsed 約 21 秒 < 40 秒，
-   整條重試鏈仍走得完。理由與代價見 §8.2b。
-
-⚠️ **延遲比較 MUST NOT 以 n=5 下結論，尤其判準是 p90 時。** 本組數據的 n=5 版本給出過
-「gpt-oss 快 32%」與「gemma 跑第二段約兩成機率整批失敗」兩個結論，放大到 n=15 後**兩個都是錯的**
-（前者是抽樣雜訊，後者實際是 0/15 破線）。單輪量測也會低估：同一組 gemma 相隔 40 分鐘重量，
-第二段最慢由 12092 跳到 16891ms（+40%），因此**比較 MUST 在同一時間窗內背靠背跑**。
-
-**四個 agent 的延遲基準**（2026-08-29，各 n=15／知識庫 n=12，同一時間窗，模型皆由 API 驗證）
-—— 這是判定 003 FR-014「15 秒單次逾時」是否放寬的完整依據：
-
-| agent | 模型 | 中位數 | 最慢 | 距 15 秒門檻 | 合規 |
-|---|---|---|---|---|---|
-| 摘要 | `gemma-3-27b` | 6286ms | 7646ms | **7.4 秒（49%）** | 15/15 |
-| 情緒評分 | `gpt-oss-20b` | 4555ms | 9190ms | 5.8 秒（39%） | 15/15 |
-| 建議卡・第一段 | `gemma-3-27b` | 9209ms | 11756ms | 3.2 秒（21%） | 15/15 |
-| 建議卡・第二段 | `gemma-3-27b` | 10025ms | 13032ms | **2.0 秒（13%）** ⚠️ | 15/15 |
-| 知識庫檢索 | `nova-pro` | 11907ms | **22870ms** ⚠️ | （逾時另計 30 秒） | 30 秒涵蓋率 **9/10** ⚠️ |
-
-⚠️ 知識庫那一列取自 2026-08-29 的 004 T032（n=10、真實對話），其餘各列為同日的 n=15／n=12
-基準且**未再重測**。細節見 §12.4 ②-2。
-
-⚠️ **摘要 agent 會出現罕見尖峰**（42.9 秒、以及一次撞上 SDK 的 30 秒 HTTP 逾時）。
-n=15 的基準量測沒有重現它，但**MUST NOT 據此認定問題已消失** —— 那些是真實發生過的，不是量測誤差。
-
-> ⚠️ **spike 失敗證明不了生產環境該次分析失敗**：spike 直接呼叫 provider，**不經過 `withRetry()`**；
-> 生產路徑的 `runColdStart()`／`runIncremental()` 一律包在 `withRetry()` 裡。判讀 spike 輸出時別混為一談。
-
-#### 摘要 agent 的延遲不穩定 —— 同一天內量到三種分佈（2026-09-01）
-
-`npm run spike:agent-latency -- summary <n>`，同一份輸入、同一個 agent、同一天：
-
-| 量測 | 中位數 | 最慢 | 破 15 秒門檻 | 完全失敗 |
-|---|---|---|---|---|
-| 2026-08-29 基準（n=15） | 6286ms | 7646ms | 0/15 | 0 |
-| 2026-09-01 第一次（n=15） | **52122ms** | 127247ms | **11/15** | **5/15** |
-| 2026-09-01 重測（n=6） | 11068ms | 49701ms | 1/6 | 0 |
-
-⚠️ **這個「時段相關的不穩定」本身就是結論**，比任何單次的中位數都重要：同一份輸入在同一天
-可以是 6 秒、11 秒或 52 秒，我方**沒有任何方式預先知道現在是哪一種**。降級是暫時的（重測就
-回到 11 秒等級），但也不是回到原狀 —— 11 秒是 8/29 基準的 1.75 倍，且 6 次裡有 4 次超過 10 秒。
-⚠️ **這三列數字會過期**，判斷「現在是哪一種時段」時 MUST 重跑量測，不要引用本表。
-
-**結論：FR-014 的 15 秒維持不動。**
-① 降級時段的中位數是 52 秒，**放寬到 20 秒或 45 秒都一樣失敗**，那已經不是我方的參數問題；
-② 正常時段 15 秒有充分餘裕（中位數 11 秒、1/6 破線，且該次由重試接住）；
-③ 為了接住一個「放到 45 秒也未必夠」的降級時段，去把摘要／情緒／建議卡第一段的失敗偵測
-全部延後三倍，代價由每一條路徑在**所有時段**支付。
-
-⚠️ **摘要的 M2「10 秒 p90」驗收項在此時段不會通過**，成因是模型延遲、repo 內沒有槓桿補得回來
-（單次呼叫，沒有並行度可調）。詳見 §18 M2。
-
-⚠️ **2026-09-02 訂正「不會通過」這個說法**：那是拿本節這個降級時段的樣本推出來的永久結論，
-而同一段話下面就寫著「MUST 重跑量測，不要引用本表」。重測後單輪可以是 93%，也可以是 53%
-（見下方「單輪 n=15 判不動任何門檻」）。**正確的說法是「未通過且結論未定」，不是「不會通過」。**
-「摘要沒有並行度槓桿」這半句仍然成立。
-
-> ⚠️ **「沒有槓桿」是一個很容易說得太早的結論。** 同一句話對情緒就是錯的 —— 摘要是 1 次呼叫，
-> 情緒卻是 N 批呼叫，那個 N 有一個叫並行度的槓桿（見下一節）。說之前先確認**量的粒度與判準的
-> 粒度是同一個**：單一 agent 的延遲推不出「區塊何時呈現」。
-
-⚠️ **FR-014 的約束方已經換人了**：現在最吃緊的是**建議卡第二段（餘裕僅 13%）**，不是摘要。
-
-#### 端到端量測：SC-005 的兩個區塊成本結構不同（2026-09-01，`spike:progressive`）
-
-⚠️ **用單一呼叫的數字去推 SC-005 會系統性低估。** `spike:agent-latency` 量的是單次呼叫，
-而 001 SC-005 的判準是**區塊的實質內容何時呈現**：兩者對摘要幾乎等價（1 次呼叫），
-對情緒完全不等價（每 `SENTIMENT_CHUNK_SIZE` 則切一批）。端到端量測見
-`npm run spike:progressive -- --repeat 3`（`scripts/spike/21-progressive-citations.ts`），
-證據存於 `scripts/spike/out/21-progressive-citations-*.json`。
-
-三輪各 n≈15，同一組 6 段真實對話（2／6／17／25 則客戶發言），唯讀不 JOIN：
-
-| 量測 | 第 1 輪（依序） | 第 2 輪（依序） | 第 3 輪（**並行 3**） |
-|---|---|---|---|
-| 情緒 中位／p90／最慢 | 16.9／27.5／31.0 秒 | 15.9／27.8／30.0 秒 | **7.7／12.7／14.4 秒** |
-| 情緒 10 秒內 | 6/15 | 6/14 | 11/15 |
-| 摘要 中位／p90／最慢 | 7.6／24.8／45.3 秒 | 10.8／28.7／30.6 秒 | 10.0／49.8／49.9 秒 |
-| 摘要 10 秒內 | 8/15 | 5/14 | 6/14 |
-| 建議卡第一段 p90 | 28.7 秒 | 28.8 秒 | 29.3 秒 |
-
-**情緒的延遲由批次數決定，不是由模型抖動決定**（依序版每批的中位幾乎是常數 5.5～6.4 秒）：
-
-| 批次 | 客戶發言 | 依序中位 | 並行中位 | 10 秒內（並行） |
-|---|---|---|---|---|
-| 1 批 | 2–6 則 | 5.5 秒 | 6.0 秒 | 6/6 |
-| 3 批 | 17 則 | 19.2 秒 | **8.1 秒** | 5/6 |
-| 5 批 | 25 則 | 27.5 秒 | **12.7 秒** | 0/3 |
-
-**因此 2026-09-01 做了兩件事**：① 情緒批次由依序改為有上限的並行
-（`SENTIMENT_CONCURRENCY = 3`）；② SC-005 由單一的 10 秒拆成「摘要 10 秒／情緒 15 秒」。
-
-⚠️ **並行化唯一需要把關的風險已一併實測，且沒有發生**：單次呼叫 n=39、中位 6.6 秒、
-p90 8.3 秒、最慢 11.7 秒、**破 15 秒 0 次、失敗 0 次**，峰值並發實測為 3。
-與依序版反推的每批中位（5.5～6.4 秒）相比只微升，落在平台自身約 36% 漂移內。
-**「總時間下降但單次持平」才叫成功；只看總時間會看到「變快了」而完全看不到失敗率**
-—— 量測腳本因此同時輸出這兩列，**調整並行度時 MUST 兩列一起看**。
-
-⚠️ **摘要三輪皆未達且無槓桿**，門檻維持 10 秒（§18 M2）。
-⚠️ **建議卡第一段三輪 p90 高度一致（28.7／28.8／29.3 秒），這個一致性本身就是結論** ——
-那不是抖動，是「首次破 15 秒逾時 → 退避 1 秒 → 第二次成功」的固定形狀（15＋1＋13 ≈ 29 秒）。
-也就是**約三分之一的第一段呼叫撞上單次逾時**。
-
-⚠️⚠️ **本表的「建議卡第一段」那一列與上述兩條結論，2026-09-02 已被口徑修正推翻，
-MUST NOT 再被引用**（詳見下方「量測口徑有三個缺陷」）：
-① 那些 p90 量的是「第一段自己發布」的時點，不是條文要的「第一批可用的卡」，
-用正確口徑重算三輪是 **67%／40%／33%**（不是報表上的 83%／86%／71%）；
-② 三輪各有 1／4／5 個樣本**從頭到尾沒有任何卡**，先前完全沒有進入紀錄；
-③ 「約三分之一撞上逾時」這個觀察是對的，但它指向的不是模型慢，
-而是 **20 秒門檻配 15 秒逾時在重試路徑上不可達** —— 那是可修的，且已修。
-本表其餘各列（情緒、摘要）的口徑未受影響，仍然有效。
-
-**裁決（2026-08-29，004 設計定案後）：001 FR-014 的三個數字（15 秒單次逾時／1s→4s 退避／
-40 秒總預算）一字不動**；建議卡第二段改由**獨立常數** `SUGGESTION_STAGE2_CALL_TIMEOUT_MS = 20_000`
-承載其單次逾時（`server/services/blocks/suggestion.ts`）。
-
-理由：004 讓第二段以 `maxRetries: 0` 呼叫 —— **它不進重試迴圈**，因此退避與總預算對它完全
-不適用，改它的單次逾時不牽動那三數的綁定關係，兩者沒有耦合。反過來說，為了第二段去放寬
-共用的 15 秒，會連帶把摘要／情緒／第一段的失敗偵測一起延後，代價由每一條路徑支付。
-
-為什麼是 20 秒而不是沿用 15：15 秒對第二段實測最慢 13.0 秒只剩 13% 餘裕，平台漂移 36%
-即逾時；而第二段逾時是**靜默**落成「未引用知識庫」（依 004 FR-003 不轉 error、不顯示重試中），
-客服看不到任何異常跡象，直接侵蝕 004 SC-002 的「≥ 90% 最終取得引用」。
-
-⚠️ 上方「002 SC-001 的建議卡門檻改 20 秒」那段提到的「逾時若提到 20 秒，退避預算 MUST 同步
-提到 ≥45 秒」是針對**共用的 15 秒**而言；本裁決沒有動它，那個前提因此不成立，退避預算維持 40 秒。
-
-⚠️ **兩段 MUST 共用同一個 agent，不要拆成兩個。**
-
-「兩段的約束方向相反（第一段要快、第二段要引用準），所以第一段掛快模型、第二段掛穩模型」
-這個直覺**沒有標的**：實測沒有更快的模型可放到第一段（gemma 與 gpt-oss 中位數只差 8ms，
-而 gemma 的 p90、σ、第二段引用覆蓋全部更好），兩段的最佳選擇是同一顆。
-
-拆開唯一剩下的槓桿是「第一段用更短的 system prompt」。prompt 長度確實有效
-（571 字對 879 字＝中位 9209 對 10025ms，約 2.6ms/字），但**第一段已經是短的那一份**
-（`knowledgeHits: []`），要再縮只能動 iMBrace 後台的 system prompt —— 那份 prompt 不在本
-repo 裡，改了無法版控、無法在 CI 重現、事後也無法歸因；還多一個「被人靜默改掉模型」的
-失效面（知識庫 agent 就發生過，見本節模型表的警告）。兩份 prompt 各自漂移更會讓兩段的
-卡片語氣不一致 —— 而 004 要求第二段**整批替換**第一段，不一致客服會直接看見。
-
-**回頭重議的條件**：日後若在建議卡任務上實測到確實更快的模型，拆分才有標的。
-
-#### ⚠️ 量測口徑有三個缺陷 —— 2026-09-01 的 SC-001 數字全部作廢（2026-09-02）
-
-`spike:progressive` 判 002 SC-001 時用的是 `pendingMs`（**第一段自己發布**的時點），
-而 §18 M2 的條文寫的是「**第一批可用的卡**」。兩者在多數樣本上相等，於是缺陷藏了很久 ——
-但有一整類樣本兩者不等，**而那類樣本剛好全部是慢的**：
-
-1. **第一段可能永遠不發布。** 檢索先回且有命中時，004 FR-006a 會 `stage1Abort.abort()` 掉
-   第一段**尚未送出**的重試；此後第一段不再發布，客服看到的第一批卡是第二段在 27～35 秒給的。
-   `pendingMs` 為 null，該樣本被整筆排除出統計。
-2. **未落地的樣本被排除出分母。** `budgetStats()` 只對已落地的值取 p90，等於把「客服根本
-   沒看到內容」這個**最壞**結果從分母拿掉 —— **失敗率越高，分數反而越好看**。
-3. **情緒門檻停在 10 秒。** 2026-09-01 已裁決改為 15 秒（連程式一起改，`SENTIMENT_CONCURRENCY = 3`），
-   腳本沒跟上，於是把情緒判成未達，判的卻是一個已經被取代的門檻。
-
-**後果**：2026-09-01 三輪的 SC-001 被記成 83%／86%／71%，**正確值是 67%／40%／33%**；
-且三輪各有 1／4／5 個樣本**從頭到尾沒有出現任何建議卡**（區塊轉 `error`），
-這件事先前完全沒有進入任何一份紀錄。
-
-已修（`scripts/spike/21-progressive-citations.ts`）：新增 `firstCardsMs` 並以它為 SC-001 的判準、
-未落地樣本計入分母算未達、SC-005 門檻拆成摘要 10 秒／情緒 15 秒兩個常數、
-`stage1` 降為診斷欄位並**刻意移除其 `pass`**（同一個鍵在新舊檔裡意思不同，是最難察覺的資料錯誤，
-寧可讓舊讀法直接壞掉，也不要靜默給出樂觀值）。
-
-⚠️ **教訓：判準的口徑 MUST 與條文逐字對齊。** 條文說「第一批可用的卡」，程式量「第一段的卡」，
-差別只在一條例外路徑上 —— 而例外路徑上的樣本不是隨機的，它們有系統性的方向。
-工具與條文只要有一個字不同，就要問「這個字在哪條路徑上會不等價」。
-
-#### ❌ 「隔離 vs 管線」的落差是**輸入長度**，不是競用 —— 一個被對照實驗推翻的假設（2026-09-02）
-
-**先講結論，因為這個假設一度被寫進本文件**：摘要的隔離量測 19/20 ＝ 95%、端到端只有
-33/45 ＝ 73%，當時據此推論「落差來自管線內的競用」（冷啟動時摘要、建議卡第一段、
-三批情緒同時在飛）。**該推論已被兩項證據推翻。**
-
-**證據一：把 `SENTIMENT_CONCURRENCY` 設回 1 跑一輪對照（同一組六個對話、`--repeat 3`）。**
-若競用成立，減少同時在飛的呼叫應該讓摘要與第一段一起改善：
-
-| | 並行 3（三輪 n=45） | 並行 1（對照 n=15） | 判讀 |
-|---|---|---|---|
-| 摘要 ≤10 秒 | 33/45 ＝ 73% | 13/15 ＝ 87% | ⚠️ 落在並行 3 各輪（93%／53%／73%）的區間內，**判不動** |
-| 摘要 p80 | 10.1 秒 | 8.5 秒 | 同上，單輪 n=15 分不出來 |
-| **第一段中位** | **10.3 秒** | **11.5 秒** | **沒有改善，反而略慢** |
-| **第一段 p80** | **14.2 秒** | **13.7 秒** | 實質持平 |
-
-**第一段是關鍵**：它的隔離值 p80 是 10.7 秒、管線值 14.2 秒，先前正是用這個 +33% 當作
-競用的證據。把情緒改回依序之後它**完全沒有往隔離值靠攏**（13.7 秒）——
-競用若是成因，這裡必須改善，而它沒有。
-
-**證據二：延遲與對話長度高度相關，而隔離量測用的是短的合成輸入。**
-把四輪 n=60 依對話則數分組（隔離腳本用的是 8 則合成對話）：
-
-| 對話則數 | 摘要中位 | 第一段中位 |
+| 常數 | 值 | 決定理由 |
 |---|---|---|
-| 2 則 | 4.9 秒 | 5.1 秒 |
-| **8 則**（＝隔離量測的長度） | **6.2 秒** | **10.3 秒** |
-| 33 則 | 8.0 秒 | 11.3 秒 |
-| 50 則 | 8.5 秒 | 14.0 秒 |
+| FR-014 共用單次逾時／退避／總預算（`retry-policy.ts`） | **15 秒／1s→4s／40 秒** | **一字不動**。放寬會把摘要／情緒／第一段的失敗偵測一起延後，代價由每一條路徑在所有時段支付；降級時段中位 52 秒，放到 20 或 45 秒都一樣救不回。⚠️ 若日後真的把**共用**逾時提到 20 秒，退避預算 MUST 同步提到 ≥45 秒（`1+20+4+20`）；per-call-site 的覆寫常數不觸發這條連動 |
+| `SUGGESTION_STAGE2_CALL_TIMEOUT_MS`（`blocks/suggestion.ts`） | **20 秒** | 第二段以 `maxRetries: 0` 呼叫、不進重試迴圈，改它不牽動 FR-014 三數。實測最慢 13.0 秒對 15 秒只剩 13% 餘裕，平台漂移 36% 即逾時，而第二段逾時是**靜默**落成「未引用知識庫」（004 FR-003） |
+| `SUGGESTION_STAGE1_CALL_TIMEOUT_MS`（同檔） | **20 秒** | 2026-09-02：SC-001 的 20 秒門檻配 15 秒共用逾時在重試路徑上**數學上不可達**（15＋1＋下一次 ≈9.7 秒必破 20；14/14 個破 20 秒的樣本都含 `retrying`，0 例外）。數字**直接取自判準本身**——超過預算才完成的呼叫繼續等沒有收益。修後「第一段從未發布」由 9/30 降到 3/30。代價（刻意接受）：連續失敗到底的偵測由約 50 秒變約 65 秒，期間顯示「重試中」而非空白。40 秒預算不需跟著改：第二次失敗時 elapsed ≈21 秒 < 40，重試鏈仍走得完 |
+| `SENTIMENT_CONCURRENCY`（`blocks/sentiment.ts`） | **3** | 見下方「並行度」。**被量測過並經裁決的數字，不是沒人動過的預設值** |
+| `SENTIMENT_CHUNK_SIZE` | **6** | §11.8 ②，已接受的取捨 |
+| `SENTIMENT_BACKFILL_MAX_MESSAGES` | **18**（＝ 6 × 3） | 恰好 = `SENTIMENT_CONCURRENCY` 的一波（005 FR-009，T050 複查維持）。⚠️ 若真的調了並行度，這個數字 MUST 重算 |
+| `KNOWLEDGE_SEARCH_TIMEOUT_MS` | **30 秒** | §12.4 ②-2；快查與建議卡共用，不得另立短逾時 |
+| 001 SC-005／002 SC-001 門檻 | 摘要 **10 秒**／情緒 **15 秒**／首批建議卡 **20 秒**（皆 p90） | 三者目前皆【未達標·已安置】，數字**不放寬**，理由與重新判定條件見 §18 M2 |
 
-相關係數：摘要 r ＝ 0.31、第一段 r ＝ 0.48。**在相同輸入長度下（8 則），隔離與管線幾乎一致**
-（第一段隔離中位 9.7 秒 vs 管線 10.3 秒；摘要隔離 5.2 秒 vs 管線 6.2 秒）。
-先前看到的「管線比較慢」，其實是**管線的樣本裡混了 33 則與 50 則的真實對話**。
+⚠️ 兩個 20 秒**數值相同純屬巧合，MUST NOT 合併成一個常數**：第二段的 20 來自「實測最慢＋漂移餘裕」，第一段的 20 來自「SC-001 的預算」。合併會讓其中一個理由在下次調整時靜默消失。
+⚠️ 跟著當次量測調出來的常數會在下一次漂移時失效——情緒的 15 秒門檻就是這樣失守的；取自判準的常數才是結構性的。
+⚠️ 這些逾時槓桿只在平台正常時段有效：降級時段原始呼叫本身就遠超 20 秒。
 
-⚠️ **教訓：兩組量測要比較之前，MUST 先確認輸入是可比的。**
-本 repo 已經寫過一次相關警告（18 號腳本刻意把建議卡的量測輸入加長，理由是
-「用三兩句的迷你對話量出來的數字會低估正式路徑」）—— 但比較的時候還是踩了。
-「隔離單次量測 MUST NOT 用來預測驗收」這條仍然成立，只是**理由換了**：
-不是因為管線有競用，而是因為**隔離量測的輸入不是真實對話的長度分佈**。
+#### 並行度掃描跑完了：3 是量過的，4／5 兩列同時變差（情緒的成本模型）
 
-✅ **連帶恢復**：「摘要的落差 repo 內沒有槓桿補得回來」這個原始結論**重新成立**。
-減少同時在飛的呼叫並不是槓桿 —— 對照實驗已經證明它不動摘要與第一段。
+情緒每 `SENTIMENT_CHUNK_SIZE` 則切一批，總時間 ≈ **⌈批次數 ÷ 並行度⌉ 波 × 每波 max-of-N**。三件事已實測定案（數據附錄 C-6、C-7）：
 
-#### 並行度的真實代價：它抬高**單次**延遲，但代價只由情緒自己付（2026-09-02）
+1. **一波要等最慢的那一批**，max-of-3 ≈ 單次的 80 百分位，用中位數估會低估。3 批一波實測中位 11.4 秒，而單次中位只有 7.3 秒——差的就是 max-of-3。
+2. **並行度本身會抬高單次延遲**（並行 1 → 3：中位 +12%、p90 +19%），但**不外溢**——同一輪的摘要與建議卡第一段沒有跟著變。max-of-N 取分佈上緣，受抬高的影響比中位數更大。
+3. **正式掃描（2026-09-03，`npm run spike:sentiment-concurrency`，每檔位三輪 n=45、輪換順序、同一時段、序列取樣）**：檔位 4／5 在**總時間與單次失敗率兩列上同時比 3 差**——區塊 15 秒 p90 通過率 91% → 84% / 82%，單次破 15 秒率 3.8% → 6.4% / 10.6%。005 FR-019 的判準是「總時間改善**且**單次失敗率未上升」，這次連第一個條件都沒過。⚠️ **中位數是陷阱**：檔位 4 的中位比 3 快（6.6 vs 7.6 秒），但判準是 p90，並行度改善的是順利的那些、惡化的是尾巴，而 SC-005 判的正是尾巴。
 
-同一個對照實驗給出了另一個結論。情緒**單次呼叫**（每批輸入相同，唯一變數是並行度）：
+✅ **裁決（2026-09-03，使用者）：`SENTIMENT_CONCURRENCY` 維持 3。** 要翻案 MUST 附上同口徑的新掃描，且兩列一起看；MUST NOT 用公式外推。反方向也不要動：並行 1 的情緒通過率只有 33%。
 
-| | n | 中位 | p90 | 最慢 | 破 15 秒 |
-|---|---|---|---|---|---|
-| 並行 3 | 131 | 7299ms | 12584ms | 22851ms | 5 |
-| **並行 1** | 42 | **6411ms** | **10246ms** | **12496ms** | **0** |
+⚠️ **實際在飛的批次數會超過設定值，且調高檔位是自我增強的迴圈**：`withRetry()` 的 `Promise.race([fn(), timeout])`（`server/services/ai/retry-policy.ts`）逾時只是不再等它，**被放棄的呼叫仍在平台側跑**，重試又佔一個名額，實際負載 ＝ 設定值 ＋ 尚未落地的放棄呼叫數。檔位越高 → 破 15 秒率越高 → 被放棄的呼叫越多 → 實際負載又更高（檔位 3 量到峰值並發 4 的樣本，正是有呼叫破 15 秒的那幾個）。
 
-**並行 3 讓單次延遲上升約 12%、p90 上升約 19%** —— `SENTIMENT_CONCURRENCY` 註解裡
-「並發可能讓平台側排隊而抬高單次延遲」那條警告**是對的，而且已經在發生**。
-但它**沒有外溢**：同一輪的摘要與第一段沒有跟著改善（見上一節）。
+#### 量測規程（每一條都是踩過才寫下的）
 
-⚠️ **這使「提高並行度」這個槓桿的期望值再往下修一次，可能已經是負的。**
-本文件稍早估過 5 批由 2 波變 1 波約可由 14.7 秒降到 12.5 秒（max-of-5 效應）；
-但那個估計假設單次延遲不變 —— 實測顯示並行度**本身就會抬高單次延遲**，
-而 max-of-N 取的是分佈上緣，受抬高的影響更大。**MUST NOT 在沒有實測掃描的情況下調高它。**
+1. **判準的口徑 MUST 與條文逐字對齊。** 條文寫「第一批**可用的**卡」，腳本曾量「第一段自己發布」——兩者只在 004 FR-006a 的 abort 路徑上不等價，而那類樣本全部是慢的；未落地的樣本也曾被排除出分母（失敗率越高分數越好看）。2026-09-01 的 SC-001 因此由 83%／86%／71% 重算為 **67%／40%／33%**。`spike:progressive` 已改以 `firstCardsMs` 為判準、未落地計入分母、`stage1` 降為診斷欄位並**刻意移除其 `pass`**（同一個鍵在新舊檔裡意思不同，寧可讓舊讀法直接壞掉）。
+2. **單輪 n=15 判不動任何 p90 門檻。** `ceil(0.9 × 15) = 14`，一個樣本就決定通過與否；相隔 30 分鐘的兩輪結論可以相反（摘要 93% → 53%、情緒 73% → 93% → 67%，附錄 C-8）。**MUST NOT 用單輪打勾或取消打勾**；翻案要兩次獨立時段的 n=45 都過。同理 n=5 的模型比較給出過兩個被 n=15 推翻的結論（附錄 C-2），比較 MUST 在同一時間窗內背靠背跑。
+3. **隔離單次量測 MUST NOT 用來預測驗收**，理由是**輸入長度**，不是管線競用：隔離腳本用 8 則合成對話，管線的樣本混了 33 則與 50 則真實對話；相同長度下兩者幾乎一致（附錄 C-9）。「管線內競用」這個歸因已被把 `SENTIMENT_CONCURRENCY` 設回 1 的對照實驗推翻——摘要與第一段都沒有改善。連帶：「摘要的落差 repo 內沒有槓桿補得回來」重新成立（摘要是單次呼叫，沒有並行度可調）。
+4. **同一次「爆發」不是對每個驗收項都是失敗。** 一組排除規則套到三個指標上要逐項確認：排除某輪的 3 個異常樣本後 SC-001 與摘要變好、情緒反而變差（那 3 筆的情緒全部達標）。
+5. **時段本身就是結論。** 摘要 agent 同一天量到中位 6.3／52.1／11.1 秒三種分佈（附錄 C-5），我方沒有任何方式預先知道現在是哪一種；判斷「現在是哪一種時段」時 MUST 重跑，不要引用舊表。量測前 MUST 跑 `spike:agent-prompts` 排除 prompt 漂移，並標註時段（005 FR-020）。
+6. **spike 失敗證明不了生產環境該次分析失敗**：spike 直接呼叫 provider，不經 `withRetry()`；生產路徑一律包在裡面。
+7. **量測工具 MUST 共用正式路徑的抽取邏輯，MUST NOT 自己抄一份。** 18 號腳本曾自抄簡化版（漏了「找第一個 `{`／`[` 切掉開場白」），把摘要 agent 判成 0/15 不合規，而該 agent 一直正常；更危險的是註解寫著「比照正式路徑」。`extractLeadingJson()` 與 `buildSuggestionPrompt()` 已從 `ImbraceAgentProvider` 匯出供 spike 使用。
+8. **要偵測的訊號與 agent 自身擺動同量級時，n=3 也不夠**——同一支 probe 在 n=3 下兩次給出方向相反的結論。先把 n 加大到能分辨，再談結論。
+9. ⏳ **未證實的假設：背靠背量測會互相污染。** `callWithTimeout()` 不會取消底層呼叫（探針量到第二段原始耗時 102／62／48 秒，逾時卻是 20 秒），每次逾時都留下一個仍在消耗平台容量的呼叫；兩次被判為「平台降級」的觀測都出現在密集量測之中。冷卻 58 分鐘的一輪沒有重現爆發，但那只是方向一致的單一觀測。證實或推翻前，規程為**兩輪之間至少留 30 分鐘冷卻，且樣本要跨不同時段**。
 
-⚠️ 反方向也不要動：並行 1 的情緒是 5/15 ＝ 33%（中位 22.2 秒），遠差於並行 3 的 78%。
-**3 這個值目前是對的**，對照實驗同時確認了這一點。
+#### 每次 AI 呼叫的 `user_id`：衛生問題，不是效能解方
 
-#### ✅ 並行度掃描跑完了：3／4／5 三檔位，**兩檔位都在兩列上同時變差**（2026-09-03）
+SDK 的 `streamChat()` 在 `body.user_id` 缺席時會先 `POST /ai-agent/chat-client/auth/user` 取 id（隔離量測中位 54ms，20/20 同一個 id，附錄 C-4）。已於 2026-09-02 由 `callAgent()` 帶上，id 由防腐層 `resolveAiClientUserId()` 取一次並 process-local 快取；取得失敗不快取、退回「不帶、讓 SDK 自己查」的舊路徑（行為不變只是沒省到）。
+⚠️ **它是 AI 服務的 client user id，與客服身分無關**——provider 拿不到 `operatorId` 是刻意的；填錯不會報錯，只會讓 AI 服務端的用量統計掛到錯的人身上。`test/ai-user-id.test.ts` 斷言請求 payload **只多了這一個欄位**。⛔ 54ms 補不上任何延遲門檻的缺口，MUST NOT 用「傳 vs 不傳」比端到端（σ ≈ 849ms 下要偵測 300ms 差異需 n≈100+）。
 
-`specs/005-m2-residual-defects` US4 / FR-018 要的掃描已執行完畢
-（`npm run spike:sentiment-concurrency`，`scripts/spike/out/26-sentiment-concurrency*.json`）。
-口徑符合 FR-018a：**每檔位三輪、n=45**，輪次間輪換檔位順序（3,4,5／4,5,3／5,3,4），
-每個檔位各開一個子行程（同一行程內改不了 module-level const，research #19），
-**序列執行、樣本不並行取得**，全部在 **2026-09-03 02:56–04:00**（UTC 18:56–19:59）
-的同一個時段連續跑完，共 9 個子行程 × 15 段對話。
-量測前跑過 `spike:agent-prompts`，四個 agent 的 prompt 與模型與快照逐字元相同。
-對話是 005 的固定 15 段（與同日 27 號杜撰率量測**同一組**，
-索引見 `scripts/spike/out/005-fixed-conversations.json`）。
+#### JSON 抽取：模型會在合法 JSON 前後加開場白／自我總結，即使 prompt 明確禁止
 
-| 檔位 | 區塊總時間（001 SC-005，15 秒 p90） | 中位 | p90 | 最慢 | 未落地 |
-|---|---|---|---|---|---|
-| **3（現行）** | **41/45 ＝ 91%** ✅ | 7571ms | **14436ms** | 30090ms | 0 |
-| 4 | 38/45 ＝ 84% ❌ | 6563ms | 25043ms | 29329ms | 2 |
-| 5 | 37/45 ＝ 82% ❌ | 7029ms | 23266ms | 44493ms | 2 |
-
-| 檔位 | 單次呼叫 n | 失敗 | **破 15 秒** | 中位 | p90 | 峰值並發 |
-|---|---|---|---|---|---|---|
-| **3（現行）** | 106 | **0（0%）** | **4（3.8%）** | 7168ms | **10945ms** | 4 |
-| 4 | 109 | 2（1.8%） | 7（6.4%） | 7240ms | 13195ms | 4 |
-| 5 | 113 | 1（0.9%） | **12（10.6%）** | 7123ms | 15060ms | 5 |
-
-**FR-019 的判準是「總時間改善**且**單次失敗率未上升」。這次連第一個條件都沒過：**
-
-- **檔位 4 vs 3**：總時間**變差**（91% → 84%，p90 由 14.4 秒惡化到 25.0 秒）、
-  破 15 秒率由 3.8% 升到 6.4%、且多出 2 個整批未落地 → **MUST NOT 採用**。
-- **檔位 5 vs 3**：總時間**變差**（91% → 82%，p90 23.3 秒、最慢 44.5 秒）、
-  破 15 秒率升到 **10.6%（近 3 倍）** → **MUST NOT 採用**。
-
-⚠️ **中位數是這張表的陷阱。** 檔位 4 的**中位**確實比 3 快（6.6 vs 7.6 秒），
-只看中位會得到「4 比較好」的結論；但判準是 p90，而 4 的 p90 差了 10.6 秒。
-並行度改善的是「順利的那些」，惡化的是尾巴 —— 而 SC-005 判的正是尾巴。
-**這正是 FR-019 把「只有總時間改善 MUST NOT 作為採用理由」寫死的原因**，
-這次連總時間都沒改善，兩列一起看更是毫無疑義。
-
-⚠️ **意外發現：實際在飛的批次數會超過設定值。** 檔位 3 有兩個樣本量到峰值並發 **4**，
-而它們正是有呼叫破 15 秒的那幾個。成因是 `withRetry()` 的
-`Promise.race([fn(), timeout])`（`server/services/ai/retry-policy.ts`）——
-**逾時只是不再等它，被放棄的那次呼叫仍在平台側跑**，重試又佔一個名額，
-於是實際負載 ＝ 設定值 ＋ 尚未落地的放棄呼叫數。
-⚠️ **這讓調高檔位變成一個自我增強的迴圈**：檔位越高 → 破 15 秒率越高（3.8%→6.4%→10.6%）
-→ 被放棄的呼叫越多 → 實際負載又比設定值高更多。這是「調高並行度」這個槓桿
-除了 max-of-N 之外的第二個負向機制，先前完全沒有被計入。
-
-✅ **裁決（2026-09-03，使用者）：`SENTIMENT_CONCURRENCY` 維持 3，不採用 4 或 5。**
-依 FR-019 判準得出的建議獲採納，程式碼與門檻皆未動（本次量測也沒有動過它們）。
-⚠️ 這是**被量測過並經裁決的數字，不是沒人動過的預設值** —— 日後若有人再提「調高並行度」，
-先讀本節的兩張表與下方那個自我增強迴圈；要翻案 MUST 附上同口徑（每檔位三輪 n=45、
-輪換順序、同一時段、序列取樣）的新掃描，且兩列一起看。
-
-✅ **FR-009「每輪 18 則缺口訊息」的複查結論（T050 要求）**：因為不採用新檔位，
-18 這個數字的原始理由**原封成立** —— 18 ÷ `SENTIMENT_CHUNK_SIZE`(6) ＝ 3 批
-＝ `SENTIMENT_CONCURRENCY`(3) 的**恰好一波**。**維持 18，不改**。
-⚠️ 這是被複查過的決定，不是被遺忘的常數；日後若真的調了並行度，這個數字 MUST 重算。
-
-⚠️ **時段標註（FR-020）**：本次是本機凌晨時段，未收到任何平台降級公告，
-單次呼叫中位 7.1～7.2 秒，與 2026-09-02 的 7.31／7.32／7.37 秒吻合 ——
-**平台狀態與前次量測相當，不是降級樣本**，結論可採。
-
-⚠️ **檔位 3 這次量到 41/45 ＝ 91%，通過了 15 秒門檻**
-（2026-09-02 的同口徑量測是 35/45 ＝ 78%）。單次延遲兩天幾乎相同，差別在尾巴。
-✅ **裁決（2026-09-03，使用者）：不改判，§18 M2 那條驗收維持「未通過」的記載。**
-判準是 p90，而本文件已載明「相鄰兩輪結論可以相反」，一次 91% 不足以翻掉一次 78%。
-要翻案 MUST 再取一次獨立時段的 n=45，**兩次都過才改**。
-⚠️ 這是**看著一次好數字仍決定不打勾**的紀錄，不是還沒判 —— 下一次量到 91% 時，
-要問的是「這是第幾次連續通過」，不是「這次過了吧」。
-
-#### ⚠️ 情緒的成本模型要修正 —— 「⌈批次數 ÷ 並行度⌉ × 單次延遲」會低估（2026-09-02）
-
-本節上方那個公式用的是**單次延遲的中位數**，但一波之內是 `Promise` 並行、
-**整波要等最慢的那一批**。也就是每一波的成本是 **max-of-N**，不是中位數 ——
-而 max-of-3 大約落在單次分佈的 80 百分位，比中位數高一截。
-
-三輪合併（n=45，門檻 15 秒）依批次數拆解：
-
-| 批次 | 波數 | n | 中位 | 最慢 | 15 秒內 |
-|---|---|---|---|---|---|
-| 1 批 | 1 | 9 | 4.6 秒 | 7.6 秒 | **9/9** ✅ |
-| 2 批 | 1 | 9 | 8.1 秒 | 12.6 秒 | **9/9** ✅ |
-| 3 批 | 1 | 17 | **11.4 秒** | 25.8 秒 | 12/17 ❌ |
-| 5 批 | 2 | 9 | **14.7 秒** | 21.2 秒 | 5/9 ❌ |
-
-⚠️ 各列的 `n` 加總是 44 而非 45：3 批另有 **1 筆情緒始終沒回報**，它進得了合併分母
-（計為未達），卻算不出中位與最慢，因此不列入本表的 `n`。差一筆不是漏抄。
-
-**3 批只有一波，公式預測 ≈ 單次中位 7.3 秒，實測中位卻是 11.4 秒** —— 差的就是 max-of-3。
-情緒單次呼叫三輪合併 n=131：中位 7299ms、p80 9245ms、p90 12584ms、最慢 22851ms、破 15 秒 5 次。
-
-⚠️ **這個修正會改變「提高並行度」這個槓桿的期望值。** 把 5 批由 2 波變 1 波，並不是
-「時間砍半」：新的一波是 max-of-5（≈ 單次的 87 百分位），而不是單次中位數。
-粗估 5 批的中位由 ≈14.7 秒降到 ≈12.5 秒，是改善，但遠小於公式給的印象。
-**要調並行度 MUST 先實測掃描（3→4→5，每檔同時看總時間與單次失敗率兩列），
-MUST NOT 用公式外推。**
-
-⚠️ **上面那個「12.5 秒」還是高估**：它假設單次延遲不隨並行度改變，而 2026-09-02 的
-對照實驗證明**並行度本身會抬高單次延遲**（並行 1 → 3：中位 +12%、p90 +19%，見下一節）。
-max-of-N 取的是分佈上緣，受這個抬高的影響比中位數更大。**這個槓桿可能已經是負的。**
-
-⚠️ **情緒 agent 本身已經變慢，且這一點是穩定的、不是雜訊**：單次中位在 2026-09-01 是 6635ms，
-2026-09-02 三輪的管線內量測是 7310／7319／7369ms，**隔離對照（不經管線）是 7319ms** ——
-四個獨立量測互相吻合。+10% 的單次延遲經 max-of-N 放大後，就是 3 批那一格從通過變成 12/17。
-
-#### 第一段的單次逾時改由獨立常數承載（2026-09-02）
-
-**問題：SC-001 的 20 秒門檻，在重試路徑上數學上不可能被滿足。** 第一段沿用 FR-014 的共用
-15 秒逾時，撞逾時後 15 ＋ 1（退避）＋ 下一次呼叫（實測中位 9.7 秒）必然破 20 秒 ——
-也就是**門檻寫 20 秒，實際判準是 15 秒**。
-
-證據（2026-09-01 三輪，用修正後的口徑重新攤平）：**14/14 個破 20 秒的樣本，事件序列裡都有
-`retrying`，0 例外；沒有重試的樣本最慢只有 14.5 秒。** 沒有任何一次是「單次呼叫慢慢跑到 20 秒以上」。
-
-原始單次分佈（2026-09-02，`spike:agent-latency -- suggestion 20`，**不經 `withRetry()`**）：
-中位 9.68 秒、最慢 **18.42 秒**、**20/20 全部落在 20 秒內**，但其中 **2/20 超過 15 秒** ——
-那 2 次在舊設定下會被砍掉重來、變成約 26 秒而未達。
-
-**處置**：新增獨立常數 `SUGGESTION_STAGE1_CALL_TIMEOUT_MS = 20_000`
-（`server/services/blocks/suggestion.ts`），比照 2026-08-29 對第二段的先例，**不動 FR-014 的共用 15 秒**，
-因此摘要與情緒的失敗偵測完全不受影響。
-
-**為什麼是 20 秒**：這個數字**直接取自判準本身**（SC-001 的 20 秒），不是從量測湊出來的 ——
-語意是「超過預算才完成的呼叫，即使等到了也已經未達，繼續等沒有收益」。
-上面那組量測是佐證，不是來源。⚠️ 跟著當次量測調出來的常數會在下一次漂移時失效，
-情緒的 15 秒門檻就是這樣失守的（見下一節）。
-
-**效果**：修正後兩輪合計，「第一段從未發布」的樣本由 9/30 降到 3/30，而那 3 個全部落在同一次
-降級爆發裡。⚠️ 本項的論證**刻意不依賴通過率** —— 通過率會隨時段擺動（下一節），
-而「20 秒門檻在 15 秒逾時下不可達」是結構性的，不會被下一輪的數字推翻。
-
-⚠️ 與 `SUGGESTION_STAGE2_CALL_TIMEOUT_MS` **數值相同純屬巧合，MUST NOT 合併成一個常數**：
-第二段的 20 秒來自「實測最慢 13.0 秒 ＋ 平台漂移餘裕」，第一段的 20 秒來自「SC-001 的預算」。
-合併會讓其中一個決策的理由在下次調整時靜默消失。
-
-⚠️ **代價（刻意接受）**：第一段連續失敗到底的偵測時間由最壞約 50 秒變約 65 秒（20＋1＋20＋4＋20）。
-期間客服看到的是「重試中」而非空白，故不是靜默劣化。
-**FR-014 的 40 秒退避預算不需要跟著改** —— 該預算自第一次失敗起算，第二次失敗時 elapsed 約 21 秒
-< 40 秒，整條重試鏈仍走得完，沒有被截斷。本節上方那條「逾時提到 20 秒則退避預算 MUST 同步提到
-≥45 秒」是針對**共用常數**寫的，per-call-site 覆寫不觸發它。
-
-⚠️ **這個槓桿只在平台的正常時段有效**：降級時段原始呼叫本身就遠超 20 秒，放寬逾時救不回來。
-
-#### ⚠️ 單輪 n=15 判不動任何門檻 —— 相鄰兩輪結論相反（2026-09-02）
-
-同一組六個對話、同一份程式、同一組門檻，三輪（本機 10:29／10:58／12:05，各 n=15，
-時刻取自 `scripts/spike/out/21-progressive-citations-*.json` 的 `at`）：
-
-| 驗收項 | 第 1 輪 | 第 2 輪 | 第 3 輪 | **合併 n=45** |
-|---|---|---|---|---|
-| SC-001 首批卡 ≤20 秒 | 14/15 ＝ 93% ✅ | 12/15 ＝ 80% ❌ | 13/15 ＝ 87% ❌ | **39/45 ＝ 87% ❌** |
-| SC-005 摘要 ≤10 秒 | 14/15 ＝ 93% ✅ | **8/15 ＝ 53%** ❌ | 11/15 ＝ 73% ❌ | **33/45 ＝ 73% ❌** |
-| SC-005 情緒 ≤15 秒 | 11/15 ＝ 73% ❌ | **14/15 ＝ 93%** ✅ | 10/15 ＝ 67% ❌ | **35/45 ＝ 78% ❌** |
-
-**摘要 93% → 53%、情緒 73% → 93% → 67%，兩項在相鄰輪次之間往相反方向大幅擺動。**
-第二輪的 3 個失敗樣本全部集中在該輪第 1 圈的前三個目標，特徵極端：檢索 30 秒逾時、
-第二段單次呼叫實際跑了 **102 秒**與 48 秒；第 1 圈後兩個目標即恢復正常。
-排除那 3 筆後（三輪口徑，分母 42）：**SC-001 39/42 ＝ 93%、摘要 33/42 ＝ 79%、
-情緒 32/42 ＝ 76%**。⚠️ 情緒**反而變差**（78% → 76%）—— 那 3 筆的情緒分別是 10.4／14.7／8.1 秒，
-全部達標，排除掉等於拿走三個通過樣本。**同一次「爆發」不是對每個驗收項都是失敗**，
-拿一組排除規則套用到三個指標上要逐項確認，不能整批套。
-
-**因此 MUST NOT 用單輪 n=15 打勾或取消打勾**：`ceil(0.9 × 15) = 14`，
-也就是**一個樣本就決定通過與否**。三項驗收的判定目前都在這個精度之內。
-
-⚠️ **隔離單次量測推不出端到端結果，這條在本節開頭寫過一次，2026-09-02 又踩了一次**：
-摘要的隔離量測是 19/20 ＝ 95%（`spike:agent-latency -- summary 20`），端到端合併卻只有 73%。
-隔離值只能用來回答「agent 現在是快是慢」，**MUST NOT 用來預測驗收會不會過**。
-
-⚠️ **假設（未證實）：背靠背的量測會互相污染。** `callWithTimeout()` **不會取消底層呼叫** ——
-探針量到的第二段原始耗時有 102 秒、62 秒、48 秒，而它的逾時是 20 秒；也就是每一次逾時都留下
-一個仍在消耗平台容量的呼叫。2026-09-01 是 40 分鐘內連跑四輪，2026-09-02 是約 50 分鐘內
-約 240 次呼叫 —— 兩次被判定為「平台降級時段」的觀測，都出現在密集量測之中。
-若假設為真，它同時解釋了 2026-09-01 那組異常數據。
-**驗證方法**：拉開冷卻時間後重測，看爆發是否消失。在證實或推翻之前，量測規程為
-**兩輪之間至少留 30 分鐘冷卻，且樣本要跨不同時段**。
-
-⏳ **第一次驗證（2026-09-02 第 3 輪，冷卻 58 分鐘）：爆發沒有重現。** 該輪 15 個樣本全部產出了
-建議卡（前一輪有 3 個從未出現任何卡），慢樣本也不再叢集在該輪最前面，而是散落在第 2、3 圈。
-⚠️ **這只是一個方向一致的觀測，不是證實**：前一輪冷卻約 5 分鐘、有爆發，本輪冷卻 58 分鐘、
-沒爆發 —— 兩邊各一個樣本。爆發本來就是偶發事件，「這次沒發生」與假設為真、為假都相容。
-在累積更多輪之前 MUST NOT 寫成「已證實」。
-
-**⚠️ 每次 AI 呼叫其實是兩個 HTTP 請求**（2026-08-28 由本機代理的日誌發現）：SDK 的
-`streamChat()` 在 `body.user_id` 缺席時會先 `POST /ai-agent/chat-client/auth/user` 取 id，
-而 `ImbraceAgentProvider.callAgent()` **當時**沒有傳 `user_id` —— 於是每一次摘要、每一次情緒批次、
-每一次建議卡都多付一趟往返去查同一個固定值。該 id 對同一組憑證而言不變，可查一次快取
-（已於 2026-09-02 補上，見下方 ✅）。
-
-**2026-08-29 實測**（`npm run spike:userid`，隔離量測該趟呼叫 20 次）：中位數 **54ms**、
-p90 64ms、**20/20 皆同一個 id**（可快取）、傳入 `user_id` 後輸出照常 **5/5**。
-
-⛔ **它是衛生問題，不是效能解方** —— 54ms 補不上任何延遲門檻的缺口。
-✅ **已做（2026-09-02，`specs/005-m2-residual-defects` US4 / FR-021）**：`callAgent()` 帶上 `user_id`，
-id 由防腐層 `server/services/imbrace.ts` 的 `resolveAiClientUserId()` 取一次並以 process-local 快取
-（取得失敗不快取、退回「不帶、讓 SDK 自己查」的舊路徑，行為不變只是沒省到）。
-⚠️ **它是 AI 服務的 client user id，與客服身分無關** —— provider 拿不到 `operatorId` 是刻意的；
-填錯不會報錯，只會讓 AI 服務端的用量統計掛到錯的人身上。`test/ai-user-id.test.ts` 對假 client
-斷言請求 payload **只多了這一個欄位**。
-
-⚠️ **量測方法**：MUST 隔離量該趟呼叫，MUST NOT 用「傳 vs 不傳」比端到端 —— 第一段的
-σ ≈ 849ms，要偵測約 300ms 的差異，n=15 兩組的差異標準誤就有 310ms（＝待測量級本身），
-需 n≈100+ 才有解析度。腳本裡仍保留一組小樣本 A／B，但它驗的是**正確性**（傳了會不會 400、
-輸出是否照常），不是延遲。
-
-**⚠️ JSON 抽取：模型會在合法 JSON 前後加開場白／自我總結，即使 prompt 明確禁止**（2026-08-27 實測，`scripts/spike/15-copilot-agents.ts`）——常見兩種形態：前面加「Okay, I will...」這類開場白，或後面加「我已完成摘要...」這類自我總結，且是穩定出現的行為，不是隨機偶發。逼 prompt 100% 守規矩不可靠；正確做法是程式碼層面容錯：找文字中第一個 `{`／`[` 作為 JSON 起點（去掉前面的開場白），用 `JSON.parse` 錯誤回報的失敗位置切掉後面多餘的文字（見 `ImbraceAgentProvider` 的 `extractLeadingJson()`）。這個技巧對任何要求 iMBrace AI Agent 輸出結構化 JSON 的呼叫都通用，不限本功能。
-
-⚠️ **量測工具 MUST 共用同一份抽取邏輯，MUST NOT 自己抄一份。** 2026-08-29 的實例：`scripts/spike/18-agent-model-latency.ts` 原本自抄了簡化版（只去 code fence ＋ 截斷後綴，**漏了「找第一個 `{`／`[` 切掉開場白」那一步**），於是把摘要 agent 判成 **0/15 不合規** —— 而該 agent 的輸出一直都正常（`Okay, I will summarize...` 開場白後接合法 JSON，正式路徑解得開）。更危險的是該腳本的註解**寫著「比照正式路徑」但實作並沒有**，因此看註解無法察覺。量測工具比正式路徑嚴格會憑空製造出不存在的缺陷，比它寬鬆則會漏掉真的缺陷；唯一可靠的做法是共用程式碼，所以 `extractLeadingJson()` 與 `buildSuggestionPrompt()` 都已從 `ImbraceAgentProvider` 匯出供 spike 使用。
+穩定出現、不是隨機偶發：前面加「Okay, I will...」或後面加「我已完成摘要...」。逼 prompt 100% 守規矩不可靠；正確做法是程式碼層面容錯：找文字中第一個 `{`／`[` 作為 JSON 起點，用 `JSON.parse` 錯誤回報的失敗位置切掉後面多餘的文字（`ImbraceAgentProvider` 的 `extractLeadingJson()`）。這個技巧對任何要求 iMBrace AI Agent 輸出結構化 JSON 的呼叫都通用。
 
 #### ❌ 杜撰引用的成因不是「沒看到清單」—— 封閉清單量完前後零改善（2026-09-03）
 
-`specs/005-m2-residual-defects` US3 的整套動作已跑完：先取基線、再在
-`buildSuggestionPrompt()` 加一段**顯式封閉清單**（「可用的 sopId（封閉清單，只能從中選，
-不得自創）：…」，空集合時明示全部填 null）、再以**同一組 15 段對話、同樣 3 輪**重量一次。
+`specs/005` US3：先取基線、再在 `buildSuggestionPrompt()` 加一段**顯式封閉清單**、再以同一組 15 段對話 × 3 輪重量（`npm run spike:citation-quality`，口徑 FR-017）：**杜撰率 21%（9/43）→ 21%（9/42），最終取得引用 84% → 82%，零改善**（完整表附錄 C-10）。
 
-口徑：FR-017 的固定 15 段 × 3 輪；分母 ＝ `hitCount > 0` 且 `outcome ∉ {no-cards, failed}`
-（`npm run spike:citation-quality`，兩次都在 2026-09-03 02:08–02:53 的同一個時段連續跑完，
-中間只隔 2 分鐘，兩次前都跑過 `spike:agent-prompts` 確認四個 agent 的 prompt 未漂移）。
+**原因已經查出來了**：被擋下的字串全是 `TC-ACC-007`、`TC-DEV-001` 這種**有結構的 SOP 編號**，而**知識庫文件的內文裡本來就寫著它們**（實測逐字對上）；我方交給模型的 `id` 卻是 `knowledge-fallback-<hex>`（`agent-knowledge-provider.ts` 的 `hashFilename()`：`folder_info` 比對不到檔案時的**代用 id**）。**模型不是憑空捏造，是在「我方的代用 id」與「文件自己的正式編號」之間選了後者**——對一個叫 `sopId` 的欄位來說那甚至比較合理。給它一份代用 id 的封閉清單並沒有回答它面對的問題，所以清單加了也不會動。
 
-| | 分母 | 含杜撰的生成 | 杜撰率 | 杜撰字串總數 | 卡片級捨棄率 | 最終取得引用 |
-|---|---|---|---|---|---|---|
-| 基線（改 prompt 前） | 43 | 9 | **21%** | 13 | 11.1%（104/117） | 84%（38/45） |
-| 封閉清單（改 prompt 後） | 42 | 9 | **21%** | 12 | 9.8%（111/123） | 82%（37/45） |
+⚠️ 這推翻了 004 留下的描述「憑空造一個長得像 id 的字串」。**引用本結論時 MUST 用這一版。**
+⚠️ 舊記載的「杜撰率 44%」出自 2026-08-29 的 n≈9，已由 n=43 的固定口徑取代（21%）。
 
-**零改善，而且原因已經查出來了。** 把被擋下的字串印出來看，它們全部長這樣：
-`TC-ACC-007`、`TC-DEV-001`、`TC-TER-006` —— 一個**有結構、可辨識的 SOP 編號格式**，
-不是亂碼。再把同一次檢索的真實命中攤開對照：
+**可動的槓桿因此換了位置**，三個候選皆需另立任務：① 讓 `sopId` 帶的就是文件的正式編號——要 iMBrace 先確認有沒有正式 SOP 編號制度（`IMBRACE_QUESTIONS.md` 0-3g ②，這個實測讓那一題從錦上添花變成主線）；② 把 `hashFilename()` 的代用 id 佔比壓下來（先查 `folder_info` 為什麼比對不到）；③ 在後台建議卡 prompt 規定「`sopId` 只抄檢索結果的 `id` 欄位，不得抄文件內文出現的任何編號」——在 iMBrace 後台，不在本 repo。
 
-- 我方交給模型的 `id` 是 **`knowledge-fallback-<hex>`**（`agent-knowledge-provider.ts` 的
-  `hashFilename()`：`folder_info` 比對不到檔案時以檔名雜湊出的**代用 id**），少數情況是裸 UUID。
-- 而**知識庫文件的內文裡本來就寫著 `TC-XXX-NNN` 這組編號**（實測：`TWN#UG1103` 那次檢索的
-  文件內文含 `TC-ACC-007`，`TWN#UK2594` 那次含 `TC-DEV-001` —— 與模型填進 `sopId` 的字串逐字相同）。
-
-**所以模型不是憑空捏造，是在「我方的代用 id」與「文件自己的正式 SOP 編號」之間選了後者。**
-對一個叫 `sopId` 的欄位來說那甚至是比較合理的選擇。給它一份代用 id 的封閉清單，
-並沒有回答它面對的問題，所以清單加了也不會動 —— 這正是量出來零改善的機制。
-
-⚠️ **這推翻了 004 留下的描述「憑空造一個長得像 id 的字串」**（`specs/004` 與本文件先前的記載）。
-形狀確實「像 id」，但來源是文件內文，不是憑空。**引用本結論時 MUST 用這一版。**
-
-⚠️ **可動的槓桿因此換了位置**，三個候選（皆**不在**本規格範圍，需另立任務）：
-① 讓 `sopId` 帶的就是文件的正式編號 —— 但那要 iMBrace 先確認有沒有正式的 SOP 編號制度可串接
-（`IMBRACE_QUESTIONS.md` 0-3g ②，**這個實測讓那一題從「錦上添花」變成主線**）；
-② 把 `hashFilename()` 的代用 id 佔比壓下來（先查清楚 `folder_info` 為什麼比對不到）；
-③ 在後台的建議卡 system prompt 裡直接規定「`sopId` 只抄檢索結果的 `id` 欄位，
-不得抄文件內文出現的任何編號」—— 這一條在 iMBrace 後台，不在本 repo。
-
-⚠️ **逐對話分布的集中性也跟著鬆掉了**：基線是 5 段對話貢獻全部杜撰、另外 10 段一次都沒有
-（最高那段 3/3）；改動後變成 8 段各出現 1～2 次（最高那段 3/3 降到 2/3）。
-n=3／段，這個變化**還在雜訊內，MUST NOT 解讀成「清單把集中性打散了」**；
-但它同時說明「某幾段對話特別容易杜撰」這條 004 留下的線索，在 n=45 的口徑下沒有站住。
-
-⚠️ **封閉清單的程式碼刻意保留不回退。** 它零改善但也零代價（prompt 多一行、
-`spike:agent-latency` 的第一段延遲未見變化），而它是「模型看得到清單仍不照著填」
-這個結論的唯一證據；拿掉就等於把證據一起拿掉。
+⚠️ **封閉清單的程式碼刻意保留不回退。** 它零改善但也零代價，而它是「模型看得到清單仍不照著填」這個結論的唯一證據。
+⚠️ 「某幾段對話特別容易杜撰」這條 004 留下的線索在 n=45 口徑下沒有站住（n=3／段，分布變化在雜訊內）。
 
 ### 8.3 狀態與事件匯流排
 
@@ -1291,8 +691,9 @@ export interface EventBus {
 | `operator:{operatorId}` | 推播給特定客服（JOIN 通知、跨對話提醒） |
 | `conversation:{conversationId}` | 推播給所有正在檢視該對話的人（新訊息、presence、分析結果） |
 
----
+⚠️ **換掉 `StateStore` 涵蓋不到分析管線的八份 process-local 狀態**（各模組自己的 `new Map()`／`Set`，不在 `StateStore` 裡也沒有 `globalThis` 鍵），清單見 §18 M2「分析管線拆檔」的 📌 註記，M4 驗收另有一條。
 
+---
 ## 9. 即時機制與輪詢策略
 
 ### 9.1 核心設計：共享訂閱
@@ -1335,7 +736,7 @@ export interface EventBus {
 
 1. `limit=N` 只取最新 N 則（N=50）——✅ 已確認訊息預設由新到舊排序，`limit=N` 直接就是最新 N 則，不需 `sort` 或 `skip=total-N`
 2. 本地以 `lastMessageId` 比對，只把新增部分推給前端（SSE payload 仍是增量的）
-3. 並發控制——同時 in-flight 請求上限 5
+3. 並發控制——**每個對話同一時間只有一個 in-flight 請求**（`polling-message-source.ts` 的 `inFlight` 旗標；這是正確性不是最佳化，重疊的兩次取數會讓錨點比對亂掉）。沒有全域上限，穩態成本由 §9.3.1 的清單輪詢壓下來
 4. ⏳ `ETag` / `If-None-Match` 探測——**尚未實測**，後端是否支援未知，不列入 M1 已完成範圍
 
 > `skip` 亦實測有效，可正常分頁回補歷史——首次載入若需完整歷史，走 `skip` 分頁而非一次全量。
@@ -1363,7 +764,7 @@ export interface EventBus {
 
 > ⚠️ 仍要保留第二層的 `lastMessageId` 比對——`last_message_at` 只說「有新東西」，不說「新了幾則」。且**`last_message_at` 實測填充率僅 83%**，部分對話為 `(無)`，這些對話須退回逐對話輪詢。
 >
-> 輪詢仍不是瓶頸，AI 呼叫才是——實測 AI 單次呼叫中位數 5.0 秒、最慢 12.2 秒，見 §11.2。
+> 輪詢仍不是瓶頸，AI 呼叫才是（延遲見 §8.2b）。
 > ⚠️ **第一層的間隔在「排下一拍」的那一刻就固定了，之後不會自己重評。**
 > 而這一層只在「該組織有人連線」時才真的取數（沒人時 `borrowCredential()` 回 null，
 > 直接回空陣列且不報錯）——兩者相乘會生出一個安靜的空窗：runtime 由**最先到的請求**建立
@@ -1379,11 +780,13 @@ export interface EventBus {
 
 ### 9.4 換成 webhook 後仍要保留對帳輪詢
 
-Webhook 會漏、會亂序、會重送。生產環境必須保留低頻對帳輪詢（每 30s），比對本地 `lastMessageId` 與遠端，補上遺漏的訊息。省略此機制的後果是「偶爾少一則訊息」——最難重現、最難追查的一類 bug，務必在 M4 一併實作。
+Webhook 會漏、會亂序、會重送。生產環境必須保留低頻對帳輪詢，比對本地 `lastMessageId` 與遠端，補上遺漏的訊息。省略此機制的後果是「偶爾少一則訊息」——最難重現、最難追查的一類 bug。
+
+機制**現在就存在**：被第一層清單輪詢涵蓋的對話，第二層只以 `POLL_RECONCILE_MS`（30 秒）做對帳，即時性由 `poke()` 提供（`polling-message-source.ts` 的 `effectiveIntervalMs()`）。M4 換成 webhook 後 MUST 保留這一層，不得因為「有推播了」把它拿掉。
 
 ### 9.5 SSE 契約
 
-正典為 `shared/types/events.ts`。M1 已實作的部分：
+正典為 `shared/types/events.ts`，此處為摘要（區塊型別見 `shared/types/copilot.ts`）：
 
 ```ts
 export type CopilotEvent =
@@ -1393,8 +796,10 @@ export type CopilotEvent =
   | { type: 'presence.updated';    conversationId: string; presence: PresenceSnapshot }
   | { type: 'control.updated';     conversationId: string; control: ConversationControl }
   | { type: 'conversation.updated';conversationId: string; lastMessageAt?: string }
+  | { type: 'summary.updated';     conversationId: string; summary: SummaryBlock }      // M2
+  | { type: 'sentiment.updated';   conversationId: string; sentiment: SentimentBlock }  // M2
+  | { type: 'suggestion.updated';  conversationId: string; suggestion: SuggestionBlock } // M2
   | { type: 'stream.heartbeat';    at: string }
-  // M2 加入：summary.updated / sentiment.appended / suggestions.updated / analysis.failed
 ```
 
 **① `presence.updated` 的 payload 不是純 `PresenceEntry[]`**——§10.2 的第三個來源（`mode`）只知道「有人能送出訊息」，指不出是誰，塞不進以 operatorId 為鍵的陣列：
@@ -1408,6 +813,8 @@ interface PresenceSnapshot {
 ```
 
 **② 斷線補齊不靠 `Last-Event-ID`，靠對帳。** 「已送出事件」的儲存放在單一副本記憶體裡，M4 上多副本後重連到別的副本就補不到——那正是「偶爾少一則訊息」這類最難追查的 bug。改採**對帳式補齊**：前端重連後以自己的 `lastMessageId` 打 `GET /api/messages?conversationId=…&since=…` 重新對帳，與 §9.4「webhook 上線後仍要保留對帳輪詢」同一原則——**真相一律回源頭取，不依賴傳輸層的可靠性假設。** 事件仍帶 `id`，但只用於排序與除錯。
+
+**③ `messages.appended` 不代表「有新訊息」，去重責任在消費端。** 該事件會整批重送已知訊息——pipeline 每次因 `{priority, joined}` 改變被拆掉重建（分頁切到背景、切到別的對話、SSE 重連），輪詢錨點就歸零，於是整段歷史被當成新訊息推上來，**而對話本身什麼都沒發生**。凡要回答「有沒有新訊息」的消費端 MUST 以自己的去重結果為準，MUST NOT 以「事件到了」代替。這個坑踩過兩次：訊息列表當年為此去重了，結案的過期標記沒跟上，症狀是「按下結案後憑空冒出『對話有新內容，建議重新產生』且抓不到規律」（2026-09-07 修，見 `app/utils/message-merge.ts`）。
 
 ---
 
@@ -1492,7 +899,7 @@ const someoneElseCanSend = mode === 'manual' || mode === 'hybrid'
 因此左欄第二行的 presence 措辭**只能是不指名、也不區分是不是自己的說法**
 （見 `DESIGN_TOKENS.md` §8.2 的偏離說明）。
 
-#### 10.2.1a 「標出我 JOIN 的每一則」怎麼做的（2026-09-01 已實作）
+#### 10.2.1a 「標出我 JOIN 的每一則」怎麼做的
 
 正典程式碼在 `server/services/viewer-joined.ts`，那裡的檔頭有完整的成本模型與盲區清單，
 **這一節只放不看程式碼也必須知道的三件事**：
@@ -1707,7 +1114,7 @@ POST /channel-service/v1/team_conversations/_join
                   對話摘要於此時才補跑（補跑期間標示「更新中」，不得留白）
 ```
 
-**成本控制的槓桿是節流，不是停跑。** 背景 session 上限（建議 10）與明顯長於前景的 debounce 兩者合起來承擔成本控制；超過上限者只累積訊息計數，待名額釋出或客服聚焦時才處理。
+**成本控制的槓桿是節流，不是停跑。** 背景並行上限（`BACKGROUND_CONCURRENCY_LIMIT = 10`）與明顯長於前景的 debounce（背景 8 秒對前景 1 秒，`copilot-analysis.ts`）兩者合起來承擔成本控制；超過上限者只累積訊息計數，待名額釋出或客服聚焦時才處理。
 
 > ⚠️ **不要把背景改回「不跑建議卡、不查知識庫」**（憲法 v3.0.0 已否決）。客服 JOIN 對話 A 後切去
 > 回應 B，A 的客戶通常仍在發言，切回時就會面對一批過時建議卡且要從頭再等 5～12 秒。
@@ -1715,7 +1122,7 @@ POST /channel-service/v1/team_conversations/_join
 
 ### 11.3 快取
 
-快取鍵 `{conversationId}:{lastMessageId}`。同一狀態不重複呼叫模型。
+**沒有結果快取，靠版本錨點判定「同一狀態不重複呼叫模型」**：摘要以 `summaryBlock.summary.basedOnMessageId`、情緒以時間軸高水位找出「尚未涵蓋」的客戶發言，沒有新發言就不排分析（§11.1）；同一區塊在飛時的重複觸發由 `analysis-dedupe.ts` 以 `${conversationId}:${block}` 合併。因此同一狀態重跑不會得到不同結果，「重新產生」按鈕給不出系統做不到的承諾（§19.1 #20）。
 
 ### 11.4 訊息型別（多模態）
 
@@ -1804,7 +1211,7 @@ export type SentimentTimelineEntry = SentimentPoint | SentimentMarker
 /** 對話摘要（冷啟動與增量共用同一結構） */
 export interface ConversationSummary {
   /**
-   * 摘要正文（畫布 2a「對話摘要」的主體，2026-09-01 新增）。
+   * 摘要正文（畫布 2a「對話摘要」的主體）。
    * ⚠️ 選填 —— 見下方「⚠️ narrative／topics 為什麼必須是選填」。
    */
   narrative?: string
@@ -1836,7 +1243,7 @@ export interface ConversationSummary {
 > ✅ 後台 prompt 目前**確實在回這兩個欄位**（`npm run spike:verify-provider`，`out/16-provider-runs.json`；
 > 2026-09-02 重跑 `summarize()` **3/3 帶齊**，實例 `topics=["網路斷線","數據機"]`，
 > 長度與張數都在 `SUMMARY_TOPIC_MAX_*` 上限內），不需要去後台補 prompt。
-> ⚠️ **這個結論的保存期限取決於 repo 外的設定。** 2026-09-02 起有兩層防護：
+> ⚠️ **這個結論的保存期限取決於 repo 外的設定。** 兩層防護：
 > `npm run spike:agent-prompts` 會直接看出摘要 agent 的 `core_task` 少了這兩個欄位的定義
 > （1 秒、直接證據）；`spike:verify-provider` 則從輸出反推（它刻意把 `narrative`／`topics`
 > 分開計數、不與 `summaryOk` 合併，正是為了讓「欄位安靜消失」現形）。
@@ -1856,21 +1263,15 @@ export interface SuggestionCard {
   requiresData: string[]        // 需客服補上的實際資料，如「工單編號」
 }
 
-/** 交接摘要（LEAVE 觸發，對話仍進行中） */
-export interface HandoverSummary {
-  conversationId: string
-  operatorId: string
-  periodStart: string
-  periodEnd: string
-  whatIDid: string[]
-  currentState: string
-  nextActions: string[]
-  cautions: string[]            // 下一位接手者要注意的地雷
-}
-
-/** 結案摘要（updateStatus → resolved 或手動觸發，寫入 Data Board） */
+/** 結案摘要（客服按下「結案」觸發——不由對話狀態變更觸發，見 §13.4 ②；經人審後寫入 Data Board） */
 export interface ClosureSummary {
-  conversationId: string
+  recordId: string              // 主鍵（獨立識別碼）——⚠️ 主鍵不是 conversationId（憲法 5.3）
+  draftId: string               // 產生本筆的摘要草稿 id，冪等寫入的依據（憲法 5.3）
+  conversationId: string        // ⚠️ 可重複的索引，不是唯一鍵——同一對話會有多筆
+  periodStart: string           // 本次涵蓋區間的起點（§13.4 ④）
+  periodMessageCount: number | null  // 本次涵蓋的訊息則數。⚠️ null ＝ 超過 500 則的掃描上限、數不完（**不是 0 則**）
+  /** 這個 periodStart 是怎麼來的。⚠️ 光靠時間戳事後分不出「選了某次結案」與「客服自己打的時間」 */
+  periodOrigin: 'closure' | 'first' | 'custom'
   channel: string
   contactId: string
   operators: string[]
@@ -1878,7 +1279,7 @@ export interface ClosureSummary {
   closedAt: string              // 對應 Board 的 closed_at
   summary: string
   intent: string
-  category: string              // 受控詞彙，見 config/categories.yaml（尚未建立，M3）
+  category: string              // 受控詞彙，見 config/categories.ts
 
   // ── 以下三項對應介面上的三個標籤（意圖／處理結果／情緒結果）──
   resolution: 'resolved' | 'workaround' | 'escalated' | 'unresolved' | 'customer_abandoned'
@@ -1887,14 +1288,25 @@ export interface ClosureSummary {
   /** 情緒結果的語意標籤，供介面直接顯示 */
   sentimentOutcome: 'appeased' | 'satisfied' | 'still_negative' | 'escalated'
 
-  // ── 數值供報表統計使用，不直接顯示於介面 ──
-  sentimentStart: number
-  sentimentEnd: number
-  sentimentTrough: number       // 全程最低點——需以全量評分點計算，不可只取 sparkline 繪出的最近 N 點（§14.6）
+  /*
+    ── 數值供報表統計使用，不直接顯示於介面 ──
+
+    ⚠️ **四個數值欄一律 `number | null`**（specs/006 FR-022b）。
+       非 nullable 的型別會逼實作者在「區間內評分點不齊」時填 0，而那正是 FR-022b
+       逐字禁止的事 —— 且填了 0 之後**不會有任何錯誤**，只會讓報表把留空當成最低分。
+       實測未設定的 `Number` 欄位回讀為 `null`，與 `0` 明確可分（`spike:board-write` 006-E4），
+       因此「留空」的表達方式是**不送該欄位**。
+    ⚠️ 三個 sentiment 值 MUST **同時**有值或**同時**為 null，部分有值是實作錯誤。
+  */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null  // 本次涵蓋區間內的最低點——不可只取 sparkline 繪出的最近 N 點，也不可跨越區間邊界取到前幾輪服務的谷底（§13.4 ④、§14.6）
+  /** 情緒留空的原因與實際涵蓋範圍。有值即代表上面三個是 null。對應 Board 的 period_sentiment_note */
+  sentimentNote: string | null
 
   citedSopIds: string[]
   followUps: Array<{ action: string; owner?: string; dueHint?: string }>
-  confidence: number
+  confidence: number | null      // 無真實依據時為 null（憲法 4.4）
   reviewedBy: string | null     // 未經人審為 null
   reviewedAt: string | null
 }
@@ -1904,7 +1316,7 @@ export interface ClosureSummary {
 
 **① 建議卡的 `sopId` 不得杜撰。** 流程必須是：檢索知識庫 → 將 `KnowledgeHit[]` 作為上下文提供給模型 → 要求 `sopId` 只能自 hits 的 id 中選擇 → 後端再驗證一次，不在白名單者直接丟棄該卡。僅靠 prompt 交代是不夠的，必須有程式層的後驗。
 
-⚠️ **2026-08-29（004）：前景建議卡已改為兩段式，「先檢索、再生成」不再是唯一的流程形狀。**
+⚠️ **前景建議卡是兩段式（004），「先檢索、再生成」不是唯一的流程形狀。**
 第一段**不等檢索**、以空的 `knowledgeHits` 先生成一批可用的卡（白名單集合為空，因此任何帶
 `sopId` 的卡都會被整卡捨棄——本條規則在第一段是**更嚴格**地成立）；檢索有命中時，第二段
 以那批命中**重新生成整批**並自動換上。⚠️ 第二段是「重新生成」而**不是**為第一段的卡補掛來源——
@@ -1921,7 +1333,7 @@ export interface ClosureSummary {
 
 - 全部使用 **structured output / tool use**，**絕不解析自由文字**
 - 所有輸出以 **Zod schema 驗證**後才進入系統
-- `category` 使用**受控詞彙**（`config/categories.yaml`，尚未建立，M3），不得由模型自由生成
+- `category` 使用**受控詞彙**（`config/categories.ts`），不得由模型自由生成
 - 輸出語言為繁體中文，語氣須符合客服規範
 - 溫度設低（建議 0.2–0.3）
 
@@ -1931,13 +1343,11 @@ export interface ClosureSummary {
 
 | # | 是什麼 | 處置 |
 |---|---|---|
-| ① 冷啟動只看最新 50 則 | 功能缺口（與 FR-001「完整歷史」的字面有落差） | **與 ③ 合併立案，歸「M3 開工前決策」** |
+| ① 冷啟動只看最新 50 則 | 功能缺口（與 FR-001「完整歷史」的字面有落差） | **與 ③ 合併立案**，獨立追蹤、不阻擋里程碑開工 |
 | ② 情緒批次大小是機率賭注 | **不是待辦** —— 使用者早已拍板接受 | **已接受的取捨**，見下方 |
 | ③ 分析結果沒有真正持久化 | 需要先拍板保留期限（隱私姿態） | 同 ① |
 
-⚠️ ①③ 歸在**決策批次**而非驗收清單，因此與 `CONSTITUTION.md` 5.3 的待修憲事項
-（註明 MUST 在 M3 開工前完成）**並列、同進同出** —— 兩者性質相同（都要先拍板才動得了），
-分開追會有一項掉下去。
+⚠️ ①③ 歸在**決策批次**而非驗收清單：要先拍板（隱私姿態）才動得了。
 
 **① 冷啟動只看得到最新 50 則訊息，未涵蓋「完整歷史」**——`join.post.ts` 的 `fetchLatest()`
 不帶 `limit` 參數，預設只抓最新 50 則（`DEFAULT_MESSAGE_LIMIT`）。對話可長達 398 則
@@ -1966,7 +1376,7 @@ messageId 為粒度都是重算，不是只算真正新增的部分。
 > ⚠️ 伺服器重啟後的空白面板是**另一件事，且已修**（`sendAnalysisSnapshotAndResume()` 對已 JOIN
 > 的連線補跑 `recoverColdStart()`，見 §18 M2「已修的缺陷」）。本項是持久化，不是復原。
 
-**①③ 的立案內容**（「M3 開工前決策」的一部分，與憲法 5.3 的待修憲並列）：
+**①③ 的立案內容**：
 把情緒評分點（含摘要所依賴的歷史）以 messageId 為 key 做真正的持久化快取，會同時讓
 「冷啟動不受 50 則上限限制」（未涵蓋的舊訊息判斷為「尚未分析過」即可依需要補做分析，
 而非整段重來）與「跨客服／跨重啟不必重算已分析過的訊息」一起成立。範圍不小——需要新的
@@ -1988,18 +1398,18 @@ iMBrace SDK 文件中沒有 Knowledge / DocIQ 的查詢 API——`reference/` �
 
 ### 12.2 因應方式
 
-架構上以 `KnowledgeProvider` 隔離（見 §8.2）。**候選路徑（`AgentKnowledgeProvider` 為 M2 實作，其餘為備援）**：
+架構上以 `KnowledgeProvider` 隔離（見 §8.2）。**候選路徑（`AgentKnowledgeProvider` 為現行實作，其餘為備援）**：
 
 | 路徑 | 狀態 | 說明 |
 |---|---|---|
-| 掛 Knowledge Hub 給 AI Agent 再問它 | ✅ **M2 採用** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub。可取得引用來源，但取不到分數（§0-3c 仍待 iMBrace 回覆） |
-| `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。若 #19 RAG 品質調不動，換上此實作即可 |
+| 掛 Knowledge Hub 給 AI Agent 再問它 | ✅ **採用** | 平台已有 311 個 RAG 檔案、20 個 Knowledge Hub。可取得引用來源，但取不到分數（§0-3c 仍待 iMBrace 回覆） |
+| `VikiKnowledgeProvider` | 🟡 介面已預留，未實作 | viki 前端先建好知識庫與 AI 助理後，打其 public API 即可取得回覆，`answer-attribution` 附帶真實分數。⚠️ **2026-09-07 決策：暫不換入**，且與 0-3f 的回覆脫鉤（見 §18 M3 驗收第一條） |
 | `boards.search(boardId, {q, filter, limit})` | 🟡 備案，未採用 | Meilisearch 相容關鍵字檢索，有條目 ID，屬關鍵字非語意 |
 | `MockKnowledgeProvider` | ✅ 開發期 | 缺憑證／agent id 時自動退回並印警告，僅供本機開發（`server/services/knowledge/index.ts`） |
 | ~~`StaticSopProvider`~~ | ❌ 已撤銷 | 原規劃讀 `config/sop.yaml`；2026-08-28 由 002 決定不做，離線 fallback 由 `MockKnowledgeProvider` 承擔 |
 | ~~自建向量檢索~~ | ❌ 已排除 | 依賴的 `ai.embed()` 回 404 |
 
-無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源不可省**（2026-08-27 訂正：此處指的是「來源真實存在、可白名單核對」，不是要顯示一套正式編號——iMBrace 平台本身沒有 SOP 編號制度，介面僅顯示來源標題，見 §8.2 訂正說明），否則憲法 4.3（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
+無論分數取不取得到，介面上的「信心度」欄位都不拿掉——`KnowledgeHit.score` 與 `SuggestionCard.confidence` 皆為 nullable，iMBrace 路徑無分數時 UI 留空，換上 viki 後自然回填有值（見 §8.2、§11.6②）。但**引用來源不可省**（指「來源真實存在、可白名單核對」，不是要顯示一套正式編號——iMBrace 沒有 SOP 編號制度，介面僅顯示來源標題，見 §8.2），否則憲法 4.3（`sopId` 白名單後驗）失去依據，模型將可能杜撰不存在的 SOP，此為產品品質的底線。無論最終選哪一條，替換 provider 即可，上層不動。
 
 ### 12.3 知識庫快查 UX
 
@@ -2096,7 +1506,7 @@ MVP 做法是把限定檔案後拿到的所有片段依序串接顯示，並誠�
 |---|---|---|
 | Session 狀態、輪詢游標、presence | 記憶體 → Redis | 高頻讀寫、可重建、重啟即棄無妨 |
 | 情緒逐輪分數（進行中） | 記憶體 → Redis | 每則訊息都在變，寫 Board 會打爆 API |
-| **結案／交接摘要** | **Data Board** | 業務資產，需可查詢與製作報表 |
+| **結案摘要** | **Data Board** | 業務資產，需可查詢與製作報表。交接摘要不存在（未實作，§13.4 ②） |
 | 建議採納紀錄、SOP 命中 | Data Board（可延後至 M4+） | 供後續模型優化回饋 |
 
 ### 13.2 可用的 Board API
@@ -2114,7 +1524,12 @@ boards.linkItems()                                      # 關聯至 Contact
 
 | 欄位 | 型別 | 說明 |
 |---|---|---|
-| `conversation_id` | text（**唯一鍵**） | 冪等寫入的依據 |
+| `record_id` | text（**主鍵**） | 獨立識別碼。⚠️ 主鍵**不是** `conversation_id`（憲法 5.3） |
+| `draft_id` | text | 產生本筆的摘要草稿 id，**冪等寫入的依據**（同一份草稿至多一筆） |
+| `conversation_id` | text（**可重複的索引**） | 用途是查出「這通對話歷來的所有結案紀錄」，不是唯一鍵 |
+| `period_start` | datetime | 本筆涵蓋區間的起點 |
+| `period_message_count` | number | 本筆涵蓋的訊息則數。⚠️ 與 `period_start` 一起，是事後唯一能看出「這份報告涵蓋了什麼」的依據。**留空 ＝ 超過 500 則的掃描上限，不是 0 則** |
+| `period_origin` | select | `closure` / `first` / `custom` —— 這個起點是怎麼來的。⚠️ 光靠 `period_start` 事後分不出「客服選了某次結案」與「客服自己打了一個時間」，而那是完全不同的兩件事 |
 | `channel` | text | LINE / Web / WhatsApp… |
 | `contact_id` | text | 可 `linkItems()` 關聯至 Contact board |
 | `operators` | text[] | 參與過的所有客服 |
@@ -2125,35 +1540,67 @@ boards.linkItems()                                      # 關聯至 Contact
 | `resolution` | select | resolved / workaround / escalated / unresolved / customer_abandoned |
 | `actions_taken` | text[] | 受控詞彙。**與 `resolution` 分開**——前者是做了什麼，後者是結果狀態 |
 | `sentiment_outcome` | select | appeased / satisfied / still_negative / escalated |
-| `sentiment_start` / `sentiment_end` / `sentiment_trough` | number | 供報表統計，不直接顯示於介面 |
+| `sentiment_start` / `sentiment_end` / `sentiment_trough` | number | 供報表統計，不直接顯示於介面。⚠️ **留空 ＝ 區間內評分點不齊，不是 0 分**（實測未設定的 Number 回讀為 `null`，與 0 可分）。三者 MUST 同時有值或同時留空 |
+| `period_sentiment_note` | text | 情緒留空的原因與實際涵蓋範圍。有值即代表上面三欄是留空 |
 | `cited_sops` | text[] | |
 | `follow_ups` | long text（JSON） | |
-| `confidence` | number | |
+| `confidence` | number | 留空 ＝ 無真實依據（憲法 4.4）。⚠️ 結案摘要沒有檢索分數可依據，目前恆為留空 |
 | `reviewed_by` | text | 未經人審為空 |
 | `reviewed_at` | datetime | |
 
-> 欄位需先透過 `createField()` 在平台上建立。建議寫一支一次性 setup script 置於 `scripts/`，讓環境可重建。
+> 欄位需先透過 `createField()` 在平台上建立。✅ 已落地為 `scripts/setup-closure-board.ts`
+> （`npm run board:setup` 建立／補欄、`npm run board:verify` 只比對且有落差即非零離開）。
+> ⚠️ 欄位 id **MUST 由 `boards.get()` 反查**，MUST NOT 取 `createField()` 的回傳值 ——
+> SDK 註解寫著它「直接回傳 field」，實測回的是**整個 board**；照它做的話所有欄位
+> 共用同一把 id、寫入互相覆蓋，而**平台照樣回 200**（`spike:board-write` 006-E2a）。
 >
 > ⚠️ 本表與 §11.5 的 `ClosureSummary` 必須逐欄對得上——少建一欄不會報錯，只會讓該維度在報表裡永遠是空的。
 
 **欄位對照**：`operators`／`summary`／`intent`／`category`／`resolution`／`actions_taken`／`sentiment_outcome`／`sentiment_start|end|trough`／`cited_sops`／`follow_ups`／`confidence`／`reviewed_by|at` 一一對應 `ClosureSummary` 的同名欄位（camelCase → snake_case）；`joined_at`／`closed_at` 對應 `joinedAt`／`closedAt`。
 
-### 13.4 三個設計陷阱
+⚠️ 本表、§11.5、`shared/types/copilot.ts` 的 `ClosureSummary`、`server/services/closure/board-schema.ts` 是**同一份事實的四個副本**，改任一處 MUST 四處同步——`npm run board:verify` 只能抓平台與 `board-schema.ts` 的落差，抓不到文件與型別。四個數值欄 MUST 保持 `number | null`：非 nullable 會逼實作者填 0，報表會把「留空」讀成「最低分」，且不會報錯。
 
-**① AI 產物寫入正式 CRM，必須經人審。** 摘要生成後先進入可編輯的確認面板（`ClosurePanel.vue`），客服修改確認後才 `createItem()`。若確實需要「LEAVE 自動觸發寫入」，必須標記 `reviewed_by = null`，使其可於事後被稽核篩出。
+### 13.4 四個設計陷阱
 
-**② LEAVE ≠ 結案。** 多客服情境下，你 LEAVE 了但其他人仍在，因此拆成兩種產出：
+**① AI 產物寫入正式 CRM，必須經人審。** 摘要生成後先進入可編輯的確認面板，客服修改確認後才 `createItem()`（憲法 5.1）。若確實需要自動寫入，必須標記 `reviewed_by = null`，使其可於事後被稽核篩出（憲法 5.2）。⚠️ **目前沒有任何自動寫入路徑**，`specs/006-closure-handoff-summary` 不交付這種路徑。
 
-| 類型 | 觸發 | 內容 |
-|---|---|---|
-| **交接摘要** `HandoverSummary` | LEAVE | 我這段處理了什麼、下一位要接什麼——對話仍進行中 |
-| **結案摘要** `ClosureSummary` | `updateStatus()` → resolved，或手動按鈕 | 完整的意圖／分類／處理結果／情緒起訖／後續動作 |
+**② LEAVE ≠ 結案 —— 但交接摘要目前不實作。** 立論仍然成立：多客服情境下，你 LEAVE 了但其他人仍在，那一段服務值得留點東西給下一位。原本因此規劃兩種產出：
 
-兩者 schema 不同，不可混用。
+| 類型 | 觸發 | 內容 | 狀態 |
+|---|---|---|---|
+| 交接摘要 | LEAVE | 我這段處理了什麼、下一位要接什麼——對話仍進行中 | ❌ **不實作**（無型別、無端點） |
+| **結案摘要** `ClosureSummary` | 客服按下「結案」（**只有**這一種觸發） | 完整的意圖／分類／處理結果／情緒起訖／後續動作 | ✅ 由 `specs/006-closure-handoff-summary` 交付 |
 
-> 「手動按鈕」不限於獨立的結案按鈕——也可以是 LEAVE 流程中「同時結束對話」的選項（例如客服按下 LEAVE 時，UI 詢問是否一併結案）。無論哪種 UI 呈現，只要目的是把該對話標記為已結束，就走同一條 `updateStatus() → resolved` 路徑與同一份 `ClosureSummary` schema；若設計成緊跟著 LEAVE 自動觸發（不經額外詢問），仍必須依①標記 `reviewed_by = null` 供事後稽核。
+> ⚠️ **交接摘要確認不實作**（2026-09-03，`specs/006-closure-handoff-summary`）。理由是**它沒有設計落點** ——
+> 畫布 artboard 2a／`DESIGN_TOKENS.md` §7.2 的右欄六個區塊沒有它，結案流程的三張設計稿沒有它，
+> i18n 與元件裡沒有任何「交接／轉接」字串。它只曾存在於本文件的紙上規劃。
+> `PLATFORM_CAPABILITY.md` §2 那列「AI 轉接摘要／左欄」是 **demo 畫面上 iMBrace 平台自己的功能**，不是我方的 Copilot 面板。
+> **重啟條件**：畫布補上該區塊，或出現實際的多客服交接需求。
+> 在那之前「離開對話」＝純粹退出，不產生摘要、不寫入任何紀錄。
 
-**③ 冪等。** 同一對話重複產生摘要必須覆蓋而非新增。以 `conversation_id` 為唯一鍵，寫入前先 `search()`，再決定 `createItem` 或 `updateItem`。
+> 「結案」不限於獨立的結案按鈕——也可以是 LEAVE 流程中「同時結束對話」的選項。無論哪種 UI 呈現，只要目的是結束本次服務並留下結案紀錄，就走同一條結案路徑與同一份 `ClosureSummary` schema。
+>
+> ⚠️ **結案不變更平台上的對話狀態，也不由狀態變更觸發**（2026-09-03 裁決）。觸發條件**只有**客服按下「結案」；寫入 Data Board 成功後的最後一步**只是 LEAVE**（與「離開對話」相同的呼叫），對話在平台上的狀態維持原樣。MUST NOT 改成 `updateStatus() → resolved`：
+> 理由：改對話狀態的能力已由 spike 28（`scripts/spike/28-delete-conversation-permission.ts`）實測存在，但可改的狀態有多種，
+> 「結案應對應哪一種」尚未討論，貿然選一種會在平台端留下不可逆的狀態。整項延後另議（`specs/006-closure-handoff-summary` Clarifications）。
+
+**③ 冪等的單位是「摘要草稿」，不是對話（憲法 5.3，v4.0.0）。** 同一份草稿寫入幾次都只對應一筆（防的是「寫入逾時後客服重按」）；除此之外的每一次結案各自**並存**。主鍵是 `record_id`，`conversation_id` 是可重複的索引。
+
+平台不保證唯一鍵約束（實測 5 個 board 未見唯一鍵欄位型別，`scripts/spike/out/09-board-field-types.json`），因此流程是：**寫入前以 `draft_id` 查詢 → 決定 `createItem` / `updateItem` → 寫入後回查確認該筆確實存在**。⚠️ 最後那一步不可省——收到 200 不等於紀錄真的建立了，而「畫面顯示成功、Board 上其實沒有」是不會報錯的。
+
+> **同一通對話有多筆結案紀錄是正常的**，成因有兩種：① 不同時間的多次服務（同一位 LINE@ 客戶的聊天室長期存在）；② 同一次服務、多位客服交叉服務或中途轉手，各自寫一份。MUST NOT 改成「覆蓋而非新增」——那會在①銷毀服務歷史、在②洗掉同事的工作成果。
+
+**④ 一筆結案紀錄只描述「一次服務」，區間 MUST 隨紀錄寫入。** 一個對話（例如 LINE@ 的一位客戶）是長期存在的，可能被服務過很多次。`summary`／`intent`／`sentiment_start|end|trough` 全部只在同一個涵蓋區間內才有意義。
+
+該區間**由客服在人審面板上選定**，候選是該對話最近 5 筆結案紀錄的 `closed_at`（每一筆代表「上一輪服務在此結束」），外加墊底的「從第一則對話起算」。⚠️ **三種自動推導方式都試過、都會出錯**，不要重新提案：
+
+| 推導方式 | 反例 |
+|---|---|
+| 客服自己的 JOIN 時間 | 同一次服務的多位客服 JOIN 時間不同，會產出不同區間；且客戶通常在客服 JOIN 前就已把訴求講完 |
+| 時間間隔（gap）門檻 | 客戶昨天 17:35 發言、今天 10:15 才有客服接手（空檔 16 小時 40 分）仍是同一區間。門檻訂 24 小時對、訂 12 小時錯，而該值無法從證據推導 |
+| 客戶那一輪發言的第一則 | 客服回過話但**沒有結案**時，客戶隔天追問仍屬同一輪，此規則會誤切成新一輪 |
+
+`closed_at` 之所以是對的：**「有沒有結案」本身就是「上一輪有沒有結束」的定義**，是事實而非推測。詳細行為見 `specs/006-closure-handoff-summary` FR-021 系列。
 
 ---
 
@@ -2185,14 +1632,14 @@ boards.linkItems()                                      # 關聯至 Contact
 
 > 右欄的六個區塊以 §14.1.1 為準，本圖與該節必須一致。**「AI 轉接摘要」不在右欄**——依 demo 對照它屬於左欄（見 `PLATFORM_CAPABILITY.md` §2）。
 >
-> 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 **420px**（可拖曳 320–720px）、五區塊皆可折疊、支援載入骨架與「準備結案」收合態。
+> 右欄現已有正式設計稿（畫布 artboard **2a**，逐字規格見 `DESIGN_TOKENS.md` §7）：展開態寬度 **420px**（可拖曳 320–720px）、支援載入骨架與「準備結案」態。⚠️ **一般狀態是五個區塊**（①～⑤）；第六區塊「結案摘要自動填入」只在結案流程中出現，見 §14.1.1。
 >
 > ⚠️ **右欄的可見性不是「永遠都在」。**
 > 依 `specs/003-analysis-trigger-policy`，**客服未 JOIN 該對話時右欄整欄不呈現**（連收合鈕一起消失），
 > 中欄延伸至可用寬度；JOIN 時自動展開並提供收合鈕，收合狀態以「每位客服、每個對話」為粒度
 > 存 `localStorage`。伺服器端亦不把三個分析事件推給未 JOIN 的連線。
-> 規則見該規格 FR-016～FR-017b，視覺見 `docs/wireframe/03-workspace_assignment01.png`
-> （未接手）與 `03-workspace_toggleCopilot.png`（收合態）。
+> 規則見該規格 FR-016～FR-017b，視覺見畫布 artboard **1c** 的「未接手」與「Copilot 面板收合」兩個狀態
+> （`DESIGN_TOKENS.md` §0 的 1c 狀態表）。⚠️ 備存截圖已於 2026-09-03 刪除，不要再用檔名引用畫面。
 
 ### 14.1.1 右欄的區塊與捲動
 
@@ -2202,11 +1649,16 @@ boards.linkItems()                                      # 關聯至 Contact
 > 兩個理由：① 常駐會讓「這個區塊」與「結案按鈕」的關係曖昧不明；② 區塊若常駐就得在某個時機
 > 產生內容，等於每個對話都多跑一次 AI 呼叫，而絕大多數對話不會在那一刻結案。
 > 結案流程本身屬 M3，行為定案見 `specs/003-analysis-trigger-policy` 的「Session 2026-08-28 補充」
-> 與 `tasks.md` 附錄；視覺見 `docs/wireframe/03-workspace_close*.png` 四張。
+> 與 `tasks.md` 附錄；視覺見畫布 artboard **1c** 的「結案中」狀態與 artboard **2b**（結案摘要區塊的狀態矩陣）。
 
 **摺疊行為**：畫布採「區塊可折疊」**加**「階段感知」的組合，不是兩者擇一 —— 各區塊平時各自可
-折疊；一旦偵測到「準備結案」，其餘區塊自動收合成單行，只留 ⑥ 維持展開可編輯（**是收合其他
-區塊讓 ⑥ 顯眼，不是把 ⑥ 置頂**）。逐項行為見 `DESIGN_TOKENS.md` §7.4。
+折疊；一旦進入結案流程，⑥ **移到面板最上方**並展開可編輯，其餘區塊**全部**收合成單行。
+逐項行為見 `DESIGN_TOKENS.md` §7.4。
+
+> ⚠️ **⑥ 是置頂，不是「收合其他區塊讓它顯眼」**（使用者裁示，與 `DESIGN_TOKENS.md` §7.2「`order` 由階段決定」一致）。
+> 既然 ⑥ 平時完全不呈現，它出現時就是一個憑空冒出來的新元素，置頂才不會讓人在面板中間找它；
+> 「靠收合其他區塊」預設了 ⑥ 本來就在原位，前提不成立。
+
 折疊狀態是否記憶到 `localStorage` 設計稿未規範，仍是開發端判斷。
 
 ### 14.1.2 AI 階段完整對話紀錄
@@ -2311,7 +1763,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 訊息流使用虛擬滾動（`useVirtualList`）；建議卡數量上限 3–5 張，超過需捲動；情緒 sparkline 僅**繪製**最近 50 點（specs/001-sentiment-panel FR-015 已定案，非僅建議值）。
 
-> ⚠️ 「只畫 50 點」不等於「只留 50 點」。評分點本身必須全數保留——`ClosureSummary.sentimentTrough` 要的是**全程**最低點，若只留最近 50 點，它會安靜地算成「近期最低點」，而且要到 M3 寫進 Data Board 之後才會被發現。保留成本極低（每點只有分數、標籤與幾個關鍵詞），真正昂貴的是產生它的 AI 呼叫，那筆錢已經花了。詳見 `specs/001-sentiment-panel/spec.md` FR-015。
+> ⚠️ 「只畫 50 點」不等於「只留 50 點」。評分點本身必須全數保留——`ClosureSummary.sentimentTrough` 要的是**本次涵蓋區間內**的最低點，若只留最近 50 點，它會安靜地算成「近期最低點」，而且要到寫進 Data Board 之後才會被發現。保留成本極低（每點只有分數、標籤與幾個關鍵詞），真正昂貴的是產生它的 AI 呼叫，那筆錢已經花了。詳見 `specs/001-sentiment-panel/spec.md` FR-015。
 
 #### ⚠️ 虛擬滾動的高度契約 —— 一個沒有任何自動檢查看得見的地雷
 
@@ -2357,7 +1809,7 @@ boards.linkItems()                                      # 關聯至 Contact
 | 知識庫失敗 | 建議卡降級為無 SOP 引用的通用建議，並明確標示「未引用知識庫」 | ❌ 否 |
 | SSE 斷線 | 指數退避重連（1s → 30s）；重連後以本地 `lastMessageId` 對帳補齊（不靠 `Last-Event-ID`，見 §9.5）；斷線期間切 HTTP 輪詢 fallback | ❌ 否 |
 | Token 過期（401） | 清 session 導回登入，URL 保留 `conversationId`，登入後回到原處 | ✅ 是（但無痛） |
-| Rate limit（429） | **目標狀態**：全域退避 + 佇列，禁止重試風暴。**M2 現況**：rate limit 書面規格未到（`IMBRACE_QUESTIONS.md` G-2），佇列參數無從設計，故 429 直接轉錯誤狀態供手動重試——只保證「不製造重試風暴」這個下限。全域佇列已列入 §18 M3 驗收 | ❌ 否 |
+| Rate limit（429） | **目標狀態**：全域退避 + 佇列，禁止重試風暴。**現況**：rate limit 書面規格未到（`IMBRACE_QUESTIONS.md` G-2），佇列參數無從設計，故 429 直接轉錯誤狀態供手動重試——只保證「不製造重試風暴」這個下限。全域佇列已列入 §18 M3 驗收 | ❌ 否 |
 | 送出訊息失敗 | 樂觀 UI 標記「傳送失敗 [重試]」，草稿存 `localStorage` 絕不遺失 | ❌ 否 |
 | Webhook 重送／亂序 | event id 冪等去重 + 30s 對帳輪詢補漏 | ❌ 否 |
 | **撞單偵測（別人已回覆）** | 攔下並提示，提供 [↓ 先看最新訊息] [我已確認，仍要送出] [捨棄草稿] | ✅ **是（刻意的）** |
@@ -2429,7 +1881,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ## 18. 開發階段切分與驗收
 
-> **設計目標：M0–M3 完全不依賴任何未定的外部 API。** 一週後 webhook 規格到位時，已有一個能跑的完整系統，剩下只是替換 provider 實作。
+> **設計目標：M0–M3 完全不依賴任何未定的外部 API。** webhook 規格到位時，已有一個能跑的完整系統，剩下只是替換 provider 實作。
 
 ### M0 — 地基
 
@@ -2447,7 +1899,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 **內容**：對話列表、訊息流（虛擬滾動）、Composer、join / leave；Presence 四來源合併（§10.2）；SSE 管線 + 自動重連；`MessageSource` 抽象 + `PollingMessageSource` + 共享訂閱 + 自適應頻率（§9.2）；只取最新 N 則 + 本地 `lastMessageId` 比對（§9.3）；送出前樂觀併發檢查；JOIN 雙路徑去重。
 
-**驗收** ✅ **全數通過**（8/8，皆為可重跑的自動化驗證，見 `npm run smoke`、`test/`）：
+**驗收** ✅ **全數通過**（8/8，皆為可重跑的自動化驗證，見 `npm run smoke`、`test/`；tag `m1-done`）：
 - [x] 兩個瀏覽器開同一對話：A 送出後 B 在 4 秒內看到
 - [x] B 帶入草稿準備送出時，若 A 已回覆，必須被攔截並提示
 - [x] 三個瀏覽器檢視同一對話時，該對話只被輪詢一次
@@ -2457,7 +1909,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [x] PresenceBar 在無人時顯示正常空狀態
 - [x] `u_` 反推的同事標示為「N 分鐘前回覆過」，不可標示成「正在檢視」
 
-> 驗收方法論（真實瀏覽器 vs. 自動化測試如何拆分）與 `sendTextMessage()` 回應形狀（H-6a）的風險評估，詳見附錄 B。**結論**：H-6a 目前無任何程式碼路徑依賴，不影響功能。
+> 「4 秒」量的是哪條路徑、以及哪些驗收能自動化、哪些必須真實瀏覽器，見附錄 B。
 
 **外部依賴**：無
 
@@ -2467,395 +1919,106 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### M2 — Copilot 核心
 
-**內容**：對話摘要、情緒 sparkline、建議卡、一鍵帶入、知識庫自然語言快查（inline 面板，見 §12.3；
-2026-08-27 由 M3 併入——快查與建議卡共用同一個 `KnowledgeProvider` 裝配，拆開反而要重複組裝）；
-前景／背景分級、debounce、快取；知識庫直接採 `AgentKnowledgeProvider`（§8.2）。
+**內容**：對話摘要、情緒 sparkline、建議卡、一鍵帶入、知識庫自然語言快查（inline 面板，§12.3；由 M3 併入——快查與建議卡共用同一個 `KnowledgeProvider` 裝配）；前景／背景分級、debounce、快取；知識庫採 `AgentKnowledgeProvider`（§8.2）。
 **不含**客戶資料卡（§19.1 #21）、語音與舊資料型 `file` 附件、圖片／PDF 的 vision 分析（皆延至 M3）。
 
-**規格**：`specs/001-sentiment-panel`（完成）、`002-suggestion-knowledge-search`、
-`003-analysis-trigger-policy`、`004-progressive-citations`（皆 implement 完成，
-共押 `m2-004-done`）、`005-m2-residual-defects`（2026-09-02 開立，收下方未關閉項目中
-**本 repo 有能力關閉**的四類；`m2-done` 之前的最後一份）。
+**規格**：`specs/001`～`004`（共押 `m2-004-done`）、`005-m2-residual-defects`（65/65，`m2-005-done`）。
+✅ **`m2-done` 已於 2026-09-03 建立（使用者裁定收尾），M2 正式結束。** 押 tag 當下的真實狀態：手動驗收皆已通過（003 T052、005 T058）；綠燈基線 `typecheck`／`vitest` 559／`build`／`smoke` 126 項；**三條時效門檻仍為【未達標·已安置】**，刻意不阻擋。
+
+> ⚠️ **押 tag 前最後一次窄審修掉三個靜默失效缺陷**（情緒補算取歷史失敗時 `sentimentGap` 被清掉、建議卡檢索失敗被誤記為「命中 0 筆」導致重試永不再檢索、背景並行名額被少算而突破上限），三者都在各 spec 驗收「全數通過」**之後**才被找出來，落點正是「後面的 spec 動到前面 spec 的程式碼」那個橫向交會處，而縱向的 spec 驗收不負責那裡。**M3 收尾時 MUST 比照辦理：綠燈基線之外，另審一次跨 spec 的熱點檔案。**
 
 #### 驗收
 
-> ⚠️ **勾選符號的意義（2026-09-03 起）：`[x]` ＝「已處置」，不等於「已達標」。**
-> 三條時效門檻的數字**沒有達標，也沒有被放寬**；它們被標成
-> **⚠️【未達標·已安置】**，代表「成因已定位、我方槓桿已用盡、已對外回報、
-> 且已指定後續由誰在什麼條件下重新判定」。**看到那個標記就 MUST 讀完該項的處置說明，
-> MUST NOT 當成通過。** 這個約定是為了讓 M2 能夠收尾 ——
-> 一直空在那裡不會讓數字變好，只會讓「還沒決定」與「決定了不擋」永遠分不出來。
+> ⚠️ **勾選符號的意義：`[x]` ＝「已處置」，不等於「已達標」。** 三條時效門檻的數字**沒有達標，也沒有被放寬**；它們標成 **⚠️【未達標·已安置】**，代表「成因已定位、我方槓桿已用盡、已對外回報、且已指定後續由誰在什麼條件下重新判定」。**看到那個標記就 MUST 讀完該項的處置說明，MUST NOT 當成通過。** 一直空在那裡不會讓數字變好，只會讓「還沒決定」與「決定了不擋」永遠分不出來。
 
-**時效與行為**
+**時效與行為**（⚠️ 第 2～4 項的順序被 `scripts/spike/21-progressive-citations.ts` 以「驗收第 N 項」引用，不要重排）
 
-- [x] JOIN 後 3 秒內面板區塊出現並標示分析中（不要求該時點已有實質內容）
-      —— `analyzing` 事件在任何 AI 呼叫 resolve 之前就發布，時點不取決於模型延遲
-      （`test/copilot-analysis.test.ts`「analyzing 事件在 AIProvider 呼叫 resolve 之前已發布」）
-- [x] ⚠️【未達標·已安置】JOIN 後 **15 秒**內**情緒**的實質內容呈現（90 百分位）—— ⚠️ **2026-09-02 由通過退回未定**
-      （原記載：2026-09-01 實測 p90 12.7 秒 → 打勾）。2026-09-02 三輪合併 **35/45 ＝ 78%，未達**
-      （單輪 73% / 93% / 67%，相鄰輪次互相矛盾），數據見 §8.2b。
-      ⚠️ **依批次數拆開後成因很明確**：1 批 9/9、2 批 9/9 全過；**3 批 12/17、5 批 5/9 破**（3 批另有 1 筆情緒始終未回報，計入合併分母的 45、
-不計入這裡的 17）。
-      且 3 批只有一波 —— 破線的原因是**每一波要等最慢的那一批（max-of-3 ≈ 單次的 80 百分位）**，
-      「⌈批次數 ÷ 並行度⌉ × 單次延遲」這個公式會低估（§8.2b）。
-      ⚠️ **失守的原因是餘裕不足，不是門檻訂錯**：情緒總時間 ≈ ⌈批次數 ÷ 並行度⌉ × 單次延遲，
-      19～36 則客戶發言要跑 **2 波**，對單次延遲的放大倍率是 2。單次由 6.6 秒（9/01）變 7.3 秒
-      （9/02，隔離對照 7.32 秒證實是 agent 本身變慢、非我方排隊）就從 ≈13 秒推到 ≈15～21 秒。
-      **15 秒對 2 波原本只剩約 15% 餘裕，而平台自身漂移約 36%** —— 餘裕小於已知漂移，遲早失守。
-      ⚠️ 此處記錄的是**現況未定**，不是修法。真要修時唯一能縮短時間的槓桿是並行度
-      （5 批次由 2 波變 1 波），但 MUST 配一次專門的並行度掃描（3→4→5，每檔兩列一起看）
-      —— **該掃描已歸屬 `specs/005-m2-residual-defects` US4**，其 FR-019 把採用判準寫死成
-      「總時間改善**且**單次失敗率未上升」，只有總時間變快 MUST NOT 作為採用理由
-      ✅ **掃描已於 2026-09-03 執行完畢（每檔位三輪 n=45，數據見 §8.2b「並行度掃描跑完了」）：
-      這個槓桿是負的。** 檔位 4／5 在**兩列上同時變差** —— 總時間 91% → 84% / 82%，
-      破 15 秒率 3.8% → 6.4% / 10.6%。✅ **裁決（2026-09-03，使用者）：維持 3**；
-      `SENTIMENT_CONCURRENCY` 的預設值與 15 秒門檻（FR-020a）皆未改動。
-      ⚠️ **本項的 ❌ 經裁決不改判**（2026-09-03，使用者）：同一次掃描的檔位 3 量到
-      41/45 ＝ 91%（本表記載的是 2026-09-02 的 35/45 ＝ 78%）。單次延遲兩天幾乎相同，
-      差別只在尾巴，而本文件已載明「相鄰兩輪結論可以相反」—— 一次 91% 不足以翻掉一次 78%。
-      要翻案 MUST 再取一次獨立時段的 n=45，兩次都過才改，
-      **MUST NOT 因為量到一次好數字就打勾**
-      ⚠️ **門檻由 10 秒改為 15 秒的同時也改了程式**，不是單純放寬：情緒的總時間
-      **≈ ⌈批次數 ÷ 並行度⌉ × 單次延遲**，依序送出時 10 秒門檻**只在客戶發言 ≤ 6 則時成立**。
-      改為 `SENTIMENT_CONCURRENCY = 3` 後中位由 16.9 秒降到 7.7 秒。
-      ⚠️ **調高並行度前 MUST 重跑並同時看總時間與單次失敗率兩列**（理由見 §8.2b 與
-      `copilot-analysis.ts` 的常數說明）
-      ⚠️ 15 秒**不是對所有長度成立**：50 則客戶發言（9 批＝3 波）約 20 秒，會破。
-      這個門檻買到的是「常見長度有明確承諾」，不是全稱保證
-      📌 **處置（2026-09-03）**：門檻維持 15 秒**不放寬**；repo 內的槓桿（分批、並行度）已用盡
-      且經 n=45 三檔位掃描證明並行度是**負**槓桿。已對外回報 `IMBRACE_QUESTIONS.md` **0-4**。
-      **重新判定的條件**：兩次獨立時段的 n=45 皆達 90%（一次不算，本文件已載明相鄰兩輪結論可以相反），
-      或 0-4 得到可承諾的 p90／SLA。
-- [x] ⚠️【未達標·已安置】JOIN 後 10 秒內**摘要**的實質內容呈現（90 百分位）—— **未通過，且成因已與原記載不同**（§8.2b）
-      ⚠️ **2026-09-02 訂正**：原記載的「三輪皆不通過」量自 2026-09-01 10:08–10:48 的 40 分鐘內，
-      而同一節已載明那天摘要 agent 處於降級時段（單次中位 52 秒）—— **等於用降級時段的樣本
-      下永久結論**，與本節自己「判斷現在是哪一種時段時 MUST 重跑量測」的規則衝突。
-      2026-09-02 重測三輪：合併 **33/45 ＝ 73%**（單輪 93% / 53% / 73%）。
-      ⚠️ 隔離單次量測是 19/20 ＝ 95%、端到端只有 73%，這個落差曾被歸因為「管線內競用」——
-      **2026-09-02 的對照實驗已推翻該歸因**（把 `SENTIMENT_CONCURRENCY` 設回 1 跑一輪，
-      摘要與第一段都沒有改善）。真正的成因是**隔離量測用 8 則合成對話，而管線的樣本
-      混了 33 則與 50 則的真實對話**；相同長度下兩者幾乎一致（§8.2b）。
-      ✅ 因此「repo 內沒有槓桿補得回來」這個原始結論**維持成立**。
-      ⚠️ 成因是模型延遲的尾巴，**repo 內沒有槓桿補得回來**（情緒有並行度這個槓桿，
-      摘要是單次呼叫，沒有）。
-      ⚠️ **裁定門檻維持 10 秒、不放寬**：SC-005 不擋任何執行路徑（會擋的是 FR-014 的 15 秒
-      單次逾時），放寬只是把判準改成會通過；而這條門檻守的正是 001 的價值主張「客服不必重讀
-      完整歷史」，摘要 25 秒才出現時客服早已自己開始讀了。
-      ⚠️ 日後若為了讓摘要落進門檻而調高 FR-014 的 15 秒，§8.2b 的連動條款
-      （逾時提到 20 秒則退避預算 MUST 同步提到 ≥45 秒）就會生效
-      📌 **處置（2026-09-03）**：門檻維持 10 秒**不放寬**（理由見上一段：放寬只是把判準改成會通過）。
-      摘要是單次呼叫，**repo 內從一開始就沒有槓桿**。已對外回報 `IMBRACE_QUESTIONS.md` **0-4**
-      —— 該題附上了「同一天內中位 6.3／52.1／11.1 秒」這組數字，因為那個不穩定本身比任何單一中位數更關鍵。
-      **重新判定的條件**：同上，兩次獨立時段的 n=45 皆達 90%，或 0-4 得到可承諾的 p90／SLA。
-- [x] ⚠️【未達標·已安置】JOIN 後 **20 秒**內首批建議卡呈現（90 百分位）—— 未通過，但**原記載的數字與成因都已作廢**
-      ⚠️ **2026-09-02 訂正一（口徑）**：原記載的 p90 28.7／28.8／29.3 秒量的是「第一段自己發布」
-      的時點，而本條文問的是「第一批**可用的**卡」。兩者在 FR-006a 的 abort 路徑上不等價，
-      且不等價的樣本全部是慢的 —— 用正確口徑重算，2026-09-01 三輪是 **67%／40%／33%**
-      （原報表 83%／86%／71%），且三輪各有 1／4／5 個樣本**從頭到尾沒有任何卡**（§8.2b）。
-      ⚠️ **2026-09-02 訂正二（成因）**：原記載的「約三分之一的第一段呼叫撞上單次逾時」是對的，
-      但推論方向錯了 —— 那不是模型慢，是 **20 秒門檻配 15 秒逾時在重試路徑上不可達**。
-      已加獨立常數 `SUGGESTION_STAGE1_CALL_TIMEOUT_MS = 20_000` 處置（§8.2b）。
-      2026-09-02 三輪合併 **39/45 ＝ 87%**（單輪 93% / 80% / 87%）。
-      ⚠️ 三輪中「第一段從未發布」的樣本共 3 個（修正前的三輪是 9 個），且全部落在同一次降級爆發裡。
-      （§8.2b；形狀是「首次破 15 秒逾時 → 退避 → 第二次成功」，約三分之一的第一段呼叫撞上逾時）
-      ⚠️ **MUST NOT 據此把門檻調高到 30 秒** —— 20 秒是從 10 秒放寬時經過裁決的數字，
-      當時的餘裕論證仍然有效；現在變的是首次逾時率，那是另一個問題。
-      ⚠️ 門檻是 20 秒不是 10 秒（建議卡 agent 單次生成 p90 就有 10.31 秒），**也不要調回去**。
-      ⚠️ 此處量的是**第一批可用的卡**；帶 SOP 來源的版本由 004 第二段換上，兩者是不同門檻。
-      第二段落定的上限是 50 秒：2026-09-01 三輪 p90 為 32.8／34.9／43.8 秒（通過）；
-      ⚠️ **2026-09-02 三輪出現第一次破線** —— 42 個落定樣本中 1 個為 52.5 秒（p90 36.5 秒），
-      另有 3 個從未落定。餘裕正在被吃掉，MUST 在後續輪次繼續盯這一列
-      📌 **處置（2026-09-03）**：門檻維持 20 秒，**MUST NOT 調到 30 秒、也 MUST NOT 調回 10 秒**。
-      本項與另外兩條不同 —— 它**曾經有一個 repo 內的成因並且已經修掉**
-      （20 秒門檻配 15 秒單次逾時在重試路徑上不可達 → `SUGGESTION_STAGE1_CALL_TIMEOUT_MS = 20_000`），
-      修完由 33～67% 拉到 87%。剩下的差距才是 agent 推論延遲，已併入 `IMBRACE_QUESTIONS.md` **0-4**。
-      **重新判定的條件**：同上。⚠️ 第二段 50 秒那一列**餘裕正在被吃掉**，MUST 繼續盯，
-      它目前仍算通過，但已出現第一次破線。
-- [x] 一鍵帶入可用，且帶入後仍會做撞單檢查
-      （`test/suggestion-send-path.test.ts`：insert 與手動輸入寫進同一個 `draft.text`，
-      因此必然走同一條撞單檢查；介面上不存在可「略過檢查」的參數）
-- [x] 背景對話重算情緒與建議卡但**不重算摘要**，且並行數未超過上限（憲法 6.2）
-      （`test/copilot-analysis.test.ts`「背景並行與 debounce（US4）」：FR-019／FR-020，
-      並斷言 `BACKGROUND_CONCURRENCY_LIMIT` 滿載時超額對話不執行、也不顯示為錯誤）
-- [x] 切換至背景對話時立即顯示已更新的情緒與建議卡（不得空白或重新產生），僅摘要於此時補跑並標示「更新中」
-      （`stream.get.ts` attach 時先送快照再 `catchUpSummaryIfStale()`；
-      `SummaryCard.vue` 於 `ready → analyzing` 保留舊內容疊加「更新中」）
-- [x] 知識庫快查回傳含標題與更新日期（或「更新日期未知」）的結果，不顯示獨立編號；
-      空白查詢不觸發呼叫；「查無結果」與「尚未輸入查詢」視覺可區分
-      （`test/knowledge-search-api.test.ts` 斷言四種狀態在 API 層即互斥可辨；
-      `KnowledgeSearch.vue` 的 `formatDate()` 在 `updatedAt` 為 null／不合法時顯示「更新日期未知」）
-- [x] AI 失敗時訊息流與 Composer 完全可用（2026-08-28 實測：三區塊全數失敗逾 20 分鐘期間，
-      中欄照常收發、草稿在離開對話後仍保留）
-- [x] 建議卡的 `sopId` 不在白名單即整卡丟棄（2026-08-29 實測：10 次帶命中的第二段生成中
-      2 次整批捨棄、2 次部分捨棄）。⚠️ 「通過」指**防線有效**，不是模型不會杜撰——
-      該品質問題**已歸屬 `specs/005-m2-residual-defects` US3**（004 spec SC-002）。
-      ⚠️ 005 承諾的是「答得出為什麼沒有引用」與強化我方組出的封閉命中清單，
-      **不承諾把 80% 拉到 90%** —— 最強的槓桿是建議卡 agent 的 system prompt 與選型，
-      兩者都在 iMBrace 後台、不在本 repo。
-      ✅ **「答得出為什麼」已於 2026-09-02 落地**：每一次引用落定（含第二段失敗）在生產路徑發
-      `suggestion.citation.audited`（`server/utils/citation-audit.ts`，一行 NDJSON 到標準輸出），
-      六值 `outcome` 分辨未命中／未引用／被白名單捨棄／模型未回卡／第二段失敗，被擋下的 `sopId`
-      字串本身保留（> 64 字元改記雜湊）；`npm run spike:citation-quality` 直接讀這些事件算
-      杜撰率與逐對話分布（口徑 15 段 × 3 輪）。
-      ✅ **封閉清單已於 2026-09-03 落地並量完前後**（詳見下方「杜撰引用的成因」一節）：
-      **杜撰率 21%（9/43）→ 21%（9/42），沒有改善**；最終取得引用 84%（38/45）→ 82%（37/45）。
-      ⚠️ **舊記載的「44%」出自 2026-08-29 的 n≈9，已由 n=43 的固定口徑取代**（21%）——
-      引用本項數字時 MUST 用 21%／82%，44% 只保留為歷史脈絡。
-      ⚠️ **沒有改善不是失敗**：交付物是「答得出為什麼」與「量得出來」，而這一輪正是量出了原因
-- [x] `confidence` 無真實分數來源時留空，不得以模型自評頂替（§11.6②）
-      （`forceNullConfidence()` 在 Zod 之後強制覆寫；`test/suggestion-whitelist.test.ts`）
-- [x] Copilot 面板可見性依 003 FR-016～FR-017b：未 JOIN 時整欄不呈現、JOIN 時展開可收合、
-      收合狀態 per 客服 per 對話存 `localStorage`，且伺服器不推分析事件給未 JOIN 的連線（FR-016a）
-      ⚠️ FR-016a 的真實環境驗證**已於 2026-09-02 以兩個不同的客服帳號在 stable 完成**
-      （四項判準全數符合），自動化涵蓋另見 `test/stream-analysis-visibility.test.ts`、`smoke:realtime`。
-      **重跑時**：MUST NOT 以同一帳號兩分頁替代（那是 T032a 的情境，驗的是別的東西）；
-      「未 JOIN 端收不到」MUST 用 DevTools 的 EventStream 從**連線建立起**確認 ——
-      只在前端隱藏而伺服器照推時，畫面看起來一模一樣
-- [x] SC-001：注入 AI 故障後靜置 10 分鐘且無新發言，分析嘗試不超過 1 輪（對照修正前約 30 輪）
-      2026-08-28 實測新增 0 次。⚠️ 這項**只有故障注入驗得出來**，自動化全綠不代表止血成功
-- [x] SC-002：離開或結案後 5 秒內不再有新分析事件，中欄與草稿不受影響
-      ⚠️ 5 秒時窗以 `smoke:realtime` ⑥ 的自動化量測為準，真實環境未逐秒計時
+- [x] JOIN 後 3 秒內面板區塊出現並標示分析中（不要求該時點已有實質內容）—— `analyzing` 事件在任何 AI 呼叫 resolve 之前就發布，時點不取決於模型延遲（`test/copilot-analysis.test.ts`）
+- [x] ⚠️【未達標·已安置】JOIN 後 **15 秒**內**情緒**的實質內容呈現（90 百分位）
+      **最近量測**：2026-09-02 三輪合併 **35/45 ＝ 78%**（單輪 73% / 93% / 67%）；2026-09-03 掃描的檔位 3 量到 41/45 ＝ 91%，**經裁決不改判**（使用者，2026-09-03）——單次延遲兩天幾乎相同、差別只在尾巴，一次 91% 不足以翻掉一次 78%。
+      **成因**：依批次數拆開很明確——1 批、2 批全過（9/9、9/9），3 批 12/17、5 批 5/9 破；一波要等最慢的那一批（max-of-3 ≈ 單次 80 百分位），且情緒 agent 單次中位由 6.6 秒（09-01）穩定變成 7.3 秒（09-02，四個獨立量測吻合）。**失守的原因是餘裕不足，不是門檻訂錯**：15 秒對 2 波原本只剩約 15% 餘裕，而平台自身漂移約 36%。
+      **槓桿已用盡**：門檻由 10 秒改為 15 秒時同步改了程式（`SENTIMENT_CONCURRENCY = 3`，中位由 16.9 秒降到 7.7 秒；依序送出時 10 秒只在客戶發言 ≤ 6 則時成立）；並行度經 n=45 三檔位掃描證明是**負**槓桿（§8.2b）。
+      ⚠️ 15 秒**不是對所有長度成立**：50 則客戶發言（9 批＝3 波）約 20 秒會破，這個門檻買到的是「常見長度有明確承諾」。
+      📌 **處置**：門檻**不放寬**；已對外回報 `IMBRACE_QUESTIONS.md` **0-4**。**重新判定的條件**：兩次獨立時段的 n=45 皆達 90%（一次不算），或 0-4 得到可承諾的 p90／SLA。判定歸屬 M4。
+- [x] ⚠️【未達標·已安置】JOIN 後 10 秒內**摘要**的實質內容呈現（90 百分位）
+      **最近量測**：2026-09-02 三輪合併 **33/45 ＝ 73%**（單輪 93% / 53% / 73%）。隔離單次量測 19/20 ＝ 95%，落差來自輸入長度而非管線競用（§8.2b 量測規程 3）。
+      **成因**：模型延遲的尾巴，摘要是單次呼叫，**repo 內從一開始就沒有槓桿**。
+      📌 **處置**：門檻維持 10 秒**不放寬**——SC-005 不擋任何執行路徑（會擋的是 FR-014 的 15 秒單次逾時），放寬只是把判準改成會通過；而這條門檻守的正是 001 的價值主張「客服不必重讀完整歷史」，摘要 25 秒才出現時客服早已自己開始讀了。已對外回報 0-4（附上同一天內中位 6.3／52.1／11.1 秒這組數字）。**重新判定的條件**：同上。
+- [x] ⚠️【未達標·已安置】JOIN 後 **20 秒**內首批建議卡呈現（90 百分位）
+      **最近量測**：2026-09-02 三輪合併 **39/45 ＝ 87%**（單輪 93% / 80% / 87%）。
+      **本項與另外兩條不同——它曾有一個 repo 內的成因並且已經修掉**：20 秒門檻配 15 秒共用逾時在重試路徑上不可達 → `SUGGESTION_STAGE1_CALL_TIMEOUT_MS = 20_000`（§8.2b），修完由 33～67% 拉到 87%，「第一段從未發布」的樣本由 9/30 降到 3/30。剩下的差距才是 agent 推論延遲。
+      ⚠️ **MUST NOT 調到 30 秒、也 MUST NOT 調回 10 秒**——20 秒是從 10 秒放寬時經過裁決的數字（建議卡 agent 單次 p90 就有 10.31 秒，10 秒在現行平台必然不過；20 秒對 p90 有近一倍餘裕，漂移 36% 後仍在內）。
+      ⚠️ 此處量的是**第一批可用的卡**；帶 SOP 來源的版本由 004 第二段換上，落定上限 50 秒是另一個門檻——目前仍通過，但 2026-09-02 已出現第一次破線（42 個落定樣本中 1 個 52.5 秒，另有 3 個從未落定），**餘裕正在被吃掉，MUST 繼續盯這一列**。
+      📌 **處置**：門檻維持 20 秒；剩餘差距併入 0-4。**重新判定的條件**：同上。
+- [x] 一鍵帶入可用，且帶入後仍會做撞單檢查（`test/suggestion-send-path.test.ts`：insert 與手動輸入寫進同一個 `draft.text`，介面上不存在可略過檢查的參數）
+- [x] 背景對話重算情緒與建議卡但**不重算摘要**，且並行數未超過上限（憲法 6.2；`test/copilot-analysis.test.ts`，斷言 `BACKGROUND_CONCURRENCY_LIMIT` 滿載時超額對話不執行、也不顯示為錯誤）
+- [x] 切換至背景對話時立即顯示已更新的情緒與建議卡，僅摘要於此時補跑並標示「更新中」（`stream.get.ts` attach 時先送快照再 `catchUpSummaryIfStale()`；`SummaryCard.vue` 於 `ready → analyzing` 保留舊內容疊加「更新中」）
+- [x] 知識庫快查回傳含標題與更新日期（或「更新日期未知」）的結果，不顯示獨立編號；空白查詢不觸發呼叫；「查無結果」與「尚未輸入查詢」視覺可區分（`test/knowledge-search-api.test.ts`）
+- [x] AI 失敗時訊息流與 Composer 完全可用（2026-08-28 實測：三區塊全數失敗逾 20 分鐘期間，中欄照常收發、草稿在離開對話後仍保留）
+- [x] 建議卡的 `sopId` 不在白名單即整卡丟棄。⚠️ 「通過」指**防線有效**，不是模型不會杜撰——杜撰率 **21%**、最終取得引用 **82%**（n=45 固定口徑，成因與槓桿見 §8.2b「杜撰引用的成因」；引用本項數字 MUST 用這組，舊的 44% 只是 n≈9 的歷史脈絡）。每一次引用落定在生產路徑發 `suggestion.citation.audited`（`server/utils/citation-audit.ts`，六值 `outcome`，一行 NDJSON），`npm run spike:citation-quality` 讀它算杜撰率。最強的槓桿（建議卡 agent 的 prompt 與選型）在 iMBrace 後台
+- [x] `confidence` 無真實分數來源時留空，不得以模型自評頂替（§11.6②；`forceNullConfidence()` 在 Zod 之後強制覆寫，`test/suggestion-whitelist.test.ts`）
+- [x] Copilot 面板可見性依 003 FR-016～FR-017b：未 JOIN 時整欄不呈現、JOIN 時展開可收合、收合狀態 per 客服 per 對話存 `localStorage`，且伺服器不推分析事件給未 JOIN 的連線（`test/stream-analysis-visibility.test.ts`、`smoke:realtime`；真實環境以兩個不同帳號在 stable 驗過）。
+      **重跑時**：MUST NOT 以同一帳號兩分頁替代；「未 JOIN 端收不到」MUST 用 DevTools 的 EventStream 從**連線建立起**確認——只在前端隱藏而伺服器照推時，畫面看起來一模一樣
+- [x] SC-001：注入 AI 故障後靜置 10 分鐘且無新發言，分析嘗試不超過 1 輪（對照修正前約 30 輪）。⚠️ 這項**只有故障注入驗得出來**，自動化全綠不代表止血成功
+- [x] SC-002：離開或結案後 5 秒內不再有新分析事件，中欄與草稿不受影響（`smoke:realtime` ⑥）
 
 **UI 與設計核對**（規格正典為 `docs/DESIGN_TOKENS.md`；刻意偏離畫布之處與理由見 `docs/DESIGN_FEEDBACK.md`）
 
-- [x] 中欄標題列為狀態驅動的兩態（未接手→「接手對話」＋下拉；已接手→「離開對話」＋「結案」），
-      已對照畫布 artboard 1c
-- [x] Copilot 面板（artboard 2a）各區塊的圖示、色票、文案與 `error`／`retrying` 狀態逐一核實完成。
-      對話紀錄／結案摘要屬 M3。
-      ⚠️ 「對話摘要」區塊的正文與主題標籤（`narrative`／`topics`）由 **iMBrace 後台的 agent prompt**
-      決定，不在這個 repo 裡；兩者在 schema 一律選填，理由見 §11.5 的說明框
-- [x] 面板 header 為 `flex:none` 的 42px 固定列（畫布 2a），不隨內容捲動；
-      「全部重試」**只在有區塊失敗時出現**（畫布 `sc-if anyError`）
-- [x] 中欄的對話標頭與服務模式為**兩個各自帶 `border-bottom` 的區塊**（畫布 1c）——
-      包在同一個 `<header>` 裡會讓中間那條分隔線整條不見
-- [x] 左側清單（`Sidebar.vue`）與中欄（`MessageList.vue`、`MessageBubble.vue`、`Composer.vue`、
-      `PresenceBar.vue`、`ModeSelect.vue`）已對照畫布 artboard 1c 及其 10 個狀態變體核實完成。
-      ⚠️ 唯一未關閉的是 **Composer 的夾帶檔案按鈕（M3 範圍**，且卡在 `IMBRACE_QUESTIONS.md` H-6c
-      附件送出流程未知）。**刻意不放 disabled 佔位鈕** —— 在拿到 H-6c 的答案前那顆按鈕按下去
-      沒有任何可走的路，而「按了不會有任何變化的按鈕比沒有按鈕更像壞掉」。
-      ⚠️ 日後補這顆按鈕時**要一起改版面**：畫布是上下兩列（`textarea` 在上、工具列在下，
-      中間一條 `border-top`），實作目前是左右一列（`textarea` 與送出鍵並排），不是塞一顆進去就好。
-      刻意背離畫布之處（字級、WCAG AA 的等效混色等）記於 `DESIGN_FEEDBACK.md`
+- [x] 中欄標題列、Copilot 面板（artboard 2a）各區塊、面板 header（42px 固定列，「全部重試」只在有區塊失敗時出現）、左側清單與中欄各元件已對照畫布 artboard 1c／2a 及其狀態變體核實完成。⚠️ 中欄的對話標頭與服務模式是**兩個各自帶 `border-bottom` 的區塊**——包在同一個 `<header>` 裡會讓中間那條分隔線整條不見
+- [ ] **Composer 的夾帶檔案按鈕**（M3 範圍，卡在 `IMBRACE_QUESTIONS.md` H-6c 附件送出流程未知）。**刻意不放 disabled 佔位鈕**——按了不會有任何變化的按鈕比沒有按鈕更像壞掉。⚠️ 日後補這顆按鈕時**要一起改版面**：畫布是上下兩列（`textarea` 在上、工具列在下，中間一條 `border-top`），實作目前是左右一列
 
-**未修的缺陷與未歸屬項目**（皆不報錯、皆不阻塞 004。前三條為真實環境挖出的缺陷，
-**已於 2026-09-02 由 `specs/005-m2-residual-defects` 關閉**（US1 收前兩條、US2 收第三條）；
-後兩條原本是 M2 期間發現、**還沒有里程碑認領**的項目 ——
-✅ **2026-09-03 兩條都已認領完畢**：排序／分頁邊界那條歸屬 M4，
-拆檔第三刀已執行完成。**本節現已無未認領項目，節名保留只為了讓既有的章節引用不失效。**）
+**未修的缺陷與未歸屬項目**（節名保留供 `specs/005` 引用；內容已全數關閉或歸屬）
 
-- [x] **`registerCredential()` 雙分頁**（005 US1，2026-09-02 關閉）：原以 `(orgId, operatorId)` 為鍵，
-      取消登記時無條件刪掉整個 operator。同一客服開兩分頁、關掉其一，仍開著那條的憑證一併消失
-      → `borrowCredential()` 回 null → 兩層輪詢拉回空陣列 → **那個分頁從此收不到新訊息**。
-      現在以 `stream.get.ts` 現場產生的 server 端 `connectionId` 為鍵、每條連線一筆
-      （**不是** `clientId`：複製分頁會共用 `sessionStorage`）；配套 FR-005a 的存活兜底 ——
-      登記帶 `lastSeenAt`、45 秒 TTL 惰性剔除、前端每 20 秒打 `POST /api/connection/beat`
-      （**upsert**：背景分頁的計時器被瀏覽器節流到每分鐘一拍，登記被剔除而 SSE 沒斷、不會重連，
-      心跳寫成 no-op 就是兜底自己重現缺陷）。守衛：`test/connection-counting.test.ts` I-1～I-3、I-7／I-8
-- [x] **`session.watchers` 雙分頁**（005 US1，2026-09-02 關閉）：原是去重的 operatorId 陣列，
-      移除時無條件 filter，同一客服關掉一個分頁即歸零 → `deleteCopilotSession()` 被呼叫。
-      ⚠️ 同一函式裡的 `pipeline.refs` **有** refcount 且正確——同一件事兩個計數器給出不同答案，
-      這個不變式破裂本身就是 bug 的形狀。現在兩邊都以 `connectionId` 為單位，計數核心抽成
-      `server/services/session-registry.ts`（`session-manager.ts` 經 `copilot-runtime` 用到 Nitro auto-import，
-      vitest／tsc 碰不得），FR-004 的等式 `watchers.length === pipeline.refs` 由測試逐情境驗（單副本）。
-      📌 連帶行為變更：`session.opened` 的 `reason` 在同一客服第二個分頁由 `join` 變 `resume`（無前端消費者）
-- [x] **自動恢復不補算先前失敗的批次**（005 US2，2026-09-02 關閉）：情緒批次失敗時在
-      `CopilotAnalysisState` 頂層立 `sentimentGap`（server-only，位置比照 `failedBatches`），旗標為 true 的
-      那幾輪以 `timeline[0]` 為錨點撈歷史、補「時間軸起點之後、不在時間軸上」的客戶發言，每輪最多 18 則，
-      剩下的留給下一次自然觸發（不自行續排，003 SC-001 優先）。⚠️ 錨點 MUST 是 `timeline[0]` 不是
-      `lastCoveredMessageId()`（高水位會被後續成功批次推過中段缺口）；左界是 `timeline[0]` 不是對話第一則
-      （冷啟動只吃最近 50 則）。守衛：`test/sentiment-backfill.test.ts`
-- [x] **同區塊併發合併時 rerun 重跑的是第一次的閉包**（005 T026b 挖出，2026-09-02 修正）：
-      `runBlockDeduped()` 的註解寫「再跑一次最新的」，實作卻只存一個布林、rerun 第一次觸發的 fn ——
-      第一批還在飛時客戶又說了第二批，第二批被丟掉、第一批原封再送一次；同一則進 AI 兩次，
-      第二批**從此消失**在情緒時間軸上，不報錯。現改存最新那次的 fn。
-      📌 已知限制：三次以上併發時中間那些觸發仍會被最新的覆蓋（合併語意的本意；debounce 已先把
-      1 秒內的爆量聚成一批，這裡只處理「AI 呼叫比 debounce 長」的重疊）
-- [x] **平台清單的預設排序：已量到方向，證明不了分頁邊界的安全性 —— 2026-09-03 歸屬 M4**
-      （比照上一條「第一層背景輪詢的分頁已歸屬 M4」的先例）。**證據與尚缺的部分留在本節、
-      不搬走**：M4 那兩條驗收項明文寫著「數字記在 M2 那一節，此處刻意不重述」，
-      同一組證據寫兩個地方就會有一個先過期。
-      📌 **為什麼是歸屬而不是繼續掛在 M2**：關閉條件是「一個對話數 > 100 的組織，或平台提供
-      排序參數」—— 兩者都不在 M2 的工作範圍內，掛在 M2 只會讓它永遠空著。M4 的
-      「第一層清單輪詢在對話數 > 100 的組織下不漏對話」與「平台清單預設排序的分頁邊界已驗證」
-      兩條已經涵蓋它，且前者寫成 webhook／分頁二擇一，**不依賴外部規格也關得掉**。
-      以下是量測現況（2026-09-01 首次執行
-      `npm run spike:list-order`，n=18，`out/22-*.json`）：§9.3.1 第一層只取前 `LIST_PAGE_SIZE`
-      （100）筆而不分頁、側欄的 `BACKGROUND_COVERAGE` 也鎖在同一個 100，兩者的安全性**完全
-      取決於「有新訊息的對話會不會被排到前 100 筆」**。實測結果：
-      `last_message_at` 完全遞減（9 組可比對，填充率 78%）、`updated_at` 也完全遞減（17 組）、
-      `created_at` 僅 53%。
-      ⚠️ **本項仍不得關閉，理由有二**：① 樣本 18 筆遠小於門檻的 100，這次驗到的是**排序方向**，
-      不是**分頁邊界**——「第 101 筆之後有沒有新訊息漏掉」在資料量 < 100 時根本沒被觸及；
-      ② `last_message_at` 與 `updated_at` **兩者都 100% 遞減，仍分不出排序鍵是哪一個**
-      （n 從 3 變 18，沒有質變）。實務上兩者都代表「新活動往前排」，故現況安全；
-      但 MUST NOT 據此在文件裡寫成「已證明排序鍵是 `last_message_at`」。
-      關閉本項需要一個對話數 > 100 的組織，或平台提供排序參數
-- [x] **第一層背景輪詢的分頁已歸屬 M4**（2026-09-01 使用者裁定）：`copilot-runtime.ts` 的
-      `TODO(M4)`（對話數超過 `LIST_PAGE_SIZE` 的組織需要分頁）先前不在任何一份驗收清單裡，
-      現已列入 M4 驗收，**條文刻意寫成二擇一**（webhook 到位使第一層不再負責偵測新訊息，
-      **或**第一層取得分頁能力）。
-      ⚠️ 二擇一不是修辭 —— M4 其餘驗收全部繫於 webhook 這個外部依賴，若照一般寫法歸入，
-      webhook 不到位時本條會跟著整批被擱置，等於換個地方繼續沒人認領（那正是它原本的處境）。
-      ⚠️ 本項與上一條（清單排序的分頁邊界）是同一個風險的兩面，前提也同一個
-      （需要對話數 > 100 的組織），**MUST 一起關閉，不要只關其中一條**。
-      ⚠️ 這裡打勾代表「歸屬已定」，**不代表分頁已實作** —— 實作與驗收在 M4 那份清單裡
+- 三條真實環境缺陷（`registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次）與順帶挖出的 `runBlockDeduped()` rerun 缺陷，皆由 `specs/005` 關閉；守衛 `test/connection-counting.test.ts`、`test/sentiment-backfill.test.ts`。設計要點在程式碼註解（`credentials.ts`、`session-registry.ts`、`blocks/sentiment.ts`）：連線計數以 server 端 `connectionId` 為鍵（不是 `clientId`——複製分頁會共用 `sessionStorage`）、`POST /api/connection/beat` 每 20 秒 upsert 而 TTL 45 秒、補算錨點是 `timeline[0]` 而非 `lastCoveredMessageId()`。**留下的兩條已知限制／行為**：① 同區塊三次以上併發時，中間那些觸發會被最新的覆蓋（合併語意的本意；debounce 已先把 1 秒內的爆量聚成一批）；② `session.opened` 的 `reason` 在同一客服第二個分頁由 `join` 變 `resume`（無前端消費者）。
+- 平台清單預設排序的分頁邊界、第一層背景輪詢的分頁能力：**歸屬 M4**（證據與關閉條件記在 M4 那兩條）。
 
-**分析管線拆檔：三刀全部切完**（第一、二刀 2026-09-02；第三刀 2026-09-03）
+**分析管線拆檔**（三刀已於 2026-09-02／09-03 切完，純搬移；以下是**切完之後仍然有效的常設約束**）
 
-⚠️ **這不是缺陷，是刻意分兩批做的重構欠帳。** 記在這裡的唯一理由是：**第二批沒有任何東西
-會提醒你回來做** —— 測試全綠、型別全過、行為完全正確，只有那個檔案繼續大下去。
+`server/services/copilot-analysis.ts` 原為 1773 行，病灶不是行數，而是**九份互不相干的模組層可變狀態共用同一個作用域**。**切線依據（MUST NOT 改成別的）**：誰擁有哪一份執行期狀態；「新程式碼該放哪個檔案」用同一條判準——它要碰哪一份 `Map`，就寫在那個檔案裡。守衛 `test/contract-guards.test.ts`「每一份執行期狀態只由擁有它的檔案碰」（其 `OWNERSHIP` 表推導自模組層 `Map`／`Set`，比對前剝掉註解與字串）。
 
-`server/services/copilot-analysis.ts` 原為 1773 行（其中程式碼 995 行、註解 628 行）。
-病灶不是行數 —— 那 628 行註解多半是「這個常數為什麼是這個數字」的實測依據，依本專案的
-慣例它們就該貼著程式碼。真正的病灶是**九份互不相干的模組層可變狀態共用同一個作用域**
-（八份 `Map`／`Set`，加上 `resolveJoined` 這個 FR-012 的裝配點），任何一個函式在語法上都
-碰得到全部九份，僅靠註解紀律維持。
+| 檔案 | 擁有的執行期狀態 |
+|---|---|
+| `analysis-state.ts` | `stateLocks` |
+| `analysis-dedupe.ts` | `analysisInFlight`／`analysisRerunPending` |
+| `blocks/suggestion.ts` | `suggestionTails`／`suggestionTailDone` |
+| `blocks/sentiment.ts` | **無**——`resolveHistory` 是裝配點（函式變數），不是狀態容器 |
+| `copilot-analysis.ts`（barrel：摘要 ＋ 對外入口 ＋ debounce） | `coldStartRecoveries`／`backgroundInFlight`／`debounceTimers` |
 
-**切線依據（三刀共用，MUST NOT 改成別的）**：**誰擁有哪一份執行期狀態**。
-「新程式碼該放哪個檔案」也用同一條判準：它要碰哪一份 `Map`，就寫在那個檔案裡。
-可執行的驗收是 `test/contract-guards.test.ts` 的「每一份執行期狀態只由擁有它的檔案碰」，
-八份 `Map` 逐一掃描（比對前 MUST 剝掉註解與字串，否則 barrel 檔頭那張說明表會被誤判為違規）。
+- `blocks/summary.ts` **確定不切**：摘要沒有自己的執行期狀態，barrel 的形狀就是終點。行數要知道就跑 `wc -l`，本文件不維護。
+- **新增管線檔的檔頭 MUST 加上 `@analysis-pipeline` 標記**——`contract-guards` 靠它認定管線成員，決定「不得 import `copilot-runtime.ts`」與「不得被管線外值 import」兩條守衛的涵蓋範圍。**MUST NOT 改回用檔名 regex 判定**：第一版 `analysis-[a-z-]+\.ts` 當天被 `analysis-stage2.ts`（帶數字）與 `analysisSentiment.ts` 打穿且零訊號。
+- **搬移的真實成本是註解的交叉引用**：註解超過三分之一，大量用「上方／下方／本檔」這類位置相對指路詞。搬完 MUST `grep -n "上方\|下方\|上面\|下面\|本檔" <新檔>` 逐條改成明確符號名，**且與搬移放同一個 commit**。日誌前綴維持 `[copilot-analysis]`，MUST NOT 改成 `[sentiment]`——日誌字串是可觀測行為的一部分。
 
-已切（純搬移；對外 export 逐一比對無差異、呼叫端一行未改；
-`typecheck`／全套 vitest／`smoke:flow`／`smoke:realtime` 全數通過）。
-第一、二刀對外 24 個 export；第三刀切完為 **29 個**（比對腳本前後皆 29、沒有少也沒有多）：
-
-| 檔案 | 擁有的執行期狀態 | 行數（2026-09-03 快照） |
-|---|---|---|
-| `analysis-state.ts` | `stateLocks` | 約 370 |
-| `analysis-dedupe.ts` | `analysisInFlight`／`analysisRerunPending` | 約 75 |
-| `blocks/suggestion.ts` | `suggestionTails`／`suggestionTailDone` | 約 840 |
-| `blocks/sentiment.ts` | **無** —— `resolveHistory` 是裝配點（函式變數），不是狀態容器 | 約 530 |
-| `copilot-analysis.ts`（保留為 barrel） | `coldStartRecoveries`／`backgroundInFlight`／`debounceTimers` | 約 490 |
-
-> ⚠️ **行數是快照，取整數，MUST NOT 當成維護中的事實。** 這一欄的用途只有一個：
-> 顯示拆完之後的相對形狀。沒有任何機制維護它，而**這個專案已經在同一件事上錯過兩次** ——
-> 一次把 barrel 寫成 200 行，訂正為 725 之後又因為多加了兩段註解而變成 740。
-> 要知道現在幾行就跑 `wc -l`，不要讀這張表。**擁有的狀態那一欄才是有守衛的**
-> （`test/contract-guards.test.ts`），那一欄錯了測試會紅。
-
-- [x] **第三刀：`blocks/sentiment.ts`（實際 530 行）—— 2026-09-03 切完。**
-      移出 `SENTIMENT_CHUNK_SIZE`／`DEFAULT_SENTIMENT_CONCURRENCY`／`SENTIMENT_CONCURRENCY`／
-      `resolveSentimentConcurrency()`／`chunk()`／`mapWithConcurrency()`／`sortByAt()`／`computeStats()`／
-      `mergeMarkersOnly()`／`finishSentimentSuccess()`／`narrateSentimentTrend()`／`resolveSentimentInput()`／
-      `analyzeSentimentBatch()`／`setHistoryResolver()`／`SENTIMENT_BACKFILL_MAX_MESSAGES`。
-      ⚠️ **實際切的時候比清單多搬了兩支：`lastCoveredMessageId()` 與 `newCustomerMessagesSince()`。**
-      原清單沒列它們，但 `resolveSentimentInput()` 會呼叫 `newCustomerMessagesSince()` ——
-      留在 barrel 就會形成「barrel → sentiment → barrel」的循環 import。兩支都是**純函式、
-      只讀 `sentimentBlock.timeline`**，依切線依據本來就屬情緒；搬過去後由 barrel re-export，
-      `server/api/stream.get.ts` 與四支測試的 import 一行未改。
-      ✅ **驗收**：對外 export 前後皆 **29 個**（比對腳本逐一比對，沒有少也沒有多）、
-      呼叫端一行未改（`git status` 只有 barrel、新檔、`contract-guards.test.ts` 三個檔案）、
-      `typecheck`／43 檔 555 測試／`build`／`smoke:flow`／`smoke:realtime` 全數通過。
-      測試**總數與搬移前完全相同**（555 → 555），這是「純搬移」最直接的證據。
-      ✅ `OWNERSHIP` 表**不需要新增一格**（切之前就預判到）：情緒沒有自己的模組層 `Map`／`Set`，
-      唯一的模組層可變值 `resolveHistory` 是函式變數（裝配點）。那張表推導自模組層 `Map`／`Set`，
-      因此自動維持八份、沒有變動。
-      ✅ 預告會紅的兩條斷言如期變紅，**照規定把新檔名加進清單，沒有改成只比長度**：
-      「掛著標記的管線成員就是現有這五個」與「內部檔清單確實推導自管線成員」。
-
-      以下三條是**切完之後仍然有效的常設約束**，不是待辦：
-
-      ⚠️ **新增管線檔的檔頭 MUST 加上 `@analysis-pipeline` 標記**（現有五個檔都有）。
-      `test/contract-guards.test.ts` 靠它認定管線成員，決定「不得 import `copilot-runtime.ts`」
-      與「不得被管線外值 import」兩條守衛的涵蓋範圍。忘了加不會靜靜溜過去 ——
-      新檔自己的 `import ... analysis-state.js` 會立刻被判成「管線外值 import」而紅。
-      ⚠️ **MUST NOT 改回用檔名 regex 判定成員。** 2026-09-02 第一版就是那樣寫的
-      （`analysis-[a-z-]+\.ts`），當天被實測打穿：`analysis-stage2.ts`（帶數字）與
-      `analysisSentiment.ts` 帶著違規 import **完全逃出兩條守衛且零訊號**，
-      因為「涵蓋現有檔案」那條斷言只在清單變長時紅。檔名法把「忘了加清單」換成了
-      「取錯檔名」，是同一個失效換個位置
-      ⚠️ **搬移的真實成本是註解的交叉引用，不是邏輯。** 這條管線的註解超過三分之一，且大量使用
-      「上方／下方／本檔／本函式」這類**位置相對**的指路詞，搬家後會指向空氣，而型別檢查與
-      測試都抓不到。搬完 MUST `grep -n "上方\|下方\|上面\|下面\|本檔" <新檔>` 逐條改成明確的
-      檔名或符號名，**且與搬移放同一個 commit**（分開做一定會漏）。
-      📌 **第三刀實際踩到一個**：`setHistoryResolver()` 的註解原本寫「管線 MUST NOT import
-      `copilot-runtime.ts`（**理由見上**）」，而那段理由留在 `copilot-analysis.ts` 的
-      `JoinedResolver` 區塊 —— 搬完之後「上」是空氣。已改成明確指向該檔該符號。
-      另外**日誌前綴刻意維持 `[copilot-analysis]`、MUST NOT 改成 `[sentiment]`**：
-      日誌字串是可觀測行為的一部分，改它就不再是「行為一個字都沒變」的搬家。
-
-- [x] **`blocks/summary.ts` 確定不切**（2026-09-03 收工時複查）：摘要沒有自己的執行期狀態，
-      單獨成檔換不到任何不變式，只多一層檔案。第三刀切完後 barrel 只剩摘要 ＋ 對外入口 ＋ debounce
-      （490 行），**那就是這條管線的終點形狀，不必再往下拆。**
-
-> 📌 **拆檔的附帶收穫（M4 要回頭處理）**：那八份 `Map`／`Set` 全部是 process-local 的，
-> 不像 `copilot-runtime.ts` 用 `Symbol.for` 掛 `globalThis`，也不在 `StateStore` 裡 ——
-> 也就是說 §8.3 的「M4 換 Redis」**涵蓋不到它們**。多副本下 `stateLocks` 保護不到另一個副本的
-> 寫入、`suggestionTails` 的世代計數各副本各一份、`analysisInFlight` 的去重完全失效
-> （同一個對話會在兩個副本上各跑一次分析，而不會有任何錯誤）。拆檔前這件事被埋在 1773 行裡
-> 看不見，現在每個檔案的檔頭各自寫著自己那一份的後果。**M4 規劃多副本時 MUST 逐一處置這八份**，
-> 不能假設換掉 `StateStore` 就結束了。
+> 📌 **M4 要回頭處理**：上表那八份 `Map`／`Set` 全部是 process-local 的，不像 `copilot-runtime.ts` 用 `Symbol.for` 掛 `globalThis`，也不在 `StateStore` 裡——§8.3 的「M4 換 Redis」**涵蓋不到它們**。多副本下 `stateLocks` 保護不到另一個副本的寫入、`suggestionTails` 的世代計數各副本各一份、`analysisInFlight` 的去重完全失效（同一個對話在兩個副本上各跑一次分析，不會有任何錯誤）。每個檔案的檔頭各自寫著自己那一份的後果。**M4 規劃多副本時 MUST 逐一處置這八份**，不能假設換掉 `StateStore` 就結束了。
 
 **已修的缺陷**（只留仍然有效的取捨）
 
-- [x] **`runColdStart()` 重啟復原缺口**：平台側的 JOIN 是持久的，而 `CopilotAnalysisState` 只由
-      `join.post.ts` 建立 → 伺服器重啟後畫面仍顯示「已接手」、面板照常展開，卻**永遠空白、無日誌、
-      不報錯**。修法：`sendAnalysisSnapshotAndResume()` 對已 JOIN 的連線補跑 `recoverColdStart()`。
-      ⚠️ 代價（重啟後每個已 JOIN 且有連線的對話各跑一次冷啟動）**刻意接受**；M4 換 Redis 後此路徑不再觸發
+- `runColdStart()` 重啟復原缺口：平台側的 JOIN 是持久的，`CopilotAnalysisState` 卻只由 `join.post.ts` 建立 → 伺服器重啟後面板永遠空白、無日誌、不報錯。修法：`sendAnalysisSnapshotAndResume()` 對已 JOIN 的連線補跑 `recoverColdStart()`。⚠️ 代價（重啟後每個已 JOIN 且有連線的對話各跑一次冷啟動）**刻意接受**；M4 換 Redis 後此路徑不再觸發。
 
 **外部依賴**：無
-
-> ✅ **`m2-004-done` 已於 2026-09-02 建立**：002／003／004 共押這一個，中間不各自押（刻意）。
-> annotation 反映「US2 曾經完全不可用、2026-08-27 才修好」——002 曾押的 `m2-002-done`
-> 已依決定刪除（未曾 push），那段歷史沒有別的落點。tag 一旦建立就不移動。
->
-> ⚠️ **這個 tag 押的是「002／003／004 的實作與文件收尾完成」，不是「M2 全部驗收通過」**
-> （2026-09-02 使用者裁定）。上面三條時效門檻（情緒 78%／摘要 73%／建議卡 87%）在押 tag 當下
-> 仍未達 90%，**刻意不阻擋** —— 三者的成因都在 iMBrace 平台側的模型延遲，不是本 repo 的實作缺陷，
-> 且 repo 內的槓桿（情緒並行度、第一段獨立逾時常數）都已經用過一輪。
-> ⚠️ **2026-09-03 補**：情緒並行度那個槓桿已由 FR-018 的正式掃描量完 —— **它是負的**
-> （4／5 兩檔位在總時間與失敗率兩列上同時比 3 差，見 §8.2b），
-> 也就是這句「已經用過一輪」現在有了明確結論：**沒有剩下的空間**。
-> 押 tag 前已跑 `npm run spike:agent-prompts` 確認四個 agent 的 prompt 與 model 皆未漂移，
-> 因此這些數字可歸因到平台而非 prompt 被改（§11 的直接證據優先於間接證據）。
-> **M2 里程碑本身的 `m2-done` 因此尚未建立**，待三條門檻與下方未關閉項目有結論後再議。
-
-> ✅ **`m2-done` 已於 2026-09-03 建立（使用者裁定收尾），M2 正式結束。**
-> 上一段「尚未建立」是押 tag 之前的狀態，保留以存記錄。
->
-> **押 tag 當下的真實狀態，逐項如實記載：**
-> - **手動驗收皆已通過** —— `003` T052（US1-A 靜置 10 分鐘統計、US2-B 面板消失清單、
->   US2-C 兩瀏覽器）與 `005` T058（2026-09-03、真實瀏覽器、stable 環境）都已執行並打勾。
->   ⚠️ 本次收尾**沒有**再跑一次完整手動驗收，倚靠的是各 spec 階段當時的驗收結果。
-> - **三條時效門檻仍為【未達標·已安置】**（情緒 15 秒、摘要 10 秒、建議卡 20 秒）。
->   門檻未放寬、成因在平台側、repo 內槓桿已用盡並經 n=45 三檔位掃描證明並行度是負槓桿，
->   已對外回報 `IMBRACE_QUESTIONS.md` 0-4。**重新判定的條件寫在各該項的處置說明裡，未因押 tag 而失效。**
-> - **押 tag 前最後一次窄審修掉三個靜默失效缺陷**（2026-09-03，範圍為拆檔後的分析管線
->   1858 行）：情緒補算取歷史失敗時 `sentimentGap` 被清掉、建議卡檢索失敗被誤記為「命中 0 筆」
->   導致重試永不再檢索、背景並行名額被少算而突破上限。三者皆不報錯、皆無型別錯誤，
->   且都在既有自動化測試的盲區 —— 已各自補上會紅的迴歸測試。
->   ⚠️ **這三個缺陷都是在各 spec 驗收「全數通過」之後才被找出來的**，落點正是
->   「後面的 spec 動到前面 spec 的程式碼」那個橫向交會處，而縱向的 spec 驗收不負責那裡。
->   M3 收尾時 MUST 比照辦理：綠燈基線之外，另審一次跨 spec 的熱點檔案。
-> - 綠燈基線：`typecheck` ✅、`vitest` 559 ✅、`build` ✅、`smoke` 126 項斷言 ✅。
 
 ---
 
 ### M3 — 知識庫與結案
 
-**內容**：依 #19 RAG 品質的回覆結果，視情況將知識庫來源由 `AgentKnowledgeProvider` 換上 `VikiKnowledgeProvider`（見 §8.2、§12.2 —— ⚠️ **本項僅指「換 provider」這個決策，快查功能本身已隨 M2 落地**，兩者是兩件事）；交接摘要 / 結案摘要 + 人審面板；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11 —— 平台已確認無內建 OCR，自建管線預估 5～10 人日；`specs/001-sentiment-panel` FR-013 已列為排除範圍）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格到位——在此之前一律讓 429 直接轉錯誤狀態，見 §15.2）。
+**內容**：結案摘要 ＋ 人審面板（`specs/006-closure-handoff-summary`，交接摘要不實作，§13.4 ②）；`board-repository` 冪等寫入；Data Board schema setup script；**圖片與 PDF 附件的 vision／文件分析**（§11.4、§19.1 #11——平台無內建 OCR，自建管線預估 5～10 人日；`specs/001` FR-013 已列為排除範圍）；**429 全域退避佇列**（待 G-2 書面 rate limit 規格）；知識庫 provider 是否換成 `VikiKnowledgeProvider`（⚠️ 僅指「換 provider」這個決策，快查功能本身已隨 M2 落地）。
 
 **驗收**：
-- [ ] 若換上 `VikiKnowledgeProvider`：知識庫快查與建議卡的 `score`／`confidence` 欄位開始出現真實數值（不再恆為 `null`），且 UI 不需改動即可正確顯示（**本項只驗換 provider 後分數欄位的行為**，快查本身的功能驗收在 M2）
-- [ ] 摘要可編輯後才寫入 Board
-- [ ] **UI 上已經有一行文案在對客服承諾這個尚未實作的行為** —— 中欄出口按鈕下方的
-      `conversation.exitHint`（`i18n/locales/zh-TW.json`）寫著「離開＝僅退出不寫入・
-      **結案＝產生摘要供確認後寫入**」，但 M2 的「結案」目前只等同「離開 ＋ 停止分析 ＋
-      隱藏面板」（`useConversationView.ts` 的 `closeConversation()`，M3 銜接註解在該處）。
-      **2026-08-28 使用者決策：文案先行、M3 補上行為**，不改成描述現況——改了 M3 又要改
-      回來，且中間那段時間文案會弱化成看不出兩個出口的差別（憲法 8.1）。
-      ⚠️ **M3 落地時 MUST 回頭確認這行文案與實際行為已經一致**；在那之前，客服按下「結案」
-      不會看到任何摘要編輯畫面，這是已知落差而非缺陷。⚠️ 連帶：`specs/003-analysis-trigger-policy`
-      的 SC-007（找未參與者驗證這行文案可讀性）也因此**被決定結案而非驗證通過**，
-      若 PM／SA 的文案審查未涵蓋兩個出口的可讀性，該項要重新提出
-- [ ] 重複觸發摘要為覆蓋而非新增
-- [ ] LEAVE 產生交接摘要、resolved 產生結案摘要，兩者不混用
+- [ ] ~~若換上 `VikiKnowledgeProvider`：`score`／`confidence` 開始出現真實數值~~ —— **不適用，MUST NOT 打勾**（勾起會讓下一個人以為換過了）。**2026-09-07 使用者決策：本期不換入，且與 0-3f 的回覆脫鉤**——0-3f 仍在等待回覆，但它的答案不再是這一條的觸發器。重啟條件：`score`／`confidence` 恆為 `null` 真的擋到某個使用情境，或 viki 側先建好知識庫與 AI 助理。`KnowledgeProvider` 介面不變，換入成本仍只是一個實作類別
+- [x] 摘要可編輯後才寫入 Board —— `app/components/copilot/ClosureBlock.vue` ＋ `server/api/conversations/[id]/closure/commit.post.ts`；`test/closure-commit-guard.test.ts` 掃描全 repo 只有寫入按鈕會呼叫 commit
+- [x] 中欄出口文案 `conversation.exitHint`（「離開＝僅退出不寫入・結案＝產生摘要供確認後寫入」）與實際行為一致 —— `closeConversation()` 只開結案面板，寫入成功後才 LEAVE（006 T033 逐句對照）。✅ 003 SC-007（3 位未參與者按下之前皆說得出哪一個會留下紀錄）於 2026-09-07 實測通過 3/3；受測者代號與逐字回答未留存，要複驗時素材與問句在 `specs/006/quickstart.md` §2 SC-005
+- [x] 同一份草稿重複寫入只留一筆；同一對話的多次結案各自並存（`test/closure-idempotency.test.ts`：同一 draftId 重試 10 次恰好 1 筆、兩份草稿 2 筆並存）。⚠️ 原條文「重複觸發為覆蓋而非新增」方向是錯的（憲法 v4.0.0、§13.4 ③）
+- [x] 按下「結案」產生結案摘要 —— ⚠️ 觸發條件不是對話狀態變更，結案也不變更平台對話狀態（§13.4 ②）
+- [ ] ~~LEAVE 產生交接摘要，兩者不混用~~ —— **不適用**（交接摘要不實作，§13.4 ②）。「不混用」在只有一種摘要時自動成立卻什麼都沒驗到，勾起會讓下一個人以為驗過了
+- [x] 結案摘要的涵蓋區間由客服選定，且區間與則數隨紀錄寫入（`ClosureScopePicker.vue` ＋ `period_start`／`period_message_count`／`period_origin`；§13.4 ④ 已列三種自動推導的反例，不要重新提案）
 - [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）
 - [ ] 圖片／PDF 的描述不得依賴 `caption` 欄位
 - [ ] **429 由全域退避佇列統一處理**，摘要／情緒分析與輪詢等呼叫端不再各自重試；`classifyFailure()` 的 `'rate-limited'` 分類改接佇列，並回頭修訂 `specs/001-sentiment-panel/spec.md` FR-014 的 429 分支與 Assumptions
 
-**外部依賴**：Data Board schema 需先建立；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格
+> 結案相關各條的手動驗收於 2026-09-07 第二輪通過（第一輪走查是在有六個缺陷的畫面上進行的，`specs/006/quickstart.md` §6.4.2、§6.8）。綠燈基線 2026-09-07：`typecheck` ✅、`vitest` 58 檔 726 項 ✅、`build` ✅、`smoke` ✅。
+>
+> ⚠️ **M3 尚未完成，MUST NOT 因為結案那幾條齊了就押 `m3-done`**：仍有四條未勾，皆不屬 `specs/006` 範圍——① Viki provider（本期不換）；②③ 附件 vision／文件分析；④ 429 全域佇列（卡 G-2 🔴）。②③④ 的處置待 `specs/006` 合回 `main` 後，於 007 的規格範圍討論時一併決定。收尾時 MUST 比照 M2：綠燈基線之外另審一次跨 spec 的熱點檔案。
+
+**外部依賴**：Data Board schema 需先建立（✅ `npm run board:setup`）；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格。
 
 ---
 
@@ -2871,44 +2034,21 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [ ] rolling deploy 後，客服的 session 與分析結果不遺失
 - [ ] **第一層清單輪詢在對話數 > `LIST_PAGE_SIZE`（100）的組織下不漏對話** —— 二擇一即可：
       ① webhook 到位，第一層不再負責偵測新訊息（此時本項自動成立）；
-      **或** ② `copilot-runtime.ts` 的 `fetchConversationList()` 取得分頁能力
-      （`skip` 分頁或改查 `_outstanding`，兩者成本模型差很多，需先有實際資料才決定得了）。
-      ⚠️ **MUST NOT 因為 webhook 未到位就跳過本項** —— 條文寫成二擇一正是為了讓它不依賴
-      外部規格也關得掉（2026-09-01 由 M2 的「未歸屬項目」移入，見該節）。
-      ⚠️ 與下一條是同一個風險的兩面，**一起關閉**：側欄的 `BACKGROUND_COVERAGE` 也鎖在同一個
-      100，兩者的安全性都取決於「有新訊息的對話會不會被排到前 100 筆」
-- [ ] **平台清單預設排序的分頁邊界已驗證** —— 已量到的部分與尚缺的部分**都記在 M2 那一節**
-      （「未修的缺陷與未歸屬項目」的排序那條），此處**刻意不重述數字**：同一組證據寫兩個地方，
-      就會有一個先過期。關閉條件同樣是「對話數 > 100 的組織，或平台提供排序參數」
-      ⚠️ **2026-09-03 起本項是該風險的唯一驗收落點**：M2 那一條已正式標為「歸屬 M4」並勾起，
-      因為它的關閉條件（>100 對話的組織、或平台排序參數）都不在 M2 的工作範圍內。
-      證據仍留在 M2，**但要不要放行由這裡決定**。
-- [ ] **M2 那三條時效門檻已在生產環境重新量測並做出最終判定**
-      （摘要 10 秒／情緒 15 秒／建議卡第一段 20 秒，皆 90 百分位）——
-      ⚠️ **2026-09-03 由 M2 移入**：三者在 M2 收尾時標為 **⚠️【未達標·已安置】**，
-      成因定位為 iMBrace 平台側的 agent 推論延遲，**我方 repo 內的槓桿已用盡**
-      （分批、逾時與退避參數、第一段獨立逾時常數都調過；並行度做過 3／4／5 每檔位 n=45 的
-      正式掃描，證明是**負**槓桿）。數字與完整處置說明留在 §18 M2，此處**刻意不重述**。
-      **關閉條件（三者任一）**：① 兩次獨立時段的 n=45 皆達 90%（一次不算 ——
-      本文件已載明相鄰兩輪結論可以相反）；② `IMBRACE_QUESTIONS.md` **0-4** 得到可承諾的
-      p90／SLA，據以重訂門檻；③ 明確裁定「不達標但不阻擋上線」，並在此寫下理由。
-      ⚠️ **MUST NOT 用「放寬到通過為止」關閉本項** —— 放寬只是把判準改成會通過，
-      而這三條門檻守的是產品的核心價值主張（客服不必重讀完整歷史）。
-      ⚠️ 生產環境重測 MUST 標註時段並先跑 `npm run spike:agent-prompts`（§11）：
-      量測數字是間接證據，prompt 快照 diff 是直接證據。
-- [ ] **分析管線的八份 process-local 狀態已逐一處置** —— ⚠️ **換掉 `StateStore` 涵蓋不到它們**：
-      那八份是各模組自己的 `new Map()`，不在 `StateStore` 裡，也沒有 `globalThis` 鍵。
-      清單與各自的失效後果**記在 M2 那一節**（「分析管線拆檔」的 📌 註記），此處刻意不重述。
-      ⚠️ 這一項 MUST NOT 被上面那條「雙副本下同一對話只有一個副本在輪詢」吸收 —— 那條管的是
-      **輪詢**，而去重（`analysisInFlight`）與世代（`suggestionTails`）失效時輪詢完全正常，
-      只是同一個對話在兩個副本上各跑一次分析、各自寫回，**不報錯**
+      **或** ② `copilot-runtime.ts` 的 `fetchConversationList()` 取得分頁能力（`skip` 分頁或改查 `_outstanding`，兩者成本模型差很多，需先有實際資料才決定得了）。
+      ⚠️ **MUST NOT 因為 webhook 未到位就跳過本項**——條文寫成二擇一正是為了讓它不依賴外部規格也關得掉。
+      ⚠️ 與下一條是同一個風險的兩面，**一起關閉**：側欄的 `BACKGROUND_COVERAGE` 也鎖在同一個 100，兩者的安全性都取決於「有新訊息的對話會不會被排到前 100 筆」
+- [ ] **平台清單預設排序的分頁邊界已驗證**。已量到的部分（2026-09-01，`npm run spike:list-order`，n=18，`out/22-*.json`）：`last_message_at` 完全遞減（9 組可比對，填充率 78%）、`updated_at` 也完全遞減（17 組）、`created_at` 僅 53%。實務上前兩者都代表「新活動往前排」，故現況安全。
+      ⚠️ **仍不得關閉，理由有二**：① 樣本 18 筆遠小於門檻的 100，驗到的是**排序方向**，不是**分頁邊界**；② `last_message_at` 與 `updated_at` 兩者都 100% 遞減，仍分不出排序鍵是哪一個，MUST NOT 寫成「已證明排序鍵是 `last_message_at`」。關閉條件：一個對話數 > 100 的組織，或平台提供排序參數
+- [ ] **M2 那三條時效門檻已在生產環境重新量測並做出最終判定**（摘要 10 秒／情緒 15 秒／建議卡第一段 20 秒，皆 90 百分位）。數字與處置說明在 §18 M2，此處**刻意不重述**。
+      **關閉條件（三者任一）**：① 兩次獨立時段的 n=45 皆達 90%；② `IMBRACE_QUESTIONS.md` **0-4** 得到可承諾的 p90／SLA，據以重訂門檻；③ 明確裁定「不達標但不阻擋上線」，並在此寫下理由。
+      ⚠️ **MUST NOT 用「放寬到通過為止」關閉本項**。生產環境重測 MUST 標註時段並先跑 `npm run spike:agent-prompts`（§8.2b）。
+- [ ] **分析管線的八份 process-local 狀態已逐一處置** —— 清單與各自的失效後果記在 §18 M2「分析管線拆檔」的 📌 註記。⚠️ 這一項 MUST NOT 被上面那條「雙副本下同一對話只有一個副本在輪詢」吸收——那條管的是**輪詢**，而去重與世代失效時輪詢完全正常，只是同一個對話在兩個副本上各跑一次分析，**不報錯**
 
 **外部依賴**：webhook 規格
 
 > ⚠️ 第一項驗收標準（雙副本 webhook 跨實例推達）是最容易被跳過、上線後最容易爆的一項，務必寫死在驗收清單中。
 
 ---
-
 ## 19. 已知風險與待確認事項
 
 | 標記 | 意義 |
@@ -2922,67 +2062,68 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 
 ### 19.1 風險表
 
+編號是穩定識別項（程式碼註解直接引用 `#11`、`#12`、`#13`），已解除者保留列、不遞補。
+
 | # | 風險 | 狀態 | 因應 |
 |---|---|---|---|
 | 1 | 無獨立的知識檢索 API | 🔵 已確認（部分緩解） | 無 query／retrieve 端點；改為 agent 的 SSE `tool-output-available` 事件解析 `RAGknowledge` 輸出，可取得檔名與 chunk 原文 |
 | 2 | Webhook payload 規格未定 | 🔵 已確認為 M1 的硬限制 | 輪詢路徑答不出「是誰」JOIN 了；M1 用本地快路徑＋`mode` 的匿名訊號，具名 operator 清單須等 webhook（`IMBRACE_QUESTIONS` A-1） |
 | 3 | Presence 無可靠來源 | 🟢 大幅緩解 | `users[]` 是團隊名冊不可用；真正的解是 `mode` 欄位（§10.2），僅 `automation` 的歧義仍存在但不構成撞單風險 |
-| 4 | Webhook 簽章機制未知 | ⚪ | 上線前必須取得規格，否則 endpoint 不得對外開放 |
-| 5 | SDK 無訊息層級推播 | 🔵 已確認 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS |
+| 4 | Webhook 簽章機制未知 | ⚪ | 上線前必須取得規格（A-3），否則 endpoint 不得對外開放 |
+| 5 | SDK 無訊息層級推播 | 🔵 已確認 | 自適應頻率 + 共享訂閱；持續向 iMBrace 爭取 WS（B-1） |
 | 6 | 無相關度分數可用（iMBrace 路徑） | 🔵 已確認，因應方式已定 | `confidence` 改為 nullable，非整個拿掉——無分數時留空，換上 viki 後自然回填，UI 不必重做（§8.2、§11.6） |
-| 7 | 多副本狀態共享 | ⚪ | 介面 day-1 async；M4 換 Redis |
+| 7 | 多副本狀態共享 | ⚪ | 介面 day-1 async；M4 換 Redis。⚠️ 分析管線的八份 process-local 狀態不在 `StateStore` 裡，M4 要逐一處置（§18 M2） |
 | 8 | ~~Nuxt UI Pro 授權~~ | ✅ 已解除 | v4 起 Pro 已併入主套件，125+ 元件全免費 MIT，商用無需額外授權 |
-| 9 | 對話內容送外部 LLM | 🔵 已確認會擴大到影像 | 自建 vision／文件分析（§11.4）已定案，出境範圍**確定**從文字擴大到圖片與 PDF，不再是「可能」；實作時程 2026-08-26 由 M2 移至 M3（見 §18 M3）。合規政策待 iMBrace 回覆（E-3），送出前須先確認公司資安政策 |
-| 10 | Data Board 欄位型別限制 | ⚪ | M3 前先實測，setup script 可重跑 |
-| 11 | 附件內容依型別而定 | 🟢 已用真實對話驗證 | `image`／`pdf` 皆有直接可用 url，只是缺描述與（客戶上傳時的）檔名，已納回 MVP；舊資料型 `file` 仍拿不到內容且來源不明，維持排除；`contact/files` 端點範圍為聯絡人層級，不得當對話附件清單用。細節與驗證過程見附錄 B |
+| 9 | 對話內容送外部 LLM | 🔵 已確認會擴大到影像 | 自建 vision／文件分析（§11.4）已定案，出境範圍**確定**從文字擴大到圖片與 PDF；實作在 M3（§18 M3）。合規政策待 iMBrace 回覆（E-3），送出前須先確認公司資安政策 |
+| 10 | Data Board 欄位型別限制 | 🔵 已實測並落地 | `npm run board:setup`／`board:verify`；陷阱（`createField()` 回整個 board、唯一鍵不保證、`sort` 被靜默忽略）記在 §13.3、§13.4 ③ 與 `board-schema.ts` |
+| 11 | 附件內容依型別而定 | 🟢 已用真實對話驗證 | `image`／`pdf` 皆有直接可用 url，只是缺描述與（客戶上傳時的）檔名，已納回 MVP；舊資料型 `file` 仍拿不到內容且來源不明，維持排除；`contact/files` 端點範圍為聯絡人層級，不得當對話附件清單用。細節見附錄 B |
 | 12 | JOIN 後 AI 是否仍自動回覆 | 🟢 已釐清 | JOIN 時預設 Manual（AI 關閉），非預設情況；Hybrid 模式下撞單真實存在，§10.5 只在此模式適用 |
-| 13 | ~~訊息發送者身分無法區分~~ | ✅ 已解除 | `from` 前綴判別：`con_`客戶／`u_`真人客服／`pub_`AI，398 則覆蓋率 100%。**未知前綴一律歸 `unknown`，不得預設為 `ai`**——預設成 `ai` 會讓撞單檢查把來源不明的訊息當成 AI 回覆。僅 `pub_` 語意細節與內部訊息判斷見 #24 |
-| 14 | 知識庫條目時效性 | ⚪ | `KnowledgeHit.updatedAt` 顯示於介面，過舊者標示提醒 |
+| 13 | ~~訊息發送者身分無法區分~~ | ✅ 已解除 | `from` 前綴判別：`con_`客戶／`u_`真人客服／`pub_`AI，398 則覆蓋率 100%。**未知前綴一律歸 `unknown`，不得預設為 `ai`**——預設成 `ai` 會讓撞單檢查把來源不明的訊息當成 AI 回覆。`pub_` 的內部訊息判斷見 #24 |
+| 14 | 知識庫條目時效性 | 🔵 已確認 | `KnowledgeHit.updatedAt` 為 `string \| null`，擷取自檔名的版本片段（啟發式，§12.4 ②）；`null` 時顯示「更新日期未知」、不觸發過舊提醒 |
 | 15 | 主管強制介入擋不住官方介面 | ⚪ | 介面誠實標示邊界；`removeTeamMember()` 實際效力待確認（H-4） |
 | 16 | 角色權限來源未定 | 🟡 部分解除，尚未定案 | `OrganizationMembership` 帶 `role`（實測 `admin`）／`is_admin`（實測 `false`），可望沿用平台角色。**但兩欄位語意不一致、值域未知（H-5 仍待答）**，「哪個值代表能強制介入他人對話」尚無答案；在那之前 §10.6 的順位 2（設定檔白名單）仍是實際做法 |
-| 17 | 無平台層的 structured output 保證 | 🟡 已緩解 | `ai.complete()` 404，改走 agent 路徑：純靠 prompt 實測 4/4 次可直接 `JSON.parse`，仍須自建 Zod 驗證 + 重試 + 降級 |
+| 17 | 無平台層的 structured output 保證 | 🟡 已緩解 | `ai.complete()` 404，改走 agent 路徑：純靠 prompt 實測 4/4 次可直接 `JSON.parse`，仍須自建 Zod 驗證 + 重試 + 降級（§8.2b「JSON 抽取」） |
 | 18 | `messageSuggestion` 端點不存在 | 🔵 已確認 | 端點回 404，建議卡完全自建，引用來源從 `RAGknowledge` 工具輸出解析 |
-| 19 | **RAG 檢索品質不可調校** | 🔴 已確認，最高優先 | 問「電梯困人」未命中同名 SOP 檔，chunk 大小／top-k／中文斷詞／同義詞全不在我方手上。已列 P0 追問 iMBrace（§0-3f）；調不動則觸發換上 viki |
-| 20 | AI 回應延遲 5～12 秒 | 🔵 已確認 | 中位數 5.0s、最慢 12.2s、首字 2.2s。M2 須做漸進顯示：**骨架先出、各區塊獨立載入**。⚠️ 原列的「建議卡串流顯示」與「提供『重新產生』」已於 2026-08-27 撤銷（`specs/002-suggestion-knowledge-search` FR-023／FR-024／FR-026）：串流與 §11.6 ① 的「顯示前驗證 `sopId`、驗不過整張捨棄」不相容，會讓客服看著讀到一半的卡整張消失；而「重新產生」受 §11.3 快取鍵 `{conversationId}:{lastMessageId}` 約束，同一狀態不會產生不同結果，該按鈕只會給出系統做不到的承諾 |
+| 19 | **RAG 檢索品質不可調校** | 🔴 已確認，最高優先 | 問「電梯困人」未命中同名 SOP 檔，chunk 大小／top-k／中文斷詞／同義詞全不在我方手上。已列 P0 追問（0-3f）。⚠️ **2026-09-07 起 0-3f 的回覆不再是「換 viki」的觸發器**（§8.2、§18 M3），本期不換；可動的槓桿只剩對方調校 |
+| 20 | AI 回應延遲 | 🔵 已確認 | 漸進顯示：**骨架先出、各區塊獨立載入**（3 秒骨架 + 各區塊實質內容門檻，§18 M2）。⚠️ 「建議卡串流顯示」與「提供『重新產生』」已撤銷（`specs/002` FR-023／FR-024／FR-026）：串流與 §11.6 ① 的「顯示前驗證 `sopId`、驗不過整張捨棄」不相容；「重新產生」受 §11.3 版本錨點約束，同一狀態不會產生不同結果 |
 | 21 | 客戶資料幾乎是空的 | 🟡 已確認，決策：MVP 拿掉 | `email`／`phone_number`／`company_name` 等填充率皆 0%，`display_name` 是代號非人名。MVP 階段直接拿掉客戶資訊卡 |
 | 22 | ~~`messages.list()` 無法過濾對話~~ | ✅ 已解除 | `raw-conversation-id` 策略 precision 100%；`since` 類參數不支援，但訊息由新到舊排序，`limit=N` 即最新 N 則（§9.3） |
 | 23 | ~~無法由 API 設定對話 mode~~ | ✅ 已解除 | `POST /v1/team_conversations/_join` 帶 `{team_conversation_id, mode}` 可寫入，與 JOIN 同一端點（§10.6） |
-| 24 | workflow 的內部中繼訊息與真正回給客戶的回覆無法區分 | 🔴 已確認，仍是啟發式暫解 | 撞單防護的 `byAi`（§10.4）可能誤把內部訊息當真實回覆，觸發假警報。暫行做法：純 JSON 視為內部訊息並排除，非規格。已列 P1 追問（`IMBRACE_QUESTIONS.md` H-3c） |
+| 24 | workflow 的內部中繼訊息與真正回給客戶的回覆無法區分 | 🔴 已確認，仍是啟發式暫解 | 撞單防護的 `byAi`（§10.4）可能誤把內部訊息當真實回覆，觸發假警報。暫行做法：純 JSON 視為內部訊息並排除（`test/workflow-internal.test.ts`），非規格。已列 P1 追問（H-3c） |
 
 ### 19.2 目前最需要收斂的事
 
 | 優先 | 事項 | 為何是它 |
 |---|---|---|
-| 🔴 1 | **#19 RAG 檢索品質不可調校** | 唯一可能讓「建議卡」整個上不了線的變數。已列 P0 追問 iMBrace；調不動則觸發換上 viki |
-| 🟠 2 | **#24 workflow 內部中繼訊息判斷** | 撞單防護目前用「純 JSON 視為內部訊息」的啟發式，不是規格 |
-| 🟡 3 | **#11 附件 URL 的時效與授權，`contact/files` 端點合法性** | 目前樣本數小，URL 是否有時效仍未驗證；`contact/files` 未經 iMBrace 確認是否為正式介面（已確定不影響對話附件清單的實作） |
+| 🔴 1 | **#19 RAG 檢索品質不可調校** | 唯一可能讓「建議卡」整個上不了線的變數。已列 P0 追問；本期不換 viki，槓桿只在對方手上 |
+| 🔴 2 | **G-2 rate limit 規格** | M3 的 429 全域佇列、§9.2 輪詢頻率定案都卡在它 |
+| 🟠 3 | **#24 workflow 內部中繼訊息判斷** | 撞單防護目前用「純 JSON 視為內部訊息」的啟發式，不是規格 |
+| 🟠 4 | **0-4 三個 agent 的推論延遲** | 三條時效門檻的最終判定（M4）繫於此 |
+| 🟡 5 | **#11 附件 URL 的時效與授權（H-2d）、H-6c 附件送出流程** | 前者卡 M3 的 vision 管線快取時機，後者卡 Composer 夾帶按鈕 |
 
 **待向 iMBrace 確認的完整清單見 `docs/IMBRACE_QUESTIONS.md`**（可直接轉貼給對方）。
 **SDK 靜態分析的完整結果見 `docs/SDK_FINDINGS.md`**。
 
 ### 19.3 未完成與已知落差的索引
 
-> ⚠️ **本表只有指標，沒有結論** —— 同一組證據寫兩個地方，就會有一個先過期。
-> 每一項的正典敘述在「正典位置」欄指的章節裡，判斷時去讀那裡。
+> ⚠️ **本表只有指標，沒有結論**——同一組證據寫兩個地方，就會有一個先過期。每一項的正典敘述在「正典位置」欄指的章節裡。
 
 | 類別 | 項目 | 正典位置 |
 |---|---|---|
-| 待拍板（M3 開工前） | 分析結果的持久化 ＋ 冷啟動的 50 則上限（同一個立案，涉及隱私姿態） | §11.8 ①③ |
-| 待拍板（M3 開工前） | 憲法 5.3 的待修憲事項（與上一項**同進同出**） | `CONSTITUTION.md` 5.3 |
-| 未達標·已安置（**不是未決**） | 摘要 10 秒、建議卡第一段 20 秒、情緒 15 秒 —— 三項皆未達 90%，門檻一律**不放寬**。**2026-09-03 已完成安置**：成因定位為平台側 agent 推論延遲、我方槓桿已用盡（並行度經 n=45 三檔位掃描證明是負槓桿）、已對外回報 `IMBRACE_QUESTIONS.md` **0-4**、後續判定歸屬 **M4** 的「三條時效門檻已在生產環境重新量測」。⚠️ 單輪 n=15 判不動（相隔 30 分鐘的兩輪結論相反）；情緒 2026-09-03 量到 41/45＝91% 但**經裁決不改判**，要翻案須第二次獨立時段的 n=45 也通過 | §18 M2、§18 M4、§8.2b、`IMBRACE_QUESTIONS.md` 0-4 |
-| 量測規程 | 兩輪之間 MUST 留 ≥30 分鐘冷卻且跨時段；隔離單次量測 MUST NOT 用來預測驗收 | §8.2b |
-| 已關閉的缺陷（留作對照） | `registerCredential()` 雙分頁、`session.watchers` 雙分頁、自動恢復不補算失敗批次，**皆於 2026-09-02 由 `specs/005-m2-residual-defects` 關閉**（US1／US2）；順帶修掉 `runBlockDeduped()` rerun 重跑第一次閉包的既有缺陷。**三段真實環境量測與封閉清單的 prompt 改動已於 2026-09-03 全部完成**（杜撰率 21% → 21% 零改善但查出成因；並行度 4／5 兩列同時變差）。**兩項裁決已於 2026-09-03 由使用者拍板：並行度維持 3、情緒 15 秒門檻不改判**；**T058 手動驗收同日全數通過，005 已 65/65 完成** | §18 M2、§8.2b |
-| ~~重構欠帳（非缺陷）~~ **已結清** | 分析管線拆檔的第三刀 `blocks/sentiment.ts` **已於 2026-09-03 切完**（純搬移，對外 export 前後皆 29 個、呼叫端一行未改、555 測試數量不變）。管線由四檔變五檔；`blocks/summary.ts` 確定不切，barrel 的終點形狀就是「摘要 ＋ 對外入口 ＋ debounce」 | §18 M2 |
+| 未達標·已安置（**不是未決**） | 摘要 10 秒、情緒 15 秒、建議卡第一段 20 秒——三項皆未達 90%，門檻一律**不放寬**；成因為平台側 agent 推論延遲、我方槓桿已用盡、已對外回報 0-4、最終判定歸屬 M4 | §18 M2、§18 M4、§8.2b |
+| 待拍板（已與里程碑脫鉤） | 分析結果的持久化 ＋ 冷啟動的 50 則上限（同一個立案，涉及隱私姿態） | §11.8 ①③ |
+| 未決（M3 剩餘） | 圖片／PDF 的 vision／文件分析（兩條驗收）；429 全域退避佇列（卡 G-2）；三者待 006 合回 `main` 後在 007 範圍討論 | §18 M3 |
+| 不適用（刻意不勾） | 換入 `VikiKnowledgeProvider`（本期不換，與 0-3f 脫鉤）；LEAVE 交接摘要（不實作） | §18 M3、§8.2、§13.4 ② |
 | M4 前必須處置 | 分析管線的八份執行期狀態皆為 process-local，**不在 `StateStore` 裡**，換 Redis 涵蓋不到 | §18 M2、§8.3 |
-| 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力 | §18 M2、§18 M4（**一起關閉**） |
+| 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力（**一起關閉**） | §18 M4 |
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
-| 設計張力（非缺陷） | 正式路徑每 6 則切一批，落在分數帶界線上的句子會因批次組成而在 `frustrated`／`angry` 之間移動，示警圖示跟著在 ⚠️ 與 🔥 之間變。這是 prompt 規則 4「參考同批前後文」的必然代價，不是迴歸；24-A 已證實**固定批次下**是穩的 | §8.2b、附錄 C-3 |
-| 已做（衛生，留作對照） | `callAgent()` 已於 2026-09-02 帶上 `user_id`（`specs/005-m2-residual-defects` US4 / FR-021），省下每次呼叫的一趟往返（值 54ms）；取不到 id 時退回舊路徑並只警告一行 —— 那條退路是靜默的，`spike:userid` 與 `test/ai-user-id.test.ts` 是它唯一的觀測點 | §8.2b |
-| 未建立 | `config/categories.yaml`（M3）、`supervisors.yaml`（隨主管接管）。⚠️ `sop.yaml` 不在此列 —— 該路徑已於 2026-08-28 撤銷，不是待辦 | §5 目錄結構 |
-| 已押（留作對照） | tag `m2-004-done`（2026-09-02）、**`m2-done`（2026-09-03，M2 正式結束）**。⚠️ `m2-done` 押在三條時效門檻仍為【未達標·已安置】的狀態上，那是刻意的，理由與重新判定條件見 §18 M2 收尾段 | §18 M2 |
-| 文案先於行為 | `conversation.exitHint` 已對客服承諾「結案＝產生摘要供確認後寫入」，M2 尚未實作 | §18 M3 |
+| 未證實的假設 | 背靠背量測會互相污染（被放棄的呼叫仍在平台側跑）；在證實前量測規程為兩輪之間 ≥30 分鐘冷卻、跨時段 | §8.2b 量測規程 9 |
+| 設計張力（非缺陷） | 正式路徑每 6 則切一批，落在分數帶界線上的句子會因批次組成而在 `frustrated`／`angry` 之間移動，示警圖示跟著在 ⚠️ 與 🔥 之間變。這是 prompt 規則「參考同批前後文」的必然代價；固定批次下是穩的 | §8.2b、附錄 C-3 |
+| 餘裕正在被吃掉 | 建議卡第二段落定 50 秒的門檻仍通過，但已出現第一次破線；MUST 繼續盯 | §18 M2 建議卡那條 |
+| 未建立 | `config/supervisors.yaml`（隨主管接管功能）。`sop.yaml` 不在此列——該路徑已撤銷 | §5、§10.6 |
 | UI 缺口 | Composer 的夾帶檔案按鈕（卡在 H-6c，**刻意不放 disabled 佔位鈕**） | §18 M2 |
-| 待對方回覆 | 見 §19.1 風險表與 `IMBRACE_QUESTIONS.md`（🔴：#19 RAG 品質、#24 內部中繼訊息） | §19.1／§19.2 |
+| 啟發式暫解 | `byAi` 的「純 JSON ＝ 內部訊息」（H-3c）；`updatedAt` 從檔名擷取版本片段（0-3g） | §10.4、§12.4 ② |
+| 待對方回覆 | 見 §19.1 風險表與 `IMBRACE_QUESTIONS.md` 待答清單 | §19.1／§19.2 |
 
 ---
 
@@ -2995,15 +2136,13 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - 命名慣例（檔案、元件、composable、API 路由、SSE 事件、EventBus topic、分支、commit）→ 憲法附錄 A
 - 程式碼約束 → 憲法一至九條
 
-> ⚠️ 本節在 v1 時期曾另有一份「八條憲法」清單，編號與 `CONSTITUTION.md` 的十條完全不同，
-> 造成程式碼註解裡「憲法第 5 條」與「憲法 4.3」指向同一規則卻對不起來。
-> 該清單已於憲法 v2.0.0 廢止 —— **不要再在本文件複製一份約束清單**，
-> 那正是「多一個地方描述同一件事，就多一個會過期的地方」的實例。
+> ⚠️ **不要再在本文件複製一份約束清單。** v1 時期曾有一份編號不同的「八條憲法」，讓程式碼註解裡的條號對不起來（憲法 v2.0.0 廢止）——那正是「多一個地方描述同一件事，就多一個會過期的地方」的實例。
 
 ### 20.3 Git
 
 - Conventional Commits，內文說明**為什麼**
 - 功能分支 `feat/<milestone>-<slug>`
+- 里程碑完成打 tag（`m0-done`、`m1-done`、`m2-done`…），**tag 一旦建立就不移動**；細則見 `CLAUDE.md`
 
 ### 20.4 GitHub Spec Kit 導入
 
@@ -3017,7 +2156,7 @@ docs/CONSTITUTION.md
 M0 / M1  地基     → 直接開發，不走 Spec Kit（避免儀式成本）
 M2 起的功能單元   → 走 /specify → /clarify → /plan → /tasks → /implement
                     · 情緒面板     · 建議卡與一鍵帶入
-                    · 知識庫快查   · 交接／結案摘要
+                    · 知識庫快查   · 結案摘要與人審面板
 ```
 
 **為何適合**：Spec Kit 的 `/clarify` 階段會強制把規格缺口顯性標記出來。本專案天生就有大量未定規格（見 §19），而每個未定的外部依賴剛好對應一個 provider 介面——很乾淨的切分。
@@ -3044,7 +2183,7 @@ grep -rn "<舊證據的數字>" docs/
 grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已解決的問題
 ```
 
-**`IMBRACE_QUESTIONS.md` 要特別小心**——它是唯一會離開這個 repo 的文件，內容過期不只是不準確，而是浪費對方時間並稀釋其他真正待答問題。自行解決的問題要明確撤回並附上解法，不是默默刪掉。
+**`IMBRACE_QUESTIONS.md` 要特別小心**——它會離開這個 repo，內容過期不只是不準確，而是浪費對方時間並稀釋其他真正待答問題。自行解決的問題要明確撤回並附上解法，不是默默刪掉。
 
 **`docs/meeting-draft/` 底下的檔案不得被正典文件引用**——那是本機 gitignored 的會議草稿，隨時會變動；正典文件要引用其結論，須把結論本身寫進正典文件，而非連過去。
 
@@ -3056,41 +2195,39 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 
 ## 附錄 B：重大決策修訂紀要
 
-以下是曾被推翻或大幅修正的關鍵結論，依主題摘要記錄，正文只保留最終結論。
+曾被推翻的關鍵結論，只留**會被重新提案、或解釋了正文某個數字**的那些；正文只保留最終結論。
 
-**Presence 與 `users[]`（§10.2）**：初版誤判 `Conversation.users[]` 是「該對話的 operator 清單」。二次實測發現：① 第一次量測看到 12/12 全空，其實是量錯位置——那是 `conversations.search()` 輕量 payload 裡本來就是 `null` 的欄位；② 用詳情端點 `get()` 重測後確實有 14 人，但兩個不同對話回傳同一批人，且含 `is_bot: true` 與 `team_user_role: observer`——證實是團隊名冊，不是對話參與者。這兩次錯誤結論都指向同一個最終判斷（`users[]` 不可用），但若照第一次的「理由」去補救，會走向完全錯誤的「等 webhook 補清單」路線；量測位置錯誤造成的假結論，危險之處不在結論本身，而在它推導出的下一步。第三次實測才找到真正可用的來源——`mode` 欄位。
+**Presence 與 `users[]`（§10.2）**：初版誤判 `Conversation.users[]` 是「該對話的 operator 清單」。第一次量測看到 12/12 全空，其實是量錯位置（`conversations.search()` 輕量 payload 裡本來就是 `null`）；用詳情端點 `get()` 重測後確實有 14 人，但兩個不同對話回傳同一批人，且含 `is_bot: true` 與 `team_user_role: observer`——證實是團隊名冊。若照第一次的「理由」去補救，會走向完全錯誤的「等 webhook 補清單」路線；量測位置錯誤造成的假結論，危險之處不在結論本身，而在它推導出的下一步。
 
-**presence 的其他候選欄位（§10.2）——都測過，都不能用**：除 `users[]` 外另測了三個，避免日後被重新提案。`is_joined` 雙向正確，但**是「我」的視角**（以該客服的 token 查詢），看不到同事；`is_agent_joined` **單向黏著**——JOIN 時 `null → true`，LEAVE 後維持 `true` 不回復，代表「曾經有人加入」而非「現在有人在」；`is_presence` 全程 `false`，與 JOIN 狀態無關、語意不明。四個候選中只有 `mode` 雙向正確且看得到同事。
+**presence 的其他候選欄位（§10.2）——都測過，都不能用**：`is_joined` 雙向正確，但**是「我」的視角**（以該客服的 token 查詢），看不到同事；`is_agent_joined` **單向黏著**——JOIN 時 `null → true`，LEAVE 後維持 `true` 不回復，代表「曾經有人加入」而非「現在有人在」（兩次獨立實測同向）；`is_presence` 全程 `false`，語意不明。四個候選中只有 `mode` 雙向正確且看得到同事。
 
 **`users[]` 的第二個受害者：發送者判別（§19.1 #13）**：`mappers.ts` 初版靠比對 `users[]` 反推發送者，`users[]` 為空時會把**所有 `u_` 真人客服誤判為 AI**，撞單防護直接失效。已改為 `from` 前綴判別（`senderTypeOf`）。⚠️ 這一項不因「`users[]` 其實有值」而緩解——它是團隊名冊，拿來反推發送者一樣是錯的。
 
-**`mode` 的資料模型（§10.6）**：型別文件曾同時存在兩套不相容的定義（`aiReplies`/`agentCanSend` 布林對 vs. 舊版 `aiMode: 'collab' | 'human_only'` 列舉），源自初版判斷「不要建模成列舉」是對的，但尚未確認兩個維度是否真的獨立。四個 `mode` 值全數實測後，確認 Automation Only 時「AI 會回、客服不能送」證實兩維度互相獨立，單一列舉表達不了，已統一為兩維度模型。
+**`mode` 的資料模型（§10.6）**：曾同時存在兩套不相容的定義（`aiReplies`/`agentCanSend` 布林對 vs. `aiMode: 'collab' | 'human_only'` 列舉）。四個 `mode` 值全數實測後，Automation Only 時「AI 會回、客服不能送」證實兩維度互相獨立，單一列舉表達不了。
 
-**對話識別碼（§9.3）**：`precisionOf()` 初版以字串完全相等比對兩個識別碼，但對話清單給裸 UUID、訊息帶 `conv_` 前綴，導致「取回 70 則全部正確的訊息」被算成 precision 0%，一度誤判整個訊息取數策略不可行、M1 可能被阻塞。修正比對邏輯（改用 `sameConversation()` 而非字串相等）後，真實 precision 是 100%。
+**對話識別碼（§9.3）**：`precisionOf()` 初版以字串完全相等比對，但對話清單給裸 UUID、訊息帶 `conv_` 前綴，導致「取回 70 則全部正確的訊息」被算成 precision 0%，一度誤判 M1 可能被阻塞。改用 `sameConversation()` 後真實 precision 是 100%。
 
-**`messages.list()` 過濾與增量拉取（風險 #22）**：原判「無法依對話過濾」是同一個量測錯誤的延伸，修正後確認 `raw-conversation-id` 策略可行；但 `since`／`after` 等八種寫法測完後確認真的不支援增量拉取，不是量測問題。
+**`messages.list()` 過濾與增量拉取（風險 #22）**：「無法依對話過濾」是同一個量測錯誤的延伸；但 `since`／`after` 等八種寫法測完後確認真的不支援增量拉取，不是量測問題。
 
-**對話 mode 寫入端點（風險 #23）**：原判「SDK 無 mode 寫入端點」是錯的——由官方介面的網路請求直接觀察到 `POST /v1/team_conversations/_join` 帶 `mode` 參數即可寫入，且與 JOIN 是同一支端點，只是 SDK 型別沒有宣告 `mode` 欄位。
+**對話 mode 寫入端點（風險 #23）**：「SDK 無 mode 寫入端點」是錯的——由官方介面的網路請求直接觀察到 `POST /v1/team_conversations/_join` 帶 `mode` 即可寫入，只是 SDK 型別沒有宣告該欄位。
 
-**附件內容可否取得（風險 #11）**：最早只測過 4 則歷史 `file` 型訊息（`content` 只有 `{name, media_id}`，無 url），外推到「所有附件都拿不到內容」。之後用真實對話補測 `image`（1 則）與 `pdf`（2 則）樣本後推翻——兩者 `content` 都有直接可用的 url，只是平台不提供描述／OCR，且客戶上傳時連檔名（`caption`）都沒有（只有客服上傳的 PDF 才帶檔名）。過程中也用瀏覽器 Network 面板發現一個非 SDK 公開的 `/contact/{id}/files` 端點；因為是在官方介面「聯絡人資料」彈窗中觸發的請求，判斷其範圍是聯絡人層級（該聯絡人所有對話的附件）而非單一對話，因此明確排除用它列出「當前對話」的附件——改為直接用既有的訊息取數路徑（過濾 `type ∈ {image, pdf}`），已用 `14-contact-files.ts` 的 `H-2f-alt` 驗證兩者是同一個 channel-service 後端。
+**附件內容可否取得（風險 #11）**：最早只測過 4 則歷史 `file` 型訊息（`content` 只有 `{name, media_id}`），外推到「所有附件都拿不到內容」。之後用真實對話補測 `image`（1 則）與 `pdf`（2 則）後推翻——兩者 `content` 都有直接可用的 url，只是平台不提供描述／OCR，且客戶上傳時連 `caption` 都沒有（只有客服上傳的 PDF 才帶檔名）。過程中發現的非 SDK 公開端點 `/contact/{id}/files` 是在「聯絡人資料」彈窗觸發的，範圍是聯絡人層級，因此明確排除用它列出「當前對話」的附件；`14-contact-files.ts` 的 `H-2f-alt` 已驗證兩者是同一個 channel-service 後端。
 
-**M1「4 秒內看到」的預算從哪來（§18 M1）**：這個數字量的是**客戶回覆**那條路徑——客戶的訊息不經我方 API，只能靠第一層清單輪詢發現（實測 `last_message_at` ≤2 秒更新，端到端約 1 秒）。另一條路徑是我方客服送出時 `poke()` 的捷徑（約 40ms），那條快得多，**不能拿它當驗收依據**。日後若要調整輪詢頻率，門檻是前者不是後者。
+**M1「4 秒內看到」的預算從哪來（§18 M1）**：這個數字量的是**客戶回覆**那條路徑——客戶的訊息不經我方 API，只能靠第一層清單輪詢發現（實測 `last_message_at` ≤2 秒更新，端到端約 1 秒）。我方客服送出時 `poke()` 的捷徑（約 40ms）快得多，**不能拿它當驗收依據**。日後調整輪詢頻率，門檻是前者。
 
-**M1 驗收方法論**：原判「兩瀏覽器即時同步」與「斷線補齊」兩項只能靠真實瀏覽器人工驗證。後來發現這個判斷只有一半對——真正需要瀏覽器的只有 `EventSource` 本身（瀏覽器原生實作，不是我方程式碼），拆開後我方負責的部分全都可自動化：跨 session 的送出與接收、斷線與補齊由 `test/realtime-http.ts` 對建置後的 Nitro 用兩個獨立 cookie jar + `fetch` 手動解析 SSE 驗證；重連時機與退避策略由 `test/nuxt/stream-store.test.ts` 對真正的前端 store 注入假斷線驗證。驗證測試本身也需要被信任——第一項檢查即為「兩位客服是不同的 operator」，避免共用 operatorId 導致 presence 自我排除與撞單過濾被測成假陽性。
+**M1 驗收方法論**：原判「兩瀏覽器即時同步」與「斷線補齊」只能靠真實瀏覽器人工驗證。真正需要瀏覽器的只有 `EventSource` 本身（瀏覽器原生，不是我方程式碼），拆開後我方負責的部分全都可自動化：跨 session 的送出與接收、斷線與補齊由 `test/realtime-http.ts` 對建置後的 Nitro 用兩個獨立 cookie jar + `fetch` 手動解析 SSE 驗證；重連時機與退避策略由 `test/nuxt/stream-store.test.ts` 注入假斷線驗證。驗證測試本身也需要被信任——第一項檢查即為「兩位客服是不同的 operator」，避免共用 operatorId 讓 presence 自我排除與撞單過濾被測成假陽性。
 
-**M2「3 秒」的語意（§18 M2）**：原驗收寫「JOIN 後 3 秒內出現摘要與首批建議」，讀起來像是要求 3 秒內產出實質內容——但 §19.1 #20 的實測是 AI 單次呼叫中位數 5.0 秒、最慢 12.2 秒，那個門檻九成達不到。經 `specs/001-sentiment-panel` 的 clarify 收斂為兩條：3 秒衡量「面板已出現並標示分析中」（客服知道系統開始為他工作），實質內容另訂 10 秒 / 90 百分位，且允許逐欄漸進填入。連帶：切回已 JOIN 的對話時必須先顯示上次保留的結果而非重新 loading（§11.2 原寫「1–2 秒 loading 完全可接受」已修正）。⚠️ **2026-08-29 訂正**：上句的「10 秒」自此**只涵蓋摘要與情緒**；建議卡的實質內容門檻已由 10 秒改為 **20 秒**（002 SC-001，裁決見 `specs/004-progressive-citations/spec.md` Clarifications 2026-08-29 —— 建議卡 agent 單次生成 p90 10.31 秒，10 秒在現行平台必然驗收不過），§18 M2 的驗收項已據此拆為兩行。3 秒的骨架門檻三者一律不變。
+**M2「3 秒」的語意（§18 M2）**：原驗收寫「JOIN 後 3 秒內出現摘要與首批建議」，讀起來像要求 3 秒內產出實質內容，而 AI 單次呼叫中位就有 5 秒。經 `specs/001` clarify 收斂為兩條：3 秒衡量「面板已出現並標示分析中」，實質內容另訂門檻（摘要 10 秒、情緒 15 秒、建議卡 20 秒，皆 90 百分位）且允許逐欄漸進填入；切回已 JOIN 的對話時必須先顯示上次保留的結果而非重新 loading。
 
-**純附件輪不產生情緒點（§11.4、§11.5）**：原本只寫「情緒分析只在 `sender.type === 'customer'` 的訊息上產生情緒點」，未區分該輪有無文字。客戶只傳圖片／PDF 而不打字時若照樣給分，等於從「上傳檔案」這個中性動作推論情緒，且會在走勢上製造假訊號——客戶正在生氣時傳一張截圖，走勢會拉出一段看似好轉的折線，客服掃一眼會得到相反結論。已改為純附件輪不產生評分點，只在時間軸留中性標記；附件伴隨文字時照文字正常評分。⚠️ 這**不**代表附件不必文字化——文字化結果仍是摘要卡的事實來源，只是該管線本身的實作時程已延後至 M3（2026-08-26 訂正，見 §18 M2／M3），M2 交付範圍內附件輪的摘要卡事實來源不含附件描述。
+**純附件輪不產生情緒點（§11.4、§11.5）**：原本只寫「情緒分析只在 `sender.type === 'customer'` 的訊息上產生情緒點」。客戶只傳圖片而不打字時若照樣給分，等於從「上傳檔案」這個中性動作推論情緒——客戶正在生氣時傳一張截圖，走勢會拉出一段看似好轉的折線。已改為純附件輪不產生評分點，只在時間軸留中性標記。⚠️ 這**不**代表附件不必文字化——文字化結果仍是摘要卡的事實來源，只是該管線延後至 M3。
 
-**`sendTextMessage()` 回應形狀（H-6a）**：原始評估寫「送出成功後必須立刻把版本錨點推到新訊息，否則會被當成新訊息重複處理」，理由過度陳述。追查後發現：撞單檢查的版本錨點實際取自 `GET /v1/conversation_messages` 的真實訊息 id，與送出端回應無關；唯一可能用到送出回應 id 的 `advanceAnchor()`／`copilotSessionOf()`／`seed()` 三個機制，匯出後從未被任何呼叫端使用。因此 H-6a 目前的實際影響是零，不是「可能靜默出錯」，優先序下修為最低——除非 M2 有人開始真的依賴 `CopilotSession.lastMessageId`，才需要重新評估。
+**`sendTextMessage()` 回應形狀（H-6a，已撤回）**：原評估「送出成功後必須立刻把版本錨點推到新訊息」理由過度陳述。撞單檢查的版本錨點實際取自 `GET /v1/conversation_messages` 的真實訊息 id，與送出端回應無關；唯一可能用到送出回應 id 的 `advanceAnchor()`／`copilotSessionOf()`／`seed()` 匯出後從未被任何呼叫端使用（`server/state/types.ts`、`session-manager.ts` 有註記）。除非有人開始真的依賴 `CopilotSession.lastMessageId`，才需重新評估。
 
 ---
 
 ## 附錄 C：實測量測數據
 
-> 正文用不到、但重跑一次要花成本的原始量測。**引用前先確認條件仍成立**（模型、system prompt
-> 與平台延遲都會漂移）。模型與 prompt 用 `npm run spike:agent-prompts` 一秒就能確認是否仍是
-> 量測當時的那一份；平台延遲沒有這種快照，只能重量。原始輸出在 `scripts/spike/out/`。
+> 正文用不到、但重跑一次要花成本的原始量測。**引用前先確認條件仍成立**（模型、system prompt 與平台延遲都會漂移）。模型與 prompt 用 `npm run spike:agent-prompts` 一秒就能確認是否仍是量測當時的那一份；平台延遲沒有這種快照，只能重量。原始輸出在 `scripts/spike/out/`（gitignored，不在本機時以本附錄為準）。
 
 ### C-1 情緒 agent 的模型比較（2026-08-28，`spike:agent-latency`，各 n=8，背靠背同一時間窗）
 
@@ -3102,9 +2239,6 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 | 距 FR-014 的 15 秒門檻 | 2.3 秒（18%） | **5.8 秒（63%）** |
 | schema 合規／標籤正確 | 8/8、8/8 | 8/8、8/8 |
 | 輸出決定性 | 連分數都完全一致 | 分數漂移 ±10、drivers 偶爾從缺 |
-
-⚠️ `gemma-3-27b` 在**不呼叫工具**的任務上完全正常（8/8 合規、`drivers` 中文精準），
-換掉它純粹是為了延遲。它**不能**用於知識庫檢索（缺原生 function calling，見 §12.4 ②-2）。
 
 ### C-2 建議卡 agent 的模型比較（2026-08-29，背靠背同一時間窗）
 
@@ -3131,35 +2265,28 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 | schema 合規 | 15/15 | 5/5 |
 | 三筆 SOP 全數引用 | **15/15** | **3/5** ⛔ |
 
-⚠️ **這組數據的 n=5 版本給出過兩個錯的結論**（gpt-oss 快 32%、gemma 第二段約兩成機率整批
-失敗），放大到 n=15 後兩個都不成立。判準是 p90 時 MUST NOT 以 n=5 下結論（§8.2b）。
-gemma 第二段的輸出另外**極度穩定**：15 次全部產出同樣的三張卡、引用同樣三筆 SOP。
+⚠️ 這組數據的 n=5 版本給出過兩個錯的結論（gpt-oss 快 32%、gemma 第二段約兩成機率整批失敗），放大到 n=15 後兩個都不成立。gemma 第二段的輸出另外**極度穩定**：15 次全部產出同樣的三張卡、引用同樣三筆 SOP。prompt 長度確實有效（571 字對 879 字＝中位 9209 對 10025ms，約 2.6ms/字）。
+
+**四個 agent 的同日延遲基準**（各 n=15／知識庫 n=12，同一時間窗，模型皆由 API 驗證；知識庫那列取自 004 T032 的 n=10 真實對話）——當時判定 FR-014 15 秒是否放寬的依據：
+
+| agent | 模型 | 中位數 | 最慢 | 距 15 秒門檻 | 合規 |
+|---|---|---|---|---|---|
+| 摘要 | `gemma-3-27b` | 6286ms | 7646ms | 7.4 秒（49%） | 15/15 |
+| 情緒評分 | `gpt-oss-20b` | 4555ms | 9190ms | 5.8 秒（39%） | 15/15 |
+| 建議卡・第一段 | `gemma-3-27b` | 9209ms | 11756ms | 3.2 秒（21%） | 15/15 |
+| 建議卡・第二段 | `gemma-3-27b` | 10025ms | 13032ms | **2.0 秒（13%）** ⚠️ | 15/15 |
+| 知識庫檢索 | `nova-pro` | 11907ms | **22870ms** ⚠️ | （逾時另計 30 秒） | 30 秒涵蓋率 9/10 |
+
+⚠️ 摘要 agent 另曾出現罕見尖峰（42.9 秒、以及一次撞上 SDK 的 30 秒 HTTP 逾時），基準量測沒有重現，但 MUST NOT 據此認定問題已消失。
 
 ### C-3 情緒 prompt 改版的離散度（2026-09-01 首測、2026-09-02 重測，`spike:sentiment-dispersion`）
 
-- 起因是「走勢圖分數與顏色變化滿大」的回報。**刻度不穩的猜測被實測推翻**：同一則重測擺動
-  ≤ 5 分、label 零次翻面、`score` 與 `label` 的分級 18/18 一致。抖動不是雜訊，是模型對某些
-  句子的判斷本來就那樣。
-- 逐則孤立判斷下，「好，那我再等等」三次全部判成 85／`calm`，折線成為
-  `55 → 70 → 55 → 85 → 30 → 10`；改成「參考同批前後文」後該則為 45／`concerned`，
-  最大相鄰落差由 55 分降到 35 分。
-- **批次組成的影響（24-B）**：只加上下文、還沒加絕對分數帶時，同一則單獨成批與併入六則批次
-  差到 **25 分**且 label 會翻；補上分數帶與 tie-breaker 之後掉到 **3.6 分**。
-  同一個量測下 `priorPoints`（帶前一批尾端評分）是 **3.6 對 3.9，差距在雜訊內**。
-- `frustrated`／`angry` 界線上的句子（「我要申訴，順便問一下解約要怎麼辦」）三次跑出
-  30／30／10，**擺動 20 分且 label 翻面** —— 這是補上該條 tie-breaker **之前**的數字。
-- **2026-09-02 重測**：24-A 仍 **0/6 翻面**、擺動 ≤ 10 分，24-D 仍 18/18 一致，
-  24-C 3/3 回物件。但 **24-B 的批次邊界平均偏離由 3.6 分升到 11.7 分**，幾乎全部來自
-  同一則界線句子「我要申訴，順便問一下解約要怎麼辦」：併入整批 11.7 分（`angry`）、
-  自成一批 37.0 分（`frustrated`），**單則偏離 25.3 分**；同輪另外兩則只差 4.7 與 5.0 分。
-- ⚠️ **24-B 變大並不代表分數帶失效 —— 這個誤讀已經發生過一次，記在這裡以免再犯。**
-  當日核對過情緒 agent 的 system prompt 全文：絕對分數帶在（五級界線 80／60／40／20／0
-  與 `SENTIMENT_BANDS` 逐一吻合）、「參考同批前後文」在、兩條 tie-breaker 也在。
-  真正的成因是**規則本身**：prompt 明文要求「判斷某一則時必須參考同批的前後文」，
-  而 24-B 量的正是上下文敏感度 —— 只要那條規則有效，界線句子的 24-B 就不可能是 0。
-  上面那句同時命中分數帶的兩級關鍵詞（「要求投訴或求償」→ `angry`、「威脅離開」→
-  `frustrated`），上下文長短就足以讓判讀在兩級之間移動，兩個判讀都在字面定義內。
-  **因果只成立一個方向**：分數帶失效會讓這個數字變大；數字變大卻不足以反推分數帶失效。
+- 起因是「走勢圖分數與顏色變化滿大」的回報。**刻度不穩的猜測被實測推翻**：同一則重測擺動 ≤ 5 分、label 零次翻面、`score` 與 `label` 的分級 18/18 一致。抖動不是雜訊，是模型對某些句子的判斷本來就那樣。
+- 逐則孤立判斷下，「好，那我再等等」三次全部判成 85／`calm`，折線成為 `55 → 70 → 55 → 85 → 30 → 10`；改成「參考同批前後文」後該則為 45／`concerned`，最大相鄰落差由 55 分降到 35 分。
+- **批次組成的影響（24-B）**：只加上下文、還沒加絕對分數帶時，同一則單獨成批與併入六則批次差到 **25 分**且 label 會翻；補上分數帶與 tie-breaker 之後掉到 **3.6 分**。同一個量測下 `priorPoints`（帶前一批尾端評分）是 **3.6 對 3.9，差距在雜訊內**。
+- `frustrated`／`angry` 界線上的句子（「我要申訴，順便問一下解約要怎麼辦」）三次跑出 30／30／10，**擺動 20 分且 label 翻面**——這是補上該條 tie-breaker **之前**的數字。
+- **2026-09-02 重測**：24-A 仍 **0/6 翻面**、擺動 ≤ 10 分，24-D 仍 18/18 一致，24-C 3/3 回物件。但 **24-B 的批次邊界平均偏離由 3.6 分升到 11.7 分**，幾乎全部來自同一則界線句子：併入整批 11.7 分（`angry`）、自成一批 37.0 分（`frustrated`），單則偏離 25.3 分；同輪另外兩則只差 4.7 與 5.0 分。
+- ⚠️ **24-B 變大並不代表分數帶失效——這個誤讀已經發生過一次。** 當日核對過情緒 agent 的 system prompt 全文：分數帶在、「參考同批前後文」在、兩條 tie-breaker 也在。真正的成因是**規則本身**：prompt 要求判斷某一則時必須參考同批前後文，而 24-B 量的正是上下文敏感度——只要那條規則有效，界線句子的 24-B 就不可能是 0。那句同時命中兩級關鍵詞（「要求投訴或求償」→ `angry`、「威脅離開」→ `frustrated`）。**因果只成立一個方向**：分數帶失效會讓這個數字變大；數字變大卻不足以反推分數帶失效。
 
 ### C-4 其他一次性量測
 
@@ -3169,3 +2296,101 @@ gemma 第二段的輸出另外**極度穩定**：15 次全部產出同樣的三�
 | `POST /ai-agent/chat-client/auth/user`（`spike:userid`，n=20） | 中位 54ms、p90 64ms、最慢 572ms（冷連線）、σ 114ms；**20/20 同一個 id**；傳入 `user_id` 後輸出照常 5/5 |
 | 不掛知識庫的 agent 單純回一句話 | 2.6～3.8 秒（對照組：慢的是檢索，不是推論） |
 | 8 秒知識庫逾時 | **0/12 命中**（見 §12.4 ②-2） |
+| 建議卡第一段原始單次分佈（2026-09-02，`spike:agent-latency -- suggestion 20`，不經 `withRetry()`） | 中位 9.68 秒、最慢 18.42 秒、20/20 在 20 秒內、**2/20 超過 15 秒**（舊設定下會被砍掉重來變成約 26 秒） |
+
+### C-5 摘要 agent 同一天內的三種分佈（2026-08-29、2026-09-01，`spike:agent-latency -- summary <n>`，同一份輸入）
+
+| 量測 | 中位數 | 最慢 | 破 15 秒門檻 | 完全失敗 |
+|---|---|---|---|---|
+| 2026-08-29 基準（n=15） | 6286ms | 7646ms | 0/15 | 0 |
+| 2026-09-01 第一次（n=15） | **52122ms** | 127247ms | **11/15** | **5/15** |
+| 2026-09-01 重測（n=6） | 11068ms | 49701ms | 1/6 | 0 |
+
+降級是暫時的（重測就回到 11 秒等級），但也不是回到原狀——11 秒是基準的 1.75 倍。這組數字附在 `IMBRACE_QUESTIONS.md` 0-4。
+
+### C-6 情緒批次：依序 vs. 並行 3（2026-09-01，`spike:progressive -- --repeat 3`，同一組 6 段真實對話，2／6／17／25 則客戶發言）
+
+| 量測 | 第 1 輪（依序） | 第 2 輪（依序） | 第 3 輪（**並行 3**） |
+|---|---|---|---|
+| 情緒 中位／p90／最慢 | 16.9／27.5／31.0 秒 | 15.9／27.8／30.0 秒 | **7.7／12.7／14.4 秒** |
+| 情緒 10 秒內 | 6/15 | 6/14 | 11/15 |
+| 摘要 中位／p90／最慢 | 7.6／24.8／45.3 秒 | 10.8／28.7／30.6 秒 | 10.0／49.8／49.9 秒 |
+| 摘要 10 秒內 | 8/15 | 5/14 | 6/14 |
+
+⚠️ 同一份報表的「建議卡第一段 p90 28.7／28.8／29.3 秒」與 SC-001 83%／86%／71% **已因口徑缺陷作廢**（§8.2b 量測規程 1），正確值 67%／40%／33%。
+
+| 批次 | 客戶發言 | 依序中位 | 並行中位 | 10 秒內（並行） |
+|---|---|---|---|---|
+| 1 批 | 2–6 則 | 5.5 秒 | 6.0 秒 | 6/6 |
+| 3 批 | 17 則 | 19.2 秒 | **8.1 秒** | 5/6 |
+| 5 批 | 25 則 | 27.5 秒 | **12.7 秒** | 0/3 |
+
+並行化的單次呼叫 n=39：中位 6.6 秒、p90 8.3 秒、最慢 11.7 秒、破 15 秒 0 次、失敗 0 次。
+
+**三輪合併（2026-09-02，n=45，門檻 15 秒）依批次數拆解**：
+
+| 批次 | 波數 | n | 中位 | 最慢 | 15 秒內 |
+|---|---|---|---|---|---|
+| 1 批 | 1 | 9 | 4.6 秒 | 7.6 秒 | **9/9** ✅ |
+| 2 批 | 1 | 9 | 8.1 秒 | 12.6 秒 | **9/9** ✅ |
+| 3 批 | 1 | 17 | **11.4 秒** | 25.8 秒 | 12/17 ❌ |
+| 5 批 | 2 | 9 | **14.7 秒** | 21.2 秒 | 5/9 ❌ |
+
+各列 `n` 加總 44 而非 45：3 批另有 1 筆情緒始終沒回報，進得了合併分母卻算不出中位。情緒單次呼叫三輪合併 n=131：中位 7299ms、p80 9245ms、p90 12584ms、最慢 22851ms、破 15 秒 5 次。
+
+### C-7 並行度：對照實驗與正式掃描
+
+**對照（2026-09-02，`SENTIMENT_CONCURRENCY` 設回 1，同一組六個對話 `--repeat 3`）**——情緒單次呼叫：
+
+| | n | 中位 | p90 | 最慢 | 破 15 秒 |
+|---|---|---|---|---|---|
+| 並行 3 | 131 | 7299ms | 12584ms | 22851ms | 5 |
+| 並行 1 | 42 | 6411ms | 10246ms | 12496ms | 0 |
+
+並行 1 的情緒區塊只有 5/15 ＝ 33%（中位 22.2 秒）；摘要與第一段沒有跟著改善（摘要 ≤10 秒 13/15、第一段中位 11.5 秒 vs 並行 3 的 10.3 秒）。
+
+**正式掃描（2026-09-03 02:56–04:00，`spike:sentiment-concurrency`，`out/26-sentiment-concurrency*.json`，每檔位三輪 n=45，輪換順序 3,4,5／4,5,3／5,3,4，每檔位各開子行程、序列執行；對話為 005 的固定 15 段，`out/005-fixed-conversations.json`）**：
+
+| 檔位 | 區塊總時間（001 SC-005，15 秒 p90） | 中位 | p90 | 最慢 | 未落地 |
+|---|---|---|---|---|---|
+| **3（現行）** | **41/45 ＝ 91%** ✅ | 7571ms | **14436ms** | 30090ms | 0 |
+| 4 | 38/45 ＝ 84% ❌ | 6563ms | 25043ms | 29329ms | 2 |
+| 5 | 37/45 ＝ 82% ❌ | 7029ms | 23266ms | 44493ms | 2 |
+
+| 檔位 | 單次呼叫 n | 失敗 | **破 15 秒** | 中位 | p90 | 峰值並發 |
+|---|---|---|---|---|---|---|
+| **3（現行）** | 106 | **0（0%）** | **4（3.8%）** | 7168ms | **10945ms** | 4 |
+| 4 | 109 | 2（1.8%） | 7（6.4%） | 7240ms | 13195ms | 4 |
+| 5 | 113 | 1（0.9%） | **12（10.6%）** | 7123ms | 15060ms | 5 |
+
+時段標註（FR-020）：本機凌晨、無平台降級公告，單次中位 7.1～7.2 秒與 2026-09-02 的 7.31／7.32／7.37 秒吻合，非降級樣本。
+
+### C-8 單輪 n=15 的擺動（2026-09-02，本機 10:29／10:58／12:05，`out/21-progressive-citations-*.json`）
+
+| 驗收項 | 第 1 輪 | 第 2 輪 | 第 3 輪 | **合併 n=45** |
+|---|---|---|---|---|
+| SC-001 首批卡 ≤20 秒 | 14/15 ＝ 93% ✅ | 12/15 ＝ 80% ❌ | 13/15 ＝ 87% ❌ | **39/45 ＝ 87% ❌** |
+| SC-005 摘要 ≤10 秒 | 14/15 ＝ 93% ✅ | **8/15 ＝ 53%** ❌ | 11/15 ＝ 73% ❌ | **33/45 ＝ 73% ❌** |
+| SC-005 情緒 ≤15 秒 | 11/15 ＝ 73% ❌ | **14/15 ＝ 93%** ✅ | 10/15 ＝ 67% ❌ | **35/45 ＝ 78% ❌** |
+
+第二輪的 3 個失敗樣本集中在該輪第 1 圈的前三個目標（檢索 30 秒逾時、第二段單次實際跑了 102 秒與 48 秒）。排除那 3 筆後（分母 42）：SC-001 39/42 ＝ 93%、摘要 33/42 ＝ 79%、情緒 32/42 ＝ 76%——情緒反而變差，因為那 3 筆的情緒（10.4／14.7／8.1 秒）全部達標。第 3 輪（冷卻 58 分鐘）15 個樣本全部產出建議卡、慢樣本不再叢集。建議卡第二段落定 p90：2026-09-01 三輪 32.8／34.9／43.8 秒；2026-09-02 36.5 秒（42 個落定樣本中 1 個 52.5 秒，3 個從未落定）。
+
+### C-9 延遲與對話長度（2026-09-02，四輪 n=60 依對話則數分組）
+
+| 對話則數 | 摘要中位 | 第一段中位 |
+|---|---|---|
+| 2 則 | 4.9 秒 | 5.1 秒 |
+| **8 則**（＝隔離量測的長度） | **6.2 秒** | **10.3 秒** |
+| 33 則 | 8.0 秒 | 11.3 秒 |
+| 50 則 | 8.5 秒 | 14.0 秒 |
+
+相關係數：摘要 r ＝ 0.31、第一段 r ＝ 0.48。相同長度（8 則）下隔離與管線幾乎一致：第一段隔離中位 9.7 秒 vs 管線 10.3 秒；摘要隔離 5.2 秒 vs 管線 6.2 秒。摘要隔離量測 19/20 ＝ 95%（`spike:agent-latency -- summary 20`）對端到端 73%。
+
+### C-10 杜撰引用：封閉清單前後（2026-09-03 02:08–02:53，`spike:citation-quality`，固定 15 段 × 3 輪；分母 ＝ `hitCount > 0` 且 `outcome ∉ {no-cards, failed}`）
+
+| | 分母 | 含杜撰的生成 | 杜撰率 | 杜撰字串總數 | 卡片級捨棄率 | 最終取得引用 |
+|---|---|---|---|---|---|---|
+| 基線（改 prompt 前） | 43 | 9 | **21%** | 13 | 11.1%（104/117） | 84%（38/45） |
+| 封閉清單（改 prompt 後） | 42 | 9 | **21%** | 12 | 9.8%（111/123） | 82%（37/45） |
+
+逐對話分布：基線是 5 段對話貢獻全部杜撰、另外 10 段一次都沒有（最高那段 3/3）；改動後變成 8 段各 1～2 次。n=3／段，變化在雜訊內。

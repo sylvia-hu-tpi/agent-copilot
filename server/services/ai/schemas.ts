@@ -7,7 +7,15 @@
  */
 
 import { z } from 'zod'
-import type { ConversationSummary, SentimentNarrative, SentimentPoint, SuggestionCard } from '../../../shared/types/copilot.js'
+import type {
+  ClosureDraftAiPart,
+  ClosureFollowUp,
+  ClosureVocabulary,
+  ConversationSummary,
+  SentimentNarrative,
+  SentimentPoint,
+  SuggestionCard,
+} from '../../../shared/types/copilot.js'
 import { SUMMARY_TOPIC_MAX_COUNT, SUMMARY_TOPIC_MAX_LENGTH } from '../../../shared/types/copilot.js'
 import { AIOutputValidationError } from './retry-policy.js'
 
@@ -156,4 +164,99 @@ export function parseSuggestionCards(raw: unknown): SuggestionCard[] {
     if (result.success) cards.push(result.data)
   }
   return cards
+}
+
+/**
+ * 結案摘要草稿（specs/006-closure-handoff-summary/data-model.md §2「驗證規則」）。
+ *
+ * ⚠️ **本 schema 有三種截然不同的失敗處置，混用任何兩種都會靜默做錯事：**
+ *
+ *   ① `summary`／`intent` 空 → **整份視為產生失敗**（拋錯 → route 回 502，FR-046）。
+ *      它們是這份摘要的主體，沒有它們這份草稿本來就沒有意義。
+ *      ⚠️ MUST NOT 降級成「回一份欄位全空的 200」（契約 R2.6）——
+ *      那會讓客服對著一張空表按下寫入，而畫面上看不出哪裡不對。
+ *
+ *   ② 受控詞彙不在白名單 → **該欄位留空**（空字串／空陣列），MUST NOT 拋錯、
+ *      **MUST NOT 保留模型的值**（FR-015、憲法 4.6、契約 R2.5）。留空後面板會
+ *      顯示「請選擇」要求客服補上；保留模型自由生成的值則會寫進 Board，
+ *      而報表從此多出一個沒人定義過的分類，沒有任何錯誤訊息。
+ *
+ *   ③ `followUps[].action` 空 → **丟棄該筆**，不丟棄整份草稿（憲法 4.3）。
+ *      單一筆錯誤不該讓整份摘要重跑。
+ *
+ * ⚠️ `confidence` 無值 → `null`（憲法 4.4），MUST NOT 估算填充。
+ *
+ * ⚠️ **本 schema 刻意不含 `citedSopIds`**（2026-09-08）。結案 agent 的 system prompt
+ *    逐字要求它不要輸出這個欄位（「由系統填入」），因此原本那道「以檢索命中為白名單」的
+ *    後驗永遠在過濾一個空清單 —— 看起來在保護什麼，實際上什麼都沒發生。
+ *    `ClosureDraft.citedSops` 現在由 `closure/draft.post.ts` 直接以檢索命中填入。
+ *    ⚠️ 要改回「模型自己挑」的話，MUST 先改 iMBrace 後台的 system prompt，
+ *    再把欄位與白名單一起加回來 —— 只加回其中一半就是回到 2026-09-08 之前的狀態。
+ */
+export const ClosureDraftAiPartSchema = z.object({
+  summary: z.string().min(1),
+  intent: z.string().min(1),
+  // ⚠️ 以下五個受控詞彙欄位在 schema 層只驗**形狀**，值域的白名單過濾在
+  //    `parseClosureDraftAiPart()` 做 —— 白名單是呼叫當下的動態上下文
+  //    （`vocabulary` 由呼叫端傳入），硬塞進 schema 會讓 schema 定義依賴呼叫時的參數
+  //    （與 `SuggestionCardSchema` 不驗 `sopId` 是否命中同一個理由）。
+  category: z.unknown().transform(v => (typeof v === 'string' ? v.trim() : '')),
+  resolution: z.unknown().transform(v => (typeof v === 'string' ? v.trim() : '')),
+  actionsTaken: z.unknown().transform(v =>
+    (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').map(x => x.trim()) : [])),
+  sentimentOutcome: z.unknown().transform(v => (typeof v === 'string' ? v.trim() : '')),
+  followUps: z.unknown().transform(normalizeFollowUps),
+  confidence: z.unknown().transform(v =>
+    (typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100 ? v : null)),
+})
+
+function normalizeFollowUps(raw: unknown): ClosureFollowUp[] {
+  if (!Array.isArray(raw)) return []
+  const out: ClosureFollowUp[] = []
+  for (const item of raw) {
+    const r = item as Record<string, unknown> | null
+    const action = typeof r?.action === 'string' ? r.action.trim() : ''
+    // ⚠️ `action` 空的那一筆丟棄 —— 一筆沒有動作的待辦事項在面板與 Board 上
+    //    都只會佔一列空白，而客服無從知道它本來想說什麼。
+    if (!action) continue
+    const owner = typeof r?.owner === 'string' && r.owner.trim() ? r.owner.trim() : undefined
+    const dueHint = typeof r?.dueHint === 'string' && r.dueHint.trim() ? r.dueHint.trim() : undefined
+    out.push({ action, ...(owner ? { owner } : {}), ...(dueHint ? { dueHint } : {}) })
+  }
+  return out
+}
+
+/**
+ * @param vocabulary 本次允許的受控詞彙（＝ 傳給 agent 的那一份，`config/categories.ts`）
+ * @throws {AIOutputValidationError} `summary`／`intent` 為空，或整體形狀不對
+ */
+export function parseClosureDraftAiPart(
+  raw: unknown,
+  vocabulary: ClosureVocabulary,
+): ClosureDraftAiPart {
+  const result = ClosureDraftAiPartSchema.safeParse(raw)
+  if (!result.success) {
+    throw new AIOutputValidationError(
+      `結案摘要未通過 schema 驗證：${result.error.issues.length} 項問題`,
+    )
+  }
+  const d = result.data
+
+  // ⚠️ 白名單**外**的值一律換成空，MUST NOT 保留 —— 見本檔開頭 ②。
+  const pick = (value: string, allowed: readonly string[]): string =>
+    (allowed.includes(value) ? value : '')
+
+  return {
+    summary: d.summary,
+    intent: d.intent,
+    category: pick(d.category, vocabulary.categories),
+    resolution: pick(d.resolution, vocabulary.resolutions) as ClosureDraftAiPart['resolution'],
+    actionsTaken: d.actionsTaken.filter(a => vocabulary.actionsTaken.includes(a)),
+    sentimentOutcome: pick(
+      d.sentimentOutcome,
+      vocabulary.sentimentOutcomes,
+    ) as ClosureDraftAiPart['sentimentOutcome'],
+    followUps: d.followUps,
+    confidence: d.confidence,
+  }
 }

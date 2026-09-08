@@ -508,7 +508,7 @@ description: "Task list template for feature implementation"
   結論已寫入 `docs/PLATFORM_CAPABILITY.md` §4.1（含佔位符三個處置選項的取捨表）。
   **使用者 2026-08-27 定案：不納入建議卡**——建議卡是系統主動判斷的完整回覆、範本是客服主動
   挑選的現成文字，兩者情境不同；改列為輸入框旁獨立「常用回覆」功能的候選方向（與
-  `docs/wireframe/03-workspace_lightTheme.png` 已畫出的按鈕吻合），未排入任何里程碑，
+  畫布 artboard 1c 已畫出的按鈕吻合），未排入任何里程碑，
   實測結論留存供屆時沿用（spec.md Assumptions）
 
 - [x] T069 [P] **前置條件追蹤（非程式碼任務）**：`IMBRACE_KNOWLEDGE_AGENT_ID`／`IMBRACE_SUGGESTION_AGENT_ID`

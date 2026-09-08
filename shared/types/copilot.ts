@@ -9,6 +9,12 @@
 
 import type { Message } from './conversation.js'
 import type { KnowledgeHit } from './knowledge.js'
+// ⚠️ 受控詞彙的型別由 `config/categories.ts` **推導**，本檔 MUST NOT 自己再寫一份
+//    字面聯集 —— 自己寫一份的那一刻，那個檔案就從「唯一來源」退化成「其中一份副本」
+//    （見該檔末段）。這是 specs/006 對憲法 4.6 的落點。
+import type { ClosureResolution, ClosureSentimentOutcome } from '../../config/categories.js'
+
+export type { ClosureResolution, ClosureSentimentOutcome }
 
 // ── 區塊狀態 ──────────────────────────────────────────────────────────
 
@@ -309,4 +315,348 @@ export interface AIProvider {
     /** Hybrid 模式下 AI 也在自動回覆（FR-016），prompt 需知悉並以補位性質為優先 */
     aiReplies: boolean
   }): Promise<SuggestionCard[]>
+  /**
+   * 結案摘要（`AgentCopilot_結案摘要_agent`，specs/006 FR-010）。
+   *
+   * ⚠️ `history` 是**涵蓋區間內的訊息**，不是全對話 —— 呼叫端已依 `period` 切好。
+   *    傳全對話會讓摘要涵蓋前幾輪服務，而那不會報錯（FR-021、§13.4 ④）。
+   * ⚠️ `vocabulary` 由呼叫端傳入，agent 只能從中選擇；後端另有白名單後驗（憲法 4.6）。
+   * ⚠️ `signal` 是契約 R2.9 的落點：**取消 MUST 真的中止在途的 AI 呼叫**，
+   *    MUST NOT 只是把畫面關掉 —— 後者的呼叫照送、錢照付、結果無人看，且不會報錯。
+   *
+   * ⚠️ **刻意不收 `knowledgeHits`**（2026-09-08）。結案 agent 的 system prompt 逐字要求
+   *    「不要輸出 citedSopIds —— 由系統填入」，因此把命中交給模型也不會有人引用它。
+   *    `ClosureDraft.citedSops` 改由呼叫端直接以檢索命中填入（見 `closure/draft.post.ts`），
+   *    檢索與這支呼叫因此完全獨立、可並行。
+   *    ⚠️ 要改成「讓模型自己挑」的話，**MUST 先改 iMBrace 後台的 system prompt**
+   *    —— 那不在這個 repo 裡，改了不會有 commit（CLAUDE.md 地雷 4）。
+   */
+  summarizeClosure(input: {
+    history: Message[]
+    vocabulary: ClosureVocabulary
+    signal?: AbortSignal
+  }): Promise<ClosureDraftAiPart>
+}
+
+// ── 結案摘要（specs/006-closure-handoff-summary/data-model.md §1～§4.2）────
+//
+// ⚠️ **這一族與上面的 SummaryBlock／SentimentBlock／SuggestionBlock 不是同一家族。**
+//    那三個由分析管線產生、經 SSE 推播、存在 `CopilotAnalysisState` 裡；
+//    結案草稿一項都不是（data-model §0）。MUST NOT 為了「一致性」把 `ClosureDraft`
+//    加進 `CopilotAnalysisState` —— 那三個 Block 的 SSE 事件送的是整個 Block，
+//    加進去等於把草稿推播給每一條連線，而型別檢查不會響。
+
+/**
+ * 這一份結案報告描述的那一段服務（§13.4 ④、FR-021 系列）。
+ *
+ * ⚠️ `messageCount` 有三種值且**三者 MUST 可區分**（data-model §1）：
+ *      `0`／`false`      → 這個候選之後真的沒有新訊息 → 該列**不可選**
+ *      `n > 0`／`false`  → 確切則數
+ *      `null`／`true`    → 超過掃描上限，數不完 → 「超過 500 則」，**仍可選**
+ *    把 `null` 當成 0 會讓長期客戶完全結不了案，而畫面上只會顯示一個灰掉的選項。
+ */
+export interface ClosurePeriod {
+  /** 區間起點的時間戳（ISO8601）。實際起點是「此時點之後的第一則訊息」 */
+  start: string
+  /**
+   * 這個 start 是怎麼來的 —— ⚠️ 光靠 `start` 這個時間戳事後分不出來，
+   * 而「客服選了某次結案」與「客服自己打了一個時間」是完全不同的兩件事（FR-021e-1）。
+   */
+  origin: ClosurePeriodOrigin
+  /** 區間內的訊息則數。⚠️ 掃描上限（500）內數得完才有值；數不完為 null */
+  messageCount: number | null
+  /** 掃描上限截斷時為 true —— UI 逐字呈現「超過 500 則」（憲法 4.5：不猜） */
+  truncated: boolean
+  /**
+   * 這個區間內**第一則客戶文字發言**的時間；`null` ＝ 區間內客戶沒有文字發言。
+   *
+   * ⚠️ **它是情緒涵蓋判定唯一正確的比較對象，MUST NOT 改用 `start`**
+   *    （2026-09-08 修，見 `server/services/closure/sentiment-range.ts` 檔頭）。
+   *    `start` 是客服選的時間戳，可能落在一段沒人說話的空白期裡 ——
+   *    拿它比會把「這段期間客戶本來就沒發言」誤判成「評分資料漏了」，
+   *    於是回頭客的三個情緒欄恆為空，而畫面與報表都看不出哪裡不對。
+   *
+   * ⚠️ **與 `messageCount` 同屬「本次快照的事實」，由 `draft` 端算出、前端原樣帶回**
+   *    （契約 R2.1／R3.3）。它不是 R3.7 的唯讀欄位 ——
+   *    `commit` 端點不得 import 任何取數模組（守衛 G1），因此無法自己重算。
+   */
+  firstCustomerAt: string | null
+}
+
+/**
+ * 涵蓋區間起點的三種來源。
+ *
+ * ⚠️ **runtime 常數與型別 MUST 同源**：這三個值同時要當 `z.enum()` 的輸入
+ *    （`closure/draft.post.ts`、`closure/commit.post.ts`）與 Board 的選項清單
+ *    （`closure/board-schema.ts`）。以前是四處各抄一份字面聯集 ——
+ *    新增第四種 origin 時漏改任何一處都只會在 runtime 收到 400，typecheck 不會響。
+ */
+export const CLOSURE_PERIOD_ORIGINS = ['closure', 'first', 'custom'] as const
+
+export type ClosurePeriodOrigin = typeof CLOSURE_PERIOD_ORIGINS[number]
+
+/** 訊息則數的掃描上限（FR-021c、憲法 6.4）。超過即 `messageCount: null` ＋ `truncated: true` */
+export const CLOSURE_SCAN_LIMIT = 500
+
+/*
+  ── 兩支端點的回應形狀（契約 `closure-http-api.md` §1、§3）──────────────
+  ⚠️ **放在 shared 是為了讓 server 與 store 共用同一份定義。**
+     以前 server 端的 `ScopeCandidate`／`CandidateSet` 與 store 裡的介面是
+     手抄的兩份，而 route 沒有回傳型別註記 —— `$fetch<T>()` 是單方面的斷言。
+     於是 server 改名 `overflowCount` 或 `operatorName` 仍然全綠，
+     UI 只是安靜地讀到 `undefined`（例如 FR-034 的提示顯示空的客服名字）。
+     兩邊都指向這裡之後，改一邊就是 tsc 錯誤。
+*/
+
+/** 涵蓋範圍選擇器的一列候選 */
+export interface ClosureScopeCandidate {
+  start: string
+  origin: ClosurePeriodOrigin
+  /** ⚠️ 三種值可區分：`0` 不可選、`n` 精確、`null`＋`truncated` 為「超過上限」但仍可選 */
+  messageCount: number | null
+  truncated: boolean
+  /** 只有 `origin === 'closure'` 的候選有 —— 讓客服認得出「那一次是誰結的、結成什麼」 */
+  label?: { category: string, reviewedByName: string, closedAt: string }
+}
+
+/** `POST /api/conversations/{id}/closure/scopes` 的回應 */
+export interface ClosureScopesResponse {
+  candidates: ClosureScopeCandidate[]
+  /** 「從第一則對話起算」—— **永遠存在、永遠墊底**，是安全網 */
+  fallback: ClosureScopeCandidate
+  /** 未列出的更早結案筆數；0 代表沒有 */
+  overflowCount: number
+  /** 預設選中的索引；`-1` ＝ 全部候選都是 0 則，落到 `fallback` */
+  defaultIndex: number
+  firstMessageAt: string
+  /** FR-034 的基準線：前端原樣保存並在 commit 時帶回（server 不記） */
+  baselineAt: string
+  closureBaseline: string[]
+}
+
+/** `POST /api/conversations/{id}/closure/commit` 的回應 */
+export interface ClosureCommitResponse {
+  recordId: string
+  reviewedBy: string
+  reviewedAt: string
+  /** `false` ＝ 更新既有那一筆（同一個 draftId 的重試），不是新建 */
+  created: boolean
+  reqId: string
+  /** FR-034：面板開啟**之後**才出現的他人結案 —— 告知而非攔截 */
+  newClosuresSincePanelOpen: Array<{ recordId: string, operatorName: string, closedAt: string }>
+}
+
+/**
+ * 草稿的唯讀欄位 —— 由系統計算，客服 MUST NOT 能改（FR-010a）。
+ *
+ * ⚠️ **刻意收在一個巢狀物件裡，不與可編輯欄位平鋪。**
+ *    平鋪的話，「哪些可改」只存在於 UI 元件的判斷式裡 —— 少寫一個 disabled
+ *    不會報錯，只會讓客服改掉一個他不該改的值，而 SC-006b 的重算驗證
+ *    從此永遠對不起來。收成一個物件後，寫入端點只要「整個 readonly 重新由 server 算」即可
+ *    （契約 R3.7），前端送什麼都不影響結果。
+ */
+export interface ClosureDraftReadonly {
+  /**
+   * 參與這段服務的客服 **id**（`u_…`）—— 這是寫進 Board `operators` 欄的值。
+   *
+   * ⚠️ **MUST NOT 拿去顯示**，畫面用下面的 `operatorLabels`。
+   *    id 對客服不對應任何他認得的東西（`u_df56079c-7df4-…` 這種字串），
+   *    而這一欄的用途是讓人事後看得出「誰服務過這位客戶」。
+   */
+  operators: string[]
+  /**
+   * 上面每個 id 的**顯示名**，與 `operators` **逐一對位**（同一個 `map` 產生，不會錯位）。
+   *
+   * ⚠️ 查不到名字的那一個回傳**原本的 id**，MUST NOT 留空或編一個名字 ——
+   *    「知道有這個人但不知道他叫什麼」與「沒有這個人」在畫面上必須不同（§10.2）。
+   * ⚠️ 平台沒有人名，名冊的 `display_name` 實測 12/12 全是 email，
+   *    因此這裡實際上會是 email。**MUST NOT 寫進 Board** —— 那一欄存 id：
+   *    id 穩定，而 email 會隨帳號改名變動，改完之後舊紀錄就指不回任何人。
+   */
+  operatorLabels: string[]
+  joinedAt: string
+  /** 寫入當下才有值 */
+  closedAt: string | null
+  /**
+   * 區間內的情緒三數值（FR-022）。
+   *
+   * ⚠️ 三者 MUST **同時**有值或**同時**為 `null`（FR-022b）—— 部分有值是實作錯誤。
+   * ⚠️ `sentimentTrough` 是**區間內**的最低點，MUST NOT 取
+   *    `SentimentBlock.stats.lowestScore`（那是整條時間軸的最低點，FR-022a）。
+   *    兩者都是 `number`，取錯不會有任何型別錯誤 —— 契約守衛 G2 是唯一會紅的地方。
+   */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null
+  /** 情緒留空的原因與實際涵蓋範圍（FR-022b）。有值即代表上面三個是 null */
+  sentimentNote: string | null
+  channel: string
+  contactId: string
+  /** 0–100；無真實依據時為 null（憲法 4.4），UI 留空不顯示 */
+  confidence: number | null
+}
+
+/**
+ * 模型只產內容欄位，其餘一律由系統填 —— 比照 `analyzeSentiment()` 不信任模型給的
+ * `messageId`／`at`、`suggest()` 不信任模型給的 `id`，是同一條既有原則。
+ *
+ * ＝ `ClosureDraft` 去掉 `draftId`／`conversationId`／`period`／`readonly`，
+ * 另加 `confidence`（模型自陳的把握度，經 Zod 轉成 `number | null`）。
+ */
+export interface ClosureDraftAiPart {
+  summary: string
+  intent: string
+  /** 受控詞彙；白名單外 → **留空字串**（FR-015、憲法 4.6），MUST NOT 保留模型的值 */
+  category: string
+  /** 受控詞彙；白名單外 → 空字串（因此型別比 `ClosureSummary` 多一個 `''`） */
+  resolution: ClosureResolution | ''
+  /** 受控詞彙（多選）；白名單外的值逐一丟棄 */
+  actionsTaken: string[]
+  /** 受控詞彙；白名單外 → 空字串 */
+  sentimentOutcome: ClosureSentimentOutcome | ''
+  /*
+    ⚠️ **這裡沒有 `citedSopIds`，是刻意的**（2026-09-08）。結案 agent 的 system prompt
+       逐字列出「不要輸出 citedSopIds ⋯ 由系統填入」，模型不會給、給了也該丟。
+       `ClosureDraft.citedSops` 由 `closure/draft.post.ts` 直接以知識庫檢索命中填入。
+       放回這裡會讓「模型挑選 ＋ 白名單後驗」那條路徑看起來還在運作，
+       但它的輸入永遠是空的 —— 那正是 2026-09-08 審查抓到的形狀。
+  */
+  followUps: ClosureFollowUp[]
+  confidence: number | null
+}
+
+export interface ClosureFollowUp {
+  action: string
+  owner?: string
+  dueHint?: string
+}
+
+/**
+ * 結案草稿上的一筆「相關的知識庫來源」。
+ *
+ * ⚠️ **`title` 是對客服顯示的唯一識別，`id` MUST NOT 出現在畫面上**
+ *    —— 這是 002 research #2「二次訂正」既有的結論：知識庫沒有正式的 SOP 編號制度，
+ *    把檔案 id（或它的短版本）當編號顯示只是杜撰一個對不到任何外部制度的字串。
+ *    `shared/types/knowledge.ts` 的 `KnowledgeHit.id` 也逐字寫著同一條。
+ * ⚠️ 同一份文件被檢索命中多個片段時是**多筆 `KnowledgeHit`**（002 research #1 決策 2，
+ *    快查那側刻意逐段列出）；但來源清單的單位是「文件」，因此進到這裡之前
+ *    MUST 依 id 去重 —— 見 `server/services/closure/cited-sops.ts`。
+ */
+export interface ClosureCitedSop {
+  id: string
+  /** 清理過的來源檔名（去掉副檔名與 `_V1_20250925_部門可見` 一類後綴） */
+  title: string
+}
+
+/**
+ * 結案摘要草稿 —— **人審的標的**，也是**冪等寫入的單位**（憲法 5.3）。
+ *
+ * ⚠️ 住在**瀏覽器分頁的 Pinia store**，MUST NOT 出現在 server 端的任何儲存
+ *    （`StateStore`、process-local Map、`CopilotAnalysisState` 都不行）。
+ *    三支端點全部無狀態 —— 這不是效能取捨，是 FR-040「重新整理等同取消」的實作方式：
+ *    只要 server 端存了一份，那條規則就得靠額外的清理邏輯成立，而清理漏掉時不會報錯。
+ */
+export interface ClosureDraft {
+  /**
+   * 冪等鍵。**由 server 在產生草稿時以 `crypto.randomUUID()` 產生**，前端只負責帶回來。
+   *
+   * ⚠️ 「重新產生」MUST 得到新的 `draftId`（那是一份新草稿，US2 AC#2）；
+   *    「寫入逾時後重試」MUST 沿用同一個（那是同一份草稿，US2 AC#1）。
+   *    兩者的差別完全由 draftId 承載 —— 前端若自己產生，這條規則就散在前端各處。
+   */
+  draftId: string
+  conversationId: string
+  period: ClosurePeriod
+
+  // ── 可編輯欄位（FR-010a）────────────────────────────────────
+  summary: string
+  intent: string
+  category: string
+  resolution: ClosureResolution | ''
+  actionsTaken: string[]
+  sentimentOutcome: ClosureSentimentOutcome | ''
+  /**
+   * 本次服務**相關的**知識庫來源（不是「模型引用過的」）。
+   *
+   * ⚠️ 由 server 以知識庫檢索命中直接填入，客服再把不相干的刪掉 ——
+   *    面板只提供移除、沒有新增，正是為這個方向設計的。
+   * ⚠️ 文案 MUST 是「相關的」而非「引用的」：模型從頭到尾沒看過這份清單
+   *    （見 `ClosureDraftAiPart` 的說明），寫成「引用」等於在稽核紀錄上
+   *    宣稱一件沒有發生過的事。
+   * ⚠️ **草稿帶 `{ id, title }`，`ClosureSummary` 只帶 id** —— 兩者刻意不同形狀：
+   *    畫面上要讓客服判斷「這份該不該刪」，靠的是檔名（`title`）；
+   *    Board 要的是事後仍能指回同一份文件的穩定識別，靠的是 id。
+   *    ⚠️ MUST NOT 改成兩個平行欄位（`citedSopIds` ＋ `citedSopTitles`）——
+   *    那是一組必須恆等卻沒有機制保證的鏡像欄位，漏更新一邊不會報錯
+   *    （同一個形狀已在 `baselineAt`／`closureBaseline` 上踩過，見 `stores/closure.ts`）。
+   */
+  citedSops: ClosureCitedSop[]
+  followUps: ClosureFollowUp[]
+
+  // ── 唯讀欄位（FR-010a）—— 由系統計算 ─────────────────────────
+  readonly: ClosureDraftReadonly
+}
+
+/**
+ * 正式結案紀錄 —— 住在 Data Board（`AgentCopilot_ClosureSummary`），永久、全組織可見。
+ * 對應 `docs/ARCHITECTURE.md` §11.5 與 `contracts/closure-board-schema.md` §2 的欄位表。
+ *
+ * ⚠️ **本型別、§13.3 的欄位表、`server/services/closure/board-schema.ts` 是同一份事實的三個副本**
+ *    （FR-052）。改任一處 MUST 三處同步 —— 少一欄不會報錯，只會讓該維度在報表裡永遠是空的。
+ * ⚠️ `conversationId` 是**可重複的索引，不是唯一鍵**：同一通對話有多筆結案紀錄是正常的
+ *    （多次服務、多位客服各自結案）。冪等以 `draftId` 比對，MUST NOT 以 `conversationId`。
+ */
+export interface ClosureSummary {
+  recordId: string
+  draftId: string
+  /** ⚠️ 可重複的索引，不是唯一鍵 */
+  conversationId: string
+  periodStart: string
+  periodMessageCount: number | null
+  /** Board 欄位 `period_origin`。⚠️ 光靠 `periodStart` 事後分不出起點是怎麼來的 */
+  periodOrigin: ClosurePeriodOrigin
+  channel: string
+  contactId: string
+  operators: string[]
+  joinedAt: string
+  closedAt: string
+  summary: string
+  intent: string
+  category: string
+  /** ⚠️ MUST 取自 `config/categories.ts`，MUST NOT 自己再寫一份字面聯集 */
+  resolution: ClosureResolution | ''
+  actionsTaken: string[]
+  sentimentOutcome: ClosureSentimentOutcome | ''
+  /**
+   * ⚠️ 四個數值欄一律 `number | null`（本規格對 §11.5 的訂正）——
+   *    非 nullable 的型別會逼實作者填 0，而 FR-022b 逐字禁止那件事，
+   *    且填了 0 之後**不會有任何錯誤**，只會讓報表把留空當成最低分。
+   */
+  sentimentStart: number | null
+  sentimentEnd: number | null
+  sentimentTrough: number | null
+  /** 情緒留空的原因與實際涵蓋範圍（Board 欄位 `period_sentiment_note`） */
+  sentimentNote: string | null
+  /**
+   * Board 欄位 `cited_sops`（JSON 陣列字串）。
+   *
+   * ⚠️ **只存 id，不存標題** —— 稽核紀錄要的是事後仍能指回同一份文件的穩定識別，
+   *    而檔名會改（版本後綴、部門可見範圍都寫在檔名裡）。畫面上顯示的標題由
+   *    `ClosureDraft.citedSops` 承載，寫入時 `.map(s => s.id)` 落成本欄位。
+   */
+  citedSopIds: string[]
+  followUps: ClosureFollowUp[]
+  confidence: number | null
+  /** ⚠️ 由 server 依 session 填，MUST NOT 取自 request body（契約 R3.6、憲法 7.5）。
+   *  留空 ＝ 未經人審（憲法 5.2；本規格不交付任何自動寫入路徑） */
+  reviewedBy: string | null
+  reviewedAt: string | null
+}
+
+/** `summarizeClosure()` 的受控詞彙輸入 —— 由呼叫端傳入，agent 只能從中選擇 */
+export interface ClosureVocabulary {
+  categories: readonly string[]
+  resolutions: readonly string[]
+  actionsTaken: readonly string[]
+  sentimentOutcomes: readonly string[]
 }

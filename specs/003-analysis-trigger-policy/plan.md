@@ -38,6 +38,8 @@
 MUST NOT 做成「按下就自動寫」或「閒置逾時自動寫」。M3 的完整定案見 spec.md
 「Session 2026-08-28 補充」（**唯一正典**，其餘文件一律指路至此、不重述）。
 
+✅ **該修憲已於 2026-09-03 完成（憲法 v4.0.0）**，以下為提案當時的敘述，保留不改。
+
 ⚠️ **本規格的釐清過程發現一項待修憲事項**：憲法 5.3 的「以 `conversation_id` 為唯一鍵覆蓋」
 與「同一對話可被不同人在不同時間結案多次」牴觸，需改為 uuid 主鍵 ＋ 以草稿 id 為冪等鍵。
 **MAJOR 變更，MUST 在 M3 開工前完成，且 MUST NOT 併入本規格**（003 完全不寫入 Data Board；
@@ -183,7 +185,7 @@ app/
 │   └── PanelHeader.vue            # 新元件：COPILOT 標題列 ＋ 收合按鈕 ＋「全部重試」
 │                                  # （只在有 error 時可按，與收合鈕同列，比照設計稿）
 ├── pages/c/[conversationId].vue   # ⚠️ v-if="view.viewerJoined.value" 整欄不渲染（FR-016）；
-│                                  #    收合態改渲染窄直條（03-workspace_toggleCopilot.png）
+│                                  #    收合態改渲染窄直條（1c／面板收合態）      
 
 i18n/locales/zh-TW.json            # 收合／展開、「全部重試」、兩個離開出口的文案（憲法 8.5）
 
