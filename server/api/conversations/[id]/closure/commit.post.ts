@@ -61,7 +61,9 @@ const enumOrEmpty = <T extends readonly [string, ...string[]]>(values: T) =>
   z.union([z.enum(values), z.literal('')])
 
 const Body = z.object({
-  draftId: z.string().min(1),
+  // `draft.post.ts` 以 `crypto.randomUUID()` 產生，合法來源只有那一處；
+  // 形狀不對的直接 400，不讓任意字串走進冪等查詢當鍵
+  draftId: z.string().uuid(),
   periodStart: z.string().datetime({ offset: true }),
   periodOrigin: z.enum(CLOSURE_PERIOD_ORIGINS),
   periodMessageCount: z.number().int().nonnegative().nullable(),

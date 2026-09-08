@@ -351,7 +351,7 @@ export function closuresSincePanelOpen(
  * 冪等寫入（憲法 5.3、契約 R3.4／R3.5／R3.13）。
  *
  * ```
- * ① searchBoardItems(q: draftId)  →  **本地逐字比對 draft_id**
+ * ① searchBoardItems(q: draftId)  →  **本地逐字比對 draft_id ＋ conversation_id**
  * ② 0 筆 → createItem／1 筆 → updateItem／≥2 筆 → 更新最早建立的那筆 ＋ 警告
  * ③ getBoardItem 回查  →  找不到或 draft_id 不符 → 失敗（unverified）
  * ```
@@ -360,10 +360,14 @@ export function closuresSincePanelOpen(
  *    少了它，「查有既有紀錄」會退化成「隨便抓一筆看起來像的」，
  *    接著 `updateItem` 會去改到**別人的結案紀錄** —— 不報錯，
  *    而且被改掉的是同事的工作成果。
+ *    比對分兩半：`draft_id` 擋「`q` 模糊命中」，`conversation_id` 擋
+ *    「拿著別通對話的 draft_id 打進來」—— 只做前一半時，後者仍會整份覆寫別通對話的紀錄。
  *
- * ⚠️ **比對的 MUST 是 `draft_id`，MUST NOT 是 `conversation_id`**：
+ * ⚠️ **冪等鍵 MUST 是 `draft_id`，MUST NOT 是 `conversation_id`**：
  *    用後者會在「不同時間的多次服務」銷毀服務歷史，
  *    在「多位客服各自結案」洗掉同事的工作成果。同一通對話多筆並存是正常的。
+ *    上一條的 conversation_id 比對是**附加守衛**（同一份草稿的重試不可能換對話），
+ *    不是把鍵換掉。
  *
  * ⚠️ **③ 不可省。** 平台不保證唯一鍵約束（實測 5 個 board `uniqueSeen: 0`），
  *    200 不等於紀錄真的建立了 —— 而「畫面顯示成功、Board 上其實沒有」不會報錯。
@@ -425,9 +429,25 @@ export async function commitClosure(
     // ── ① 查既有草稿紀錄 ────────────────────────────────────
     const { hits } = await searchBoardItems(client, boardId, summary.draftId, 50)
     // ⚠️ 本地逐字比對，見本函式說明。`q` 命中但 draft_id 不符的一律不算。
-    const mine = hits
+    const sameDraft = hits
       .map(h => toRow(h, fieldIds))
       .filter(r => r.draftId === summary.draftId)
+    /*
+      ⚠️ draft_id 相符但 conversation_id 不符的**也不算**（R3.13 的第二半）。
+
+      `draftId` 由 `draft.post.ts` 對某一通對話產生，`summary.conversationId` 是
+      server 從 URL 推導的 —— 合法流程裡兩者永遠一致，同一份草稿的重試不可能換對話。
+      因此不一致只有一種來源：呼叫端拿著別通對話的 draft_id 打進來。
+      少了這一格，② 會把**那通對話**的結案紀錄整份覆寫成這一通的內容，
+      平台不報錯，而被洗掉的是同事的稽核軌跡。
+      ⚠️ 冪等鍵仍然是 `draft_id`；這裡的 conversation_id 只是附加守衛，
+         不是改用它當鍵（那會犯本函式說明裡的另一個錯）。
+    */
+    const mine = sameDraft.filter(r => r.conversationId === summary.conversationId)
+    if (mine.length !== sameDraft.length) {
+      log.warn(`[closure] req=${reqId} draft=${summary.draftId} `
+        + `⚠️ ${sameDraft.length - mine.length} 筆 draft_id 相符但屬於別通對話，不納入更新`)
+    }
     log.info(`[closure] req=${reqId} step=search draft=${summary.draftId} `
       + `hits=${hits.length} matched=${mine.length}`)
 
