@@ -43,13 +43,13 @@ const { t } = useI18n()
  *
  *    ⚠️ 中欄的「載入更早的訊息」**只影響顯示，不會補算情緒點** ——
  *       分析的輸入永遠是 JOIN 當下那 50 則。
- *    ⚠️ 實際點數還可能更少：自動恢復不補算先前失敗的批次（ARCHITECTURE §18 已記載的未修缺陷），
+ *    ⚠️ 實際點數還可能更少：批次失敗後由自動恢復補算（`sentimentGap`，005 US2），但每輪最多補 18 則、剩下的留給下一次自然觸發，
  *       而那一段缺席不會有任何提示。
  *
  *    要涵蓋更長的歷史就得提高 `DEFAULT_MESSAGE_LIMIT`，代價是情緒分析的批次數
  *    （`SENTIMENT_CHUNK_SIZE = 6`）跟著加倍。
  *    ⚠️ **但冷啟動時間不會跟著加倍** —— 批次自 2026-09-01 起以**有上限的並行**送出
- *    （`SENTIMENT_CONCURRENCY = 3`，`server/services/copilot-analysis.ts`），
+ *    （`SENTIMENT_CONCURRENCY = 3`，`server/services/blocks/sentiment.ts`），
  *    總時間隨 **⌈批次數 ÷ 3⌉ 個波次**成長而非隨批次數線性成長，批次數加倍多半只多一個波次。
  *    ⚠️ 這不代表提高上限是免費的：並發可能讓平台側排隊而抬高**單次**延遲，
  *    單次一超過 FR-014 的 15 秒就會觸發重試、用盡則整批轉 error ——

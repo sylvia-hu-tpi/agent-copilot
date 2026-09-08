@@ -1,7 +1,7 @@
 /**
  * Nuxt 設定 —— 對應 docs/ARCHITECTURE.md §6。
  *
- * 與文件 §6 的三處差異（實作時確認，文件待同步）：
+ * 文件 §6 已與本檔同步（2026-09-08）；以下三點是設定背後的理由：
  *
  *  1. `@nuxt/icon` 與 `@nuxtjs/color-mode` 已由 `@nuxt/ui@4` 內建並自動註冊，
  *     重複列在 modules 會產生「module already registered」警告 → 此處移除。
@@ -123,7 +123,7 @@ export default defineNuxtConfig({
     },
   },
 
-  // §6 寫的是 typeCheck: true，此處必須關掉 —— 但保證沒有放鬆：
+  // typeCheck 關掉不是放鬆（§6 ②）：
   // `npm run build` 已改成先跑 `npm run typecheck` 再 `nuxt build`。
   //
   // ⚠️ 為何不能用 typeCheck: true / 'build'：本專案路徑含空白
