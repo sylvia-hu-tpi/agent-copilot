@@ -18,6 +18,7 @@ iMBrace 客服平台的協作副駕。Nuxt 4（`ssr: false` + 完整 Nitro BFF�
 | `docs/PLATFORM_CAPABILITY.md`、`docs/SDK_FINDINGS.md` | 平台能力與 SDK 的實測記錄 |
 | `docs/DESIGN_TOKENS.md` | 設計規格。⚠️ 衍生自 Claude Design 畫布，可能與畫布脫鉤 |
 | `scripts/spike/out/` | 實測原始產出。**結論有疑慮時以此為準，不以文件敘述為準** |
+| `deploy/README.md` | SIT 單機 compose 的現場操作步驟（M3.5）。形態與兩個前提的正典是 `ARCHITECTURE.md` §16.1，不在這裡重述 |
 
 ⚠️ **`docs/meeting-draft/` 底下的檔案（如會議草稿）一律不得被正典文件引用（檔名連結、`見 XXX.md`）。**
 那個資料夾在 `.gitignore` 裡，只存在於本機，是開會前釐清思緒用的草稿，隨時會被推翻、變動。
@@ -155,6 +156,8 @@ npm run smoke:realtime  # 兩位客服、兩條 SSE：M1 的「4 秒內看到」
 
 - Node ≥ 24。`.env.local` 一份供 spike 腳本與 Nuxt 共用，
   `nuxt.config.ts` 會把 `IMBRACE_*` 橋接成 Nuxt 的 `NUXT_*` 慣例。
+- ⚠️ 換機器時 git 補不回兩樣東西：`.env.local` 與 `scripts/spike/out/`（後者是實測原始證據，多數無法重跑）。
+  清單與步驟在 `README.md`「換一台機器繼續開發」。
 - ⚠️ 專案路徑含空白（`03 FE products`），這會讓部分工具的路徑處理出錯。
   `typescript.typeCheck` 因此關閉，改由 build script 串接（理由寫在 `nuxt.config.ts`）。
 - ⚠️ `IMBRACE_ENV=stable` 是**正式環境**，操作的是真實客戶資料。

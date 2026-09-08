@@ -28,6 +28,8 @@ function envVar(nuxtKey: string, plainKey: string): string {
 
 function createProvider(): AIProvider {
   const apiKey = envVar('NUXT_IMBRACE_API_KEY', 'IMBRACE_API_KEY')
+  // ⚠️ 單組織假設（§18 M4 已列入）：這裡的組織來自 env，與客服 session 選定的組織無關。
+  //    多組織上線前 MUST 改為依 session.orgId 建 client；現況多組織下會靜默答非所問。
   const orgId = envVar('NUXT_IMBRACE_ORGANIZATION_ID', 'IMBRACE_ORGANIZATION_ID')
   const baseUrl = envVar('NUXT_IMBRACE_BASE_URL', 'IMBRACE_BASE_URL') || undefined
   const env = envVar('NUXT_PUBLIC_IMBRACE_ENV', 'IMBRACE_ENV') || 'stable'
