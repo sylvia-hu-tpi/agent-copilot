@@ -355,6 +355,7 @@ const presenceShort = computed(() => {
         :presence-short="presenceShort"
         :msg-count-label="msgCountLabel"
         :joined="view.viewerJoined.value"
+        :closing="closing"
         :busy="view.busy.value"
         @expand="headerCollapsed = false"
         @join="joinAs('manual')"
