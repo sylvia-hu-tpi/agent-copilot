@@ -44,9 +44,9 @@ function draft(draftId: string): Record<string, unknown> {
     summary: '客服已完成說明', intent: '客戶詢問訂單',
     category: '訂單查詢', resolution: 'resolved',
     actionsTaken: ['已提供操作說明'], sentimentOutcome: 'satisfied',
-    citedSopIds: [], followUps: [],
+    citedSops: [], followUps: [],
     readonly: {
-      operators: ['u_1'], joinedAt: SCOPES.fallback.start, closedAt: null,
+      operators: ['u_1'], operatorLabels: ['agent.lin@company.com'], joinedAt: SCOPES.fallback.start, closedAt: null,
       sentimentStart: null, sentimentEnd: null, sentimentTrough: null,
       sentimentNote: '評分點不齊', channel: 'line', contactId: 'con_1', confidence: null,
     },

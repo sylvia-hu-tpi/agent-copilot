@@ -37,9 +37,9 @@ const DRAFT = {
   summary: '客服已完成說明', intent: '客戶詢問訂單',
   category: '訂單查詢', resolution: 'resolved',
   actionsTaken: ['已提供操作說明'], sentimentOutcome: 'satisfied',
-  citedSopIds: ['sop_1'], followUps: [{ action: '三日後回電' }],
+  citedSops: [{ id: 'sop_1', title: '金融大樓電梯困人SOP' }], followUps: [{ action: '三日後回電' }],
   readonly: {
-    operators: ['u_1'], joinedAt: SCOPES.fallback.start, closedAt: null,
+    operators: ['u_1'], operatorLabels: ['agent.lin@company.com'], joinedAt: SCOPES.fallback.start, closedAt: null,
     sentimentStart: null, sentimentEnd: null, sentimentTrough: null,
     sentimentNote: '評分點不齊', channel: 'line', contactId: 'con_1', confidence: null,
   },

@@ -31,6 +31,7 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { RESOLUTIONS, SENTIMENT_OUTCOMES } from '../config/categories'
+import { formatAbsolute, humanizeTimestamps } from '../app/utils/absolute-time.js'
 
 const ROOT = resolve(import.meta.dirname, '..')
 
@@ -267,3 +268,384 @@ describe('④ D-7：留空的兩種原因 MUST NOT 被混成同一句話', () =>
   })
 })
 
+
+describe('⑤ 知識庫來源 chip 顯示的 MUST 是檔名，MUST NOT 是檔案 id', () => {
+  const block = read('app/components/copilot/ClosureBlock.vue')
+
+  /*
+    ⚠️ 這一條守的是 002 research #2「二次訂正」既有的結論，不是新規則：
+       知識庫沒有正式的 SOP 編號制度，把檔案 id（或短版本）當顯示編號是杜撰一個
+       對不到任何外部制度的字串。`shared/types/knowledge.ts` 的 `KnowledgeHit.id`
+       逐字寫著「MUST NOT 顯示於 UI」，而結案面板從落地起就一直在渲染它 ——
+       同一份文件的容錯 id 長成 `knowledge-fallback-1a2b3c`，客服無從判斷該不該刪。
+    ⚠️ 走查看得到卻沒被抓到：正式環境的來源清單在 2026-09-08 之前恆為空（契約 R2.7
+       的舊做法），這一區塊根本不會出現。**「畫面上沒看到」不等於「沒有問題」。**
+  */
+  const chip = block.slice(
+    block.indexOf('v-for="sop in draft.citedSops"'),
+    block.indexOf('closure.fields.sopRemove'),
+  )
+
+  it('chip 列存在，且逐一走訪的是 citedSops 而不是一串 id', () => {
+    expect(chip.length).toBeGreaterThan(0)
+    expect(block).toMatch(/v-for="sop in draft\.citedSops"/)
+  })
+
+  /*
+    ⚠️ **客服把來源全部刪光時，這一欄 MUST 仍然在**（2026-09-08 照畫布改；
+       先前是 `v-if="draft.citedSops.length"` 把整塊藏起來）。
+       整欄消失有兩個問題：客服會以為自己弄壞了什麼；而且「這次寫入不帶來源」
+       這件事失去了畫面上的落點 —— 那正是他刪完之後要確認的事。
+    ⚠️ 這一條擋的是「把空清單當成沒有這個欄位」，不是樣式。
+  */
+  it('來源被刪光時欄位不消失，改顯示「已全部移除」而不是整塊隱藏', () => {
+    expect(block).not.toMatch(/v-if="draft\.citedSops\.length"/)
+    expect(block).toMatch(/v-if="!draft\.citedSops\.length"/)
+    expect(block).toContain('closure.fields.sopsAllRemoved')
+  })
+
+  it('chip 的內容是 title', () => {
+    expect(chip).toMatch(/\{\{\s*sop\.title\s*\}\}/)
+  })
+
+  it('chip 的內容 MUST NOT 是 id', () => {
+    // ⚠️ `:key="sop.id"` 是對的（title 可能重名），要擋的是把 id 插進顯示位置
+    expect(chip).not.toMatch(/\{\{\s*sop\.id\s*\}\}/)
+    expect(chip).not.toMatch(/\{\{\s*id\s*\}\}/)
+  })
+})
+
+
+describe('⑥ 後續待辦：未填的那一列 MUST 自己說出來，不能只鎖住寫入鍵', () => {
+  const block = read('app/components/copilot/ClosureBlock.vue')
+
+  /*
+    ⚠️ 空白的「待辦事項」會讓 commit 端點的 zod 擋下整次寫入（`action: z.string().min(1)`），
+       而前端把 400 歸成「寫入失敗」—— 顯示的是 B7 的「CRM 未收到⋯可直接重試」，
+       重試送的又是同一份 body，於是永遠失敗，畫面上沒有任何地方指得出是哪一列造成的。
+    ⚠️ 因此「鎖住寫入鍵」只是**其中一半**：另一半是那一列自己要標紅並就地說明。
+       說明放在整組之後（2026-09-08 之前的做法）時，客服仍得一列一列自己找。
+    ⚠️ 這一條掃原始碼而不是渲染結果 —— 要擋的是「把說明搬回組層級」這個退步，
+       而那不會有型別錯誤，畫面上也只是少一句話。
+  */
+  const rowStart = block.indexOf('v-for="(f, i) in draft.followUps"')
+  const row = block.slice(rowStart, block.indexOf('closure.fields.followUpAdd'))
+
+  it('每一列都在 v-for 內部渲染自己的錯誤說明', () => {
+    expect(rowStart).toBeGreaterThan(-1)
+    expect(row).toMatch(/v-if="invalidFollowUpRows\.has\(i\)"/)
+    expect(row).toContain('closure.fields.followUpActionRequired')
+  })
+
+  /*
+    ⚠️ 這一條守的是**行為**，不是某個元件的 API：2026-09-08 把 `UInput` 換成原生
+       `<input>`（照畫布 §7.2 ⑥），錯誤色從 `color="error"` 變成框線轉 `--danger`。
+       因此這裡斷言的是「那一格自己看得出來是錯的」＋「輔助技術也知道」，
+       而不是任何一個特定寫法。
+  */
+  it('該列的輸入框本身也標成錯誤色，不是只有下方一句話', () => {
+    expect(row).toMatch(/invalidFollowUpRows\.has\(i\).*--danger/)
+    expect(row).toMatch(/:aria-invalid="invalidFollowUpRows\.has\(i\)"/)
+  })
+
+  it('寫入鍵仍 MUST 鎖住 —— 就地標示是補充，不是取代', () => {
+    expect(block).toMatch(/:disabled="status === 'writing' \|\| hasInvalidFollowUps"/)
+  })
+})
+
+/*
+  ⑦（2026-09-08）唯讀區把 server 給的 UTC ISO 原樣印出來
+     （接手時間 `2026-09-08T02:13:19.700Z`、情緒留空說明裡的兩個時間戳），
+     而客服在 UTC+8 讀它 —— 螢幕上是 02:13、他記得自己十點多才接手，
+     於是這個「由系統計算、不可修改」的區塊變成沒有人會去看的字。
+
+  ⚠️ 這一組守的是**兩邊各自該長什麼樣**，不是「有沒有做格式化」：
+     畫面要本地時間**且帶時區**（不帶的話 10:13 與 Board 的 02:13Z 看起來像兩筆紀錄），
+     Data Board 與後端日誌要原始 UTC ISO（存進去的字串一旦帶了某台瀏覽器的時區，
+     之後就再也無法確定它是哪個時刻）。兩者是相反的要求，很容易在
+     「順手讓它到處都好讀」的一次修改裡被弄成同一種。
+*/
+describe('⑦ 唯讀區的時間：畫面轉本地時區、Board 與日誌維持原始 UTC', () => {
+  const block = read('app/components/copilot/ClosureBlock.vue')
+
+  describe('顯示端：formatAbsolute／humanizeTimestamps 的實際行為', () => {
+    /*
+      ⚠️ 一律指定 `Asia/Taipei`、locale 固定 `zh-TW`：輸出取決於執行環境，
+         照系統時區斷言只會得到一個換台機器就紅的測試。
+    */
+    const fmt = (iso: string): string => formatAbsolute(iso, 'zh-TW', 'Asia/Taipei')
+
+    it('UTC 的 02:13 在台北顯示成當天 10:13，而不是 02:13', () => {
+      const out = fmt('2026-09-08T02:13:19.700Z')
+      expect(out).toContain('10:13')
+      expect(out).not.toContain('02:13')
+    })
+
+    it('MUST 帶時區標記 —— 否則與 Board 的 UTC 對不起來', () => {
+      expect(fmt('2026-09-08T02:13:19.700Z')).toMatch(/GMT\+8/)
+    })
+
+    it('formatAbsolute：解析失敗回傳原字串，不會是 Invalid Date', () => {
+      expect(formatAbsolute('不是時間', 'zh-TW')).toBe('不是時間')
+      expect(formatAbsolute('不是時間', 'zh-TW')).not.toContain('Invalid')
+    })
+
+    it('humanizeTimestamps：只換句子裡的時間戳，其餘一個字都不動', () => {
+      const note = '情緒評分僅涵蓋 2026-08-24T08:57:01.614Z 起，未涵蓋區間內第一則客戶發言 2026-08-19T08:23:17.395Z'
+      const out = humanizeTimestamps(note, 'zh-TW', 'Asia/Taipei')
+      expect(out).toContain('情緒評分僅涵蓋')
+      expect(out).toContain('未涵蓋區間內第一則客戶發言')
+      expect(out).not.toContain('2026-08-24T08:57:01.614Z')
+      expect(out).not.toContain('2026-08-19T08:23:17.395Z')
+      expect(out).not.toMatch(/Invalid/)
+    })
+
+    /*
+      ⚠️ 這一條是整組裡最容易被「順手擴大 regex」弄壞的：
+         `sentimentNote` 的其中一句正是「區間起點無法解析（…）」，
+         那句裡的字串本來就不是合法時間，換掉它會讓那句話自相矛盾。
+    */
+    it('humanizeTimestamps：「無法解析」那一句裡的壞字串 MUST 原樣留著', () => {
+      const note = '區間起點無法解析（not-a-timestamp），情緒數值留空'
+      expect(humanizeTimestamps(note, 'zh-TW', 'Asia/Taipei')).toBe(note)
+    })
+
+    /*
+      ⚠️ 不帶時區的字串會被 `new Date()` 當**本地時間**解析，換算結果是錯的
+         而且看不出來 —— 這種字串寧可原樣顯示。
+    */
+    it('humanizeTimestamps：不帶時區的 ISO 不換 —— 換了會得到一個看不出錯的錯時間', () => {
+      const note = '區間起點 2026-09-07T08:45:26 之後沒有任何情緒評分點'
+      expect(humanizeTimestamps(note, 'zh-TW', 'Asia/Taipei')).toBe(note)
+    })
+  })
+
+  describe('元件：兩個欄位都經過轉換，原始值留在 title 供事後核對', () => {
+    it('接手時間 MUST NOT 直接把 ISO 當內文印出來', () => {
+      expect(block).not.toMatch(/<dd[^>]*>\{\{ readonlyFields\.joinedAt \}\}<\/dd>/)
+      expect(block).toMatch(/:title="readonlyFields\.joinedAt"[^>]*>\{\{ joinedAtLabel \}\}/)
+    })
+
+    it('情緒留空說明 MUST NOT 直接把整句原文印出來', () => {
+      expect(block).not.toMatch(/>\{\{ readonlyFields\.sentimentNote \}\}</)
+      expect(block).toContain(':title="readonlyFields.sentimentNote ?? undefined">{{ sentimentNoteLabel }}')
+    })
+
+    it('兩者共用同一支格式化 —— 兩處各寫一份遲早會分岔', () => {
+      expect(block).toMatch(/formatAbsolute\(iso, locale\.value\)/)
+      expect(block).toMatch(/humanizeTimestamps\(note, locale\.value\)/)
+      expect(block).not.toMatch(/timeZoneName/)
+    })
+  })
+
+  describe('寫入端：Board 與後端日誌不受畫面格式影響', () => {
+    it('Board 的 joined_at 直接取 summary.joinedAt，中間不做任何格式化', () => {
+      expect(read('server/services/closure/board-repository.ts')).toMatch(/joined_at: summary\.joinedAt,/)
+    })
+
+    it('Board 的 period_sentiment_note 直接取 summary.sentimentNote', () => {
+      expect(read('server/services/closure/board-repository.ts'))
+        .toMatch(/period_sentiment_note: summary\.sentimentNote,/)
+    })
+
+    /*
+      ⚠️ 這條是上面兩條的真正靠山：即使有人把格式化搬到前端的送出路徑上，
+         這些欄位也不會被污染 —— server 在 commit 時重算，body 帶來的一律忽略（R3.7）。
+    */
+    it('commit 時 joinedAt 與 sentimentNote 都來自 server 重算，不採用 request body', () => {
+      const commit = read('server/api/conversations/[id]/closure/commit.post.ts')
+      expect(commit).toMatch(/joinedAt: readonly\.joinedAt,/)
+      expect(commit).toMatch(/sentimentNote: readonly\.sentimentNote,/)
+      expect(commit).not.toMatch(/joinedAt: body\./)
+      expect(commit).not.toMatch(/sentimentNote: body\./)
+    })
+
+    it('server 組的說明文字仍用原始 ISO —— 後端日誌與 Board 的比對基準只能有一個', () => {
+      const range = read('server/services/closure/sentiment-range.ts')
+      expect(range).toMatch(/\$\{earliest\.at\}/)
+      expect(range).not.toMatch(/Intl\.DateTimeFormat/)
+    })
+  })
+})
+
+/*
+  ⑧（2026-09-08）B7「寫入 CRM 失敗」的錯誤區塊逐字要客服
+     「複製摘要並貼到 CRM 手動建檔」，畫面上卻沒有那顆鈕 ——
+     次要鈕列只有「回報 IT」，而且做成按鈕列裡的 outline 按鈕。
+
+  ⚠️ 兩顆的**內容相反**，這是本組真正要守的事：
+     - 「複製摘要文字」複製的是**草稿內文**，目的地是客服自己的剪貼簿。
+     - 「回報 IT」複製的是 `failMeta` ＋ 兩個 id，**刻意不含草稿內文**
+       —— 草稿內文是客戶對話個資（憲法 1.5），IT 不需要也不該看到。
+     把後者寫成「順便把摘要一起貼給 IT」不會報錯，只會安靜地外洩個資。
+*/
+describe('⑧ B7 的次要文字鈕列：兩顆內容相反，且只有 B7 有', () => {
+  const block = read('app/components/copilot/ClosureBlock.vue')
+  const row = block.slice(block.indexOf('⑧-b'), block.indexOf('closure.writeWarning'))
+
+  it('兩顆都在，且同一列', () => {
+    expect(row).toContain('closure.buttons.copySummary')
+    expect(row).toContain('closure.buttons.reportIt')
+  })
+
+  /*
+    ⚠️ B8（`unverified`）MUST NOT 有這一列：它的出路是「先到 CRM 查驗，
+       確認沒有再重試」，多給兩個出口只會讓人繞過那個查驗 —— 而畫布的
+       `hasFailSecond` 也正是只在 `failed` 為真。
+  */
+  it('只在 failed 出現，unverified 沒有這一列', () => {
+    expect(row).toContain(`showFailure && failKind === 'failed'`)
+  })
+
+  it('「回報 IT」MUST NOT 複製草稿內文（憲法 1.5）', () => {
+    const fn = block.slice(block.indexOf('async function reportToIt'), block.indexOf('async function onCommit'))
+    expect(fn).toContain('draftId')
+    expect(fn).toContain('conversationId')
+    expect(fn).not.toMatch(/d\.summary|draft\.value\?\.summary|\.intent/)
+  })
+
+  it('「複製摘要文字」MUST 複製草稿內文 —— 否則那句備援說明是空頭支票', () => {
+    const fn = block.slice(block.indexOf('async function copySummaryText'), block.indexOf('/**\n * 「回報 IT」'))
+    expect(fn).toContain('d.summary')
+    expect(fn).toContain('d.intent')
+    expect(fn).toContain('navigator.clipboard.writeText')
+  })
+
+  /*
+    ⚠️ 這份文字的唯一讀者是人（客服要照著填進 CRM），因此時間也 MUST 用易讀版本；
+       用原始 ISO 的話，他得自己在腦中換算時區才知道那是什麼時候。
+  */
+  it('複製出來的文字裡，時間用易讀版本而不是原始 ISO', () => {
+    const fn = block.slice(block.indexOf('async function copySummaryText'), block.indexOf('/**\n * 「回報 IT」'))
+    expect(fn).toContain('formatAbsolute(ro.joinedAt')
+    expect(fn).toContain('humanizeTimestamps(ro.sentimentNote')
+  })
+})
+
+/*
+  ⑨（2026-09-08）唯讀區的「參與的客服」印的是 `u_df56079c-7df4-…`。
+     那串字對客服不對應任何他認得的東西，而這一欄要回答的是「誰服務過這位客戶」。
+     行為面的守衛在 `test/closure-operator-labels.test.ts`，這裡只守畫面用對了欄位。
+*/
+describe('⑨ 參與的客服：畫面顯示名字、id 留在 title', () => {
+  const block = read('app/components/copilot/ClosureBlock.vue')
+
+  it('內文用 operatorLabels，MUST NOT 直接印 operators', () => {
+    expect(block).not.toMatch(/<dd[^>]*>\{\{ readonlyFields\.operators\.join/)
+    expect(block).toContain('{{ readonlyFields.operatorLabels.join(\'、\') }}')
+  })
+
+  it('原始 id 留在 title —— 事後要對 Board 的那一欄時只有它對得起來', () => {
+    expect(block).toContain(':title="readonlyFields.operators.join(\'、\')"')
+  })
+
+  it('寫進 Board 的仍是 id，MUST NOT 換成顯示名', () => {
+    const commit = read('server/api/conversations/[id]/closure/commit.post.ts')
+    expect(commit).toMatch(/operators: readonly\.operators,/)
+    expect(commit).not.toMatch(/operators: readonly\.operatorLabels/)
+  })
+})
+
+/*
+  ⑩（2026-09-08）三處「畫布訂了、實作走 Nuxt UI 預設」的落差。
+
+  ⚠️⚠️ 第一項是**真的缺陷而不只是外觀**：`USelectMenu` 內建的搜尋框與空結果文案
+       走 `@nuxt/ui` 自己的 locale，而本專案沒有設定 `UApp` 的 `locale` ——
+       於是它落回英文（`Search…`／`No matching data`），在一個全中文的內部工具裡
+       漏出兩句英文。**這不會報錯，而且 grep 自己的 `i18n/locales/zh-TW.json`
+       永遠找不到它** —— 那兩句字串根本不在我方的語系檔裡，這正是它活這麼久的原因。
+
+  ⚠️ 另外兩項是後續待辦的兩顆鈕。虛線框不只是裝飾：它與上方那幾列實線框的輸入框
+     放在一起，虛線是「這裡還沒有東西、按了才會長出來」的既有視覺語彙。
+*/
+describe('⑩ 畫布訂了尺寸與文案的地方，MUST NOT 落回 Nuxt UI 預設', () => {
+  const block = read('app/components/copilot/ClosureBlock.vue')
+
+  it('「採取的行動」的搜尋框帶我方文案，不吃 @nuxt/ui 的英文預設', () => {
+    expect(block).toContain('closure.fields.actionSearch')
+    expect(block).toMatch(/:search-input=/)
+  })
+
+  it('空結果用 #empty 覆寫 —— 預設是英文的 No matching data', () => {
+    expect(block).toMatch(/<template #empty>/)
+    expect(block).toContain('closure.fields.actionEmpty')
+  })
+
+  it('三句文案都在我方語系檔裡（否則就是又落回內建 locale 了）', () => {
+    expect(locale.closure.fields.actionSearch).toBe('搜尋行動…')
+    expect(locale.closure.fields.actionEmpty).toBe('沒有符合的行動')
+  })
+
+  it('「新增一項待辦」是虛線框鈕，不是 ghost 按鈕', () => {
+    const btn = block.slice(block.indexOf('虛線框是這顆鈕的語意'), block.indexOf('⑥ 唯讀區'))
+    expect(btn).toContain('border-dashed')
+    expect(btn).toContain('border-[var(--border-strong)]')
+    expect(btn).toContain('h-[28px]')
+    expect(btn).toContain('closure.fields.followUpAdd')
+  })
+
+  it('「移除這一列待辦」是 30×30 / radius 7px 的無框鈕（畫布逐字）', () => {
+    const btn = block.slice(block.indexOf('closure.fields.followUpRemove') - 700, block.indexOf('closure.fields.followUpRemove') + 200)
+    expect(btn).toContain('size-[30px]')
+    expect(btn).toContain('rounded-[7px]')
+  })
+
+  /*
+    ⚠️ 這一條守的是「不要又寫回去」：`UButton` 的 ghost variant 看起來很接近，
+       但它沒有框，而框正是這兩顆鈕與周圍輸入框產生關係的地方。
+  */
+  it('後續待辦那一段已無 UButton', () => {
+    const section = block.slice(block.indexOf('closure.fields.followUpAction'), block.indexOf('⑥ 唯讀區'))
+    expect(section).not.toContain('UButton')
+  })
+})
+
+/*
+  ⑪（2026-09-08 手動驗收回報）進入結案流程後把中欄資訊列**收起來**，
+     收合列又出現一顆「結案」——而展開態明明是「取消結案 ＋ 結案中…」。
+
+  ⚠️ 兩個畫面對同一個狀態說了相反的話，而客服會相信眼前那一個：
+     他會以為剛才沒按到而再按一次。**再按一次不會報錯**（對已在結案中的對話
+     那是一次無效操作），因此這個矛盾只停在畫面上，不會在任何地方留下痕跡 ——
+     沒有例外、沒有日誌、沒有紅燈。
+
+  ⚠️ 根因是收合列只有「未接手／已接手」兩種分支，缺了第三種。
+     畫布 1c 的收合列**有**這第三種（`sc-if value="{{ closing }}"`），
+     而且刻意畫成不能按的徽記而不是 disabled 按鈕。
+*/
+describe('⑪ 收合的對話資訊列 MUST 與展開態對同一個狀態說同一句話', () => {
+  const collapsed = read('app/components/conversation/HeaderCollapsed.vue')
+  const page = read('app/pages/c/[conversationId].vue')
+
+  it('收合列知道「正在結案」這件事 —— 由頁面傳入，不自己推導', () => {
+    expect(collapsed).toMatch(/closing: boolean/)
+    expect(page).toContain(':closing="closing"')
+  })
+
+  it('結案中 MUST NOT 再出現「結案」鍵', () => {
+    expect(collapsed).toMatch(/v-else-if="closing"/)
+    const closeBtn = collapsed.slice(collapsed.indexOf('v-else-if="closing"'))
+    expect(closeBtn.indexOf('conversation.close')).toBeGreaterThan(closeBtn.indexOf('closure.titlebar.closing'))
+  })
+
+  /*
+    ⚠️ 這一條守的是「不要改成 disabled 按鈕就算了」：disabled 也擋得住點擊，
+       但它仍然長得像「這裡本來可以按」。畫布要的是徽記 —— 從形狀上就說明它是狀態。
+  */
+  it('結案中是不能按的徽記，不是 button', () => {
+    const i = collapsed.indexOf('v-else-if="closing"')
+    const el = collapsed.slice(collapsed.lastIndexOf('<', i), i + 400)
+    expect(el.startsWith('<span')).toBe(true)
+    expect(el).toContain('closure.titlebar.closing')
+    expect(el).toContain('animate-spin')
+  })
+
+  /*
+    ⚠️ 收合列與展開態共用同一個 i18n 鍵 —— 兩處各寫一份文案的話，
+       改了其中一處就會變成「同一個狀態、兩種說法」，而那正是本條要修的病。
+  */
+  it('兩處共用同一個 i18n 鍵', () => {
+    expect(collapsed).toContain('closure.titlebar.closing')
+    expect(page).toContain('closure.titlebar.closing')
+  })
+})

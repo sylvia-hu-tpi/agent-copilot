@@ -50,9 +50,9 @@ function draftFor(delayMs: number, signal?: AbortSignal): Promise<unknown> {
       conversationId: CONV,
       period: { start: SCOPES.fallback.start, origin: 'first', messageCount: 9, truncated: false },
       summary: '摘要', intent: '意圖', category: '', resolution: '',
-      actionsTaken: [], sentimentOutcome: '', citedSopIds: [], followUps: [],
+      actionsTaken: [], sentimentOutcome: '', citedSops: [], followUps: [],
       readonly: {
-        operators: ['u_1'], joinedAt: SCOPES.fallback.start, closedAt: null,
+        operators: ['u_1'], operatorLabels: ['agent.lin@company.com'], joinedAt: SCOPES.fallback.start, closedAt: null,
         sentimentStart: null, sentimentEnd: null, sentimentTrough: null,
         sentimentNote: '評分點不齊', channel: 'line', contactId: 'con_1', confidence: null,
       },
