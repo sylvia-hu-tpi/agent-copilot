@@ -235,10 +235,20 @@
   ⚠️ 這個門檻 **MUST NOT 被 SC-004 的「不設固定秒數」波及**：那條講的是摘要產生
   （工作量隨區間變動），寫入的工作量固定為三次呼叫，正是該有門檻的那一類。
 - **R3.13（research #8，2026-09-03 實測）** 冪等查詢 **MUST NOT** 用 `filter`（實測被靜默忽略），
-  改為 `q: '<draftId>'` **＋ 本地逐字比對 `draft_id`**。
+  改為 `q: '<draftId>'` **＋ 本地逐字比對 `draft_id` 與 `conversation_id`**。
   ⚠️ **本地比對 MUST NOT 省略**：`q` 是全文檢索不是精確比對，少了它，
   「查有既有紀錄」會退化成「隨便抓一筆看起來像的」，接著 `updateItem` 會去改到
   **別人的結案紀錄** —— 不報錯，而且被改掉的是同事的工作成果。
+  ⚠️ **比對分兩半，缺一不可**（2026-09-08 補）：`draft_id` 擋「`q` 模糊命中」；
+  `conversation_id`（server 從 URL 推導，不是 body 值）擋「拿著別通對話的 `draft_id` 打進來」。
+  只做前一半時，後者會把**那通對話**的紀錄整份覆寫成這一通的內容。
+  `draft_id` 相符但 `conversation_id` 不符的一律視為 0 筆（走 create）並記一行警告 ——
+  合法流程裡同一份草稿的重試不可能換對話，這種不一致只有一種來源。
+  ⚠️ **這不是把冪等鍵換成 `conversation_id`**（見 `closure-board-schema.md` 的禁令），
+  鍵仍是 `draft_id`，`conversation_id` 是附加守衛。
+- **R3.13a** `draftId` 在 request body 的形狀 MUST 是 UUID（`z.string().uuid()`），
+  不符直接 400。合法來源只有 `draft` 端點的 `crypto.randomUUID()`（R2 系列），
+  沒有理由讓任意字串走進冪等查詢當鍵。
 
 ---
 

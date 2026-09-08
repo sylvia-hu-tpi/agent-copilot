@@ -168,7 +168,7 @@ Board: AgentCopilot_ClosureSummary (bd_68c06c…)
 commit(draftId, content)
   │
   ├─① boards.search(boardId, { q: '<draftId>' })
-  │     → **本地**逐字比對 draft_id（⚠️ filter 實測被靜默忽略，見 006-E7）
+  │     → **本地**逐字比對 draft_id ＋ conversation_id（⚠️ filter 實測被靜默忽略，見 006-E7）
   │
   ├─② hits.length === 0 → createItem()
   │     hits.length === 1 → updateItem(hits[0]._id)      ← FR-030c：更新為當下內容
@@ -183,11 +183,15 @@ commit(draftId, content)
 而「畫面顯示成功、Board 上其實沒有」不會報錯。
 
 ⚠️ **同一通對話有多筆結案紀錄是正常的**（憲法 5.3 的兩種成因）。
-① 與 ② 比對的 MUST 是 `draft_id`，**MUST NOT 是 `conversation_id`** ——
+① 與 ② 的**冪等鍵** MUST 是 `draft_id`，**MUST NOT 是 `conversation_id`** ——
 用後者會在「不同時間的多次服務」銷毀服務歷史，在「多位客服各自結案」洗掉同事的工作成果。
 
 ⚠️ **① 的本地比對 MUST NOT 省略。** `q` 是全文檢索、不是精確比對，
 省掉本地比對等於「隨便抓一筆看起來像的」去 `updateItem` —— 改到的是別人的結案紀錄，
 而且不會報錯。
+比對分兩半（契約 R3.13，2026-09-08 補）：`draft_id` 逐字相符**且** `conversation_id`
+與 URL 的對話一致才算命中；`draft_id` 相符但屬於別通對話的視為 0 筆、走 create 並記警告。
+⚠️ 這與上一段不衝突 —— `conversation_id` 在這裡是**附加守衛**，不是鍵：
+同一份草稿的重試不可能換對話，所以它對合法流程恆為真，只擋「拿別通對話的 `draft_id` 打進來」。
 
 ⚠️ 整條路徑 MUST 有 **30 秒硬逾時**（FR-032a）：它是「寫入中不可取消」的成立前提。
