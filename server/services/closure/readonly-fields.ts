@@ -120,9 +120,12 @@ export function computeReadonlyFields(input: ReadonlyFieldsInput): ClosureDraftR
  * ⚠️ ①MUST 排在 ②之前。名冊裡即使有自己那一筆，答案也相同；
  *    但名冊**沒有**自己那一筆是常態，而 ① 在那種情況下仍然答得出來。
  *
- * ⚠️ **同事（`watchers`）目前只有 ②③ 可用**，因此名冊沒收錄的同事仍會顯示 id。
- *    要一併解掉的話，來源是 presence 條目（`reportViewing()` 存過 `operatorName`），
- *    但那要把 store 傳進本函式並改成 async —— 尚未做，不要在這裡偷偷補一個猜出來的名字。
+ * ⚠️ **同事（`watchers`）只走 ②③，這是裁示不是待辦**（2026-09-08）：
+ *    名冊沒收錄的同事就顯示 id，不另外接 presence 補名字。
+ *    ⚠️ 曾評估過的替代來源是 presence 條目（`reportViewing()` 存過 `operatorName`），
+ *    代價是本函式要多收一個 store 參數並改成 async —— **決定不換**。
+ *    ⚠️ 無論如何都 MUST NOT 在這裡補一個猜出來的名字：顯示 id 是誠實的，
+ *    猜錯的名字會讓客服認錯同事，而那是這個專案最不能出錯的地方（§10.2）。
  */
 function labelFor(id: string, input: ReadonlyFieldsInput): string {
   if (id === input.operatorId && input.operatorLabel) return input.operatorLabel

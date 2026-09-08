@@ -563,9 +563,10 @@ box-shadow: var(--shadow)
    它走的是「查不到就誠實顯示 id」那條**合法**路徑，因此不報錯、也沒有紅燈。
    ⚠️ **查不到名字的那一個回傳原本的 id**，MUST NOT 留空、MUST NOT 編一個名字 ——
    「知道有這個人但不知道他叫什麼」與「沒有這個人」在畫面上必須不同（§10.2）。
-   ⚠️ **同事（`watchers`）目前只有名冊可查**，名冊沒收錄的同事仍會顯示 id。
-   要一併解掉的話來源是 presence 條目（`reportViewing()` 存過 `operatorName`），
-   但那要把 store 傳進 `computeReadonlyFields()` 並改成 async —— **尚未做**。
+   ⚠️ **同事（`watchers`）只查團隊名冊，名冊沒收錄的就顯示 id** ——
+   這是 2026-09-08 的裁示，**不是待辦**。曾評估過的替代來源是 presence 條目
+   （`reportViewing()` 存過 `operatorName`），代價是 `computeReadonlyFields()`
+   要多收一個 store 參數並改成 async，決定不換。
    ⚠️ **寫進 Board 的 `operators` 仍是 id。** id 穩定，email 會隨帳號改名變動，
    改完之後舊紀錄就指不回任何人；這也與 `reviewed_by` 存 id 的既有做法一致。
    契約上因此是兩個欄位：`operators`（id、進 Board）與 `operatorLabels`（顯示名、只給畫面），
