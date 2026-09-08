@@ -285,6 +285,10 @@
   "account": {
     "signedInAs": "已登入身分"
   },
+  "theme": {
+    "toDark": "切換為深色主題",
+    "toLight": "切換為淺色主題"
+  },
   "closure": {
     "blockTitle": "結案摘要自動填入",
     "blockTag": "AI 草稿 · 可修改",

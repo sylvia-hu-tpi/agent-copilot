@@ -74,6 +74,26 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  /*
+   * 主題（畫布 2026-09-08 16:08 版在 1c 頂列新增切換鈕，見 DESIGN_TOKENS.md §8.1）。
+   *
+   * 畫布是即時狀態，沒有回答「重新整理後記不記得」與「首次進入預設哪一個」，
+   * 兩題由使用者裁示（2026-09-08）：**記得上次的選擇**、**首次進入固定 light**。
+   *
+   * ⚠️ `preference: 'light'` 不是預設值 —— @nuxtjs/color-mode 的預設是 `'system'`（跟隨作業系統）。
+   *    留著預設會讓「首次進入固定 light」這條裁示在深色系統上靜默失效：沒有錯誤、
+   *    沒有型別問題，只是第一次打開就是深色。
+   * ⚠️ 「記得上次的選擇」由模組的 `localStorage['nuxt-color-mode']` 承擔，
+   *    我方不另外存 —— 但**前提是切換時寫的是 `colorMode.preference`**（會持久化），
+   *    不是 `colorMode.value`（只改當下畫面）。守衛見 `test/theme-toggle.test.ts`。
+   * ⚠️ `classSuffix: ''` 由 `@nuxt/ui` 設定，因此 class 是 `.dark` 而非 `.dark-mode`。
+   *    `app/assets/css/main.css` 的深色 token 掛在 `.dark` 上，兩者 MUST 一致。
+   */
+  colorMode: {
+    preference: 'light',
+    fallback: 'light',
+  },
+
   i18n: {
     defaultLocale: 'zh-TW',
     locales: [{ code: 'zh-TW', file: 'zh-TW.json' }],
