@@ -129,6 +129,8 @@ export default defineEventHandler(async (event): Promise<ClosureCommitResponse> 
     periodStart: body.periodStart,
     firstCustomerAt: body.periodFirstCustomerAt,
     operatorId: session.operatorId,
+    operatorLabel: session.operatorName,
+    orgId: session.orgId,
     // ⚠️ 結案摘要沒有檢索分數可依據，`confidence` 全程為 null（憲法 4.4）
     confidence: null,
   })

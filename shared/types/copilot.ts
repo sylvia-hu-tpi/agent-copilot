@@ -326,7 +326,7 @@ export interface AIProvider {
    *
    * ⚠️ **刻意不收 `knowledgeHits`**（2026-09-08）。結案 agent 的 system prompt 逐字要求
    *    「不要輸出 citedSopIds —— 由系統填入」，因此把命中交給模型也不會有人引用它。
-   *    `ClosureDraft.citedSopIds` 改由呼叫端直接以檢索命中填入（見 `closure/draft.post.ts`），
+   *    `ClosureDraft.citedSops` 改由呼叫端直接以檢索命中填入（見 `closure/draft.post.ts`），
    *    檢索與這支呼叫因此完全獨立、可並行。
    *    ⚠️ 要改成「讓模型自己挑」的話，**MUST 先改 iMBrace 後台的 system prompt**
    *    —— 那不在這個 repo 裡，改了不會有 commit（CLAUDE.md 地雷 4）。
@@ -456,7 +456,24 @@ export interface ClosureCommitResponse {
  *    （契約 R3.7），前端送什麼都不影響結果。
  */
 export interface ClosureDraftReadonly {
+  /**
+   * 參與這段服務的客服 **id**（`u_…`）—— 這是寫進 Board `operators` 欄的值。
+   *
+   * ⚠️ **MUST NOT 拿去顯示**，畫面用下面的 `operatorLabels`。
+   *    id 對客服不對應任何他認得的東西（`u_df56079c-7df4-…` 這種字串），
+   *    而這一欄的用途是讓人事後看得出「誰服務過這位客戶」。
+   */
   operators: string[]
+  /**
+   * 上面每個 id 的**顯示名**，與 `operators` **逐一對位**（同一個 `map` 產生，不會錯位）。
+   *
+   * ⚠️ 查不到名字的那一個回傳**原本的 id**，MUST NOT 留空或編一個名字 ——
+   *    「知道有這個人但不知道他叫什麼」與「沒有這個人」在畫面上必須不同（§10.2）。
+   * ⚠️ 平台沒有人名，名冊的 `display_name` 實測 12/12 全是 email，
+   *    因此這裡實際上會是 email。**MUST NOT 寫進 Board** —— 那一欄存 id：
+   *    id 穩定，而 email 會隨帳號改名變動，改完之後舊紀錄就指不回任何人。
+   */
+  operatorLabels: string[]
   joinedAt: string
   /** 寫入當下才有值 */
   closedAt: string | null
@@ -500,7 +517,7 @@ export interface ClosureDraftAiPart {
   /*
     ⚠️ **這裡沒有 `citedSopIds`，是刻意的**（2026-09-08）。結案 agent 的 system prompt
        逐字列出「不要輸出 citedSopIds ⋯ 由系統填入」，模型不會給、給了也該丟。
-       `ClosureDraft.citedSopIds` 由 `closure/draft.post.ts` 直接以知識庫檢索命中填入。
+       `ClosureDraft.citedSops` 由 `closure/draft.post.ts` 直接以知識庫檢索命中填入。
        放回這裡會讓「模型挑選 ＋ 白名單後驗」那條路徑看起來還在運作，
        但它的輸入永遠是空的 —— 那正是 2026-09-08 審查抓到的形狀。
   */
@@ -512,6 +529,23 @@ export interface ClosureFollowUp {
   action: string
   owner?: string
   dueHint?: string
+}
+
+/**
+ * 結案草稿上的一筆「相關的知識庫來源」。
+ *
+ * ⚠️ **`title` 是對客服顯示的唯一識別，`id` MUST NOT 出現在畫面上**
+ *    —— 這是 002 research #2「二次訂正」既有的結論：知識庫沒有正式的 SOP 編號制度，
+ *    把檔案 id（或它的短版本）當編號顯示只是杜撰一個對不到任何外部制度的字串。
+ *    `shared/types/knowledge.ts` 的 `KnowledgeHit.id` 也逐字寫著同一條。
+ * ⚠️ 同一份文件被檢索命中多個片段時是**多筆 `KnowledgeHit`**（002 research #1 決策 2，
+ *    快查那側刻意逐段列出）；但來源清單的單位是「文件」，因此進到這裡之前
+ *    MUST 依 id 去重 —— 見 `server/services/closure/cited-sops.ts`。
+ */
+export interface ClosureCitedSop {
+  id: string
+  /** 清理過的來源檔名（去掉副檔名與 `_V1_20250925_部門可見` 一類後綴） */
+  title: string
 }
 
 /**
@@ -549,8 +583,14 @@ export interface ClosureDraft {
    * ⚠️ 文案 MUST 是「相關的」而非「引用的」：模型從頭到尾沒看過這份清單
    *    （見 `ClosureDraftAiPart` 的說明），寫成「引用」等於在稽核紀錄上
    *    宣稱一件沒有發生過的事。
+   * ⚠️ **草稿帶 `{ id, title }`，`ClosureSummary` 只帶 id** —— 兩者刻意不同形狀：
+   *    畫面上要讓客服判斷「這份該不該刪」，靠的是檔名（`title`）；
+   *    Board 要的是事後仍能指回同一份文件的穩定識別，靠的是 id。
+   *    ⚠️ MUST NOT 改成兩個平行欄位（`citedSopIds` ＋ `citedSopTitles`）——
+   *    那是一組必須恆等卻沒有機制保證的鏡像欄位，漏更新一邊不會報錯
+   *    （同一個形狀已在 `baselineAt`／`closureBaseline` 上踩過，見 `stores/closure.ts`）。
    */
-  citedSopIds: string[]
+  citedSops: ClosureCitedSop[]
   followUps: ClosureFollowUp[]
 
   // ── 唯讀欄位（FR-010a）—— 由系統計算 ─────────────────────────
@@ -597,6 +637,13 @@ export interface ClosureSummary {
   sentimentTrough: number | null
   /** 情緒留空的原因與實際涵蓋範圍（Board 欄位 `period_sentiment_note`） */
   sentimentNote: string | null
+  /**
+   * Board 欄位 `cited_sops`（JSON 陣列字串）。
+   *
+   * ⚠️ **只存 id，不存標題** —— 稽核紀錄要的是事後仍能指回同一份文件的穩定識別，
+   *    而檔名會改（版本後綴、部門可見範圍都寫在檔名裡）。畫面上顯示的標題由
+   *    `ClosureDraft.citedSops` 承載，寫入時 `.map(s => s.id)` 落成本欄位。
+   */
   citedSopIds: string[]
   followUps: ClosureFollowUp[]
   confidence: number | null

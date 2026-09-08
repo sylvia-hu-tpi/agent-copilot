@@ -23,6 +23,7 @@ import type { ClosureDraft, ClosureDraftAiPart } from '../../../../../shared/typ
 import type { KnowledgeHit } from '../../../../../shared/types/knowledge.js'
 import { useAIProvider } from '../../../../services/ai/index.js'
 import { parseClosureDraftAiPart } from '../../../../services/ai/schemas.js'
+import { toCitedSops } from '../../../../services/closure/cited-sops.js'
 import { fetchPeriodMessages } from '../../../../services/closure/period.js'
 import { computeReadonlyFields } from '../../../../services/closure/readonly-fields.js'
 import { loadConversationContext } from '../../../../services/conversation-context.js'
@@ -96,7 +97,7 @@ export default defineEventHandler(async (event): Promise<ClosureDraft> => {
   /*
     知識庫檢索 —— 比照 `server/services/blocks/suggestion.ts` 的用法：以客戶的文字發言組 query。
 
-    ⚠️⚠️ **檢索結果直接成為 `citedSopIds`，不經過模型**（2026-09-08 改）。
+    ⚠️⚠️ **檢索結果直接成為 `citedSops`，不經過模型**（2026-09-08 改）。
          結案 agent 的 system prompt 逐字列出「不要輸出 citedSopIds —— 由系統填入」，
          因此舊寫法（把命中當白名單去過濾模型的輸出）永遠在過濾一個空清單：
          正式環境的欄位恆為空、面板區塊恆不顯示，只有退回 Mock 的環境看得到值。
@@ -150,6 +151,8 @@ export default defineEventHandler(async (event): Promise<ClosureDraft> => {
     periodStart,
     firstCustomerAt,
     operatorId: session.operatorId,
+    operatorLabel: session.operatorName,
+    orgId: session.orgId,
     confidence: aiPart.confidence,
   })
 
@@ -182,8 +185,14 @@ export default defineEventHandler(async (event): Promise<ClosureDraft> => {
     resolution: aiPart.resolution,
     actionsTaken: aiPart.actionsTaken,
     sentimentOutcome: aiPart.sentimentOutcome,
-    // ⚠️ 由系統填入，不是模型挑的 —— 見上方檢索那一段
-    citedSopIds: knowledgeHits.map(h => h.id),
+    /*
+      ⚠️ 由系統填入，不是模型挑的 —— 見上方檢索那一段。
+      ⚠️ **MUST 經 `toCitedSops()`**：同一份文件命中多段就是多筆 `KnowledgeHit`，
+         直接 `.map()` 會讓同一個來源在清單裡出現兩次（見該檔說明）。
+      ⚠️ 這裡帶 `title` 是因為畫面上要顯示檔名；Board 的 `cited_sops` 仍只存 id，
+         由前端在 commit 時 `.map(s => s.id)` 落回去。
+    */
+    citedSops: toCitedSops(knowledgeHits),
     followUps: aiPart.followUps,
     readonly,
   }

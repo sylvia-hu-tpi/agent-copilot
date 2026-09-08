@@ -26,6 +26,7 @@
 
 import { defineStore } from 'pinia'
 import type {
+  ClosureCitedSop,
   ClosureCommitResponse,
   ClosureDraft,
   ClosureFollowUp,
@@ -111,9 +112,9 @@ export interface ClosureSession {
 /** 可由客服編輯的欄位（data-model §2）—— `updateField()` 只接受這些 */
 export type ClosureEditableKey =
   | 'summary' | 'intent' | 'category' | 'resolution'
-  | 'actionsTaken' | 'sentimentOutcome' | 'citedSopIds' | 'followUps'
+  | 'actionsTaken' | 'sentimentOutcome' | 'citedSops' | 'followUps'
 
-type ClosureEditableValue = string | string[] | ClosureFollowUp[]
+type ClosureEditableValue = string | string[] | ClosureFollowUp[] | ClosureCitedSop[]
 
 function blank(): ClosureSession {
   return {
@@ -415,7 +416,13 @@ export const useClosureStore = defineStore('closure', () => {
             resolution: draft.resolution,
             actionsTaken: draft.actionsTaken,
             sentimentOutcome: draft.sentimentOutcome,
-            citedSopIds: draft.citedSopIds,
+            /*
+              ⚠️ **Board 只收 id**（`cited_sops`）—— 標題只活在草稿裡，供客服判斷該不該刪。
+                 檔名會隨版本／可見範圍後綴變動，存進稽核紀錄的必須是穩定的識別。
+                 ⚠️ 在這裡就地 `.map()`，MUST NOT 在 store 上另存一份 id 陣列 ——
+                 那又是一組必須恆等卻沒有機制保證的鏡像欄位（見下方 `baselineAt` 那段）。
+            */
+            citedSopIds: draft.citedSops.map(s => s.id),
             followUps: draft.followUps,
             /*
               ⚠️ 直接讀 `scopes`，**不再另存一份鏡像欄位**（2026-09-08）。

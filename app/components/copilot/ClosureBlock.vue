@@ -16,6 +16,10 @@
  *
  * ⚠️ **受控詞彙欄位沒有自由輸入**（憲法 4.6）。模型挑不到時該欄位留空並顯示
  *    「請選擇」—— MUST NOT 保留模型自己生成的值。
+ *    ⚠️ **四個欄位一視同仁**：分類／處理結果／情緒結果（單選）＋ 採取的行動（多選）。
+ *    留空是**合法**的寫入值（`commit.post.ts` 的 `enumOrEmpty` 允許空字串），
+ *    因此畫面若不說，客服會直接寫入一筆欄位空白的正式紀錄而全程無錯誤 ——
+ *    「請選擇」與其下那句提示是這條路徑上唯一的煞車。
  */
 
 import {
@@ -24,14 +28,14 @@ import {
   RESOLUTIONS,
   SENTIMENT_OUTCOMES,
 } from '~~/config/categories'
-import type { ClosureFollowUp, ClosurePeriodOrigin } from '#shared/types/copilot'
+import type { ClosureCitedSop, ClosureFollowUp, ClosurePeriodOrigin } from '#shared/types/copilot'
 import { useClosureStore } from '~/stores/closure'
 
 /*
-  ⚠️ 刻意放寬成 `string[]`：`config/categories.ts` 的 `as const` 讓 `USelect` 把
-     `model-value` 的型別窄化成那幾個字面值，而受控詞彙欄位**允許空字串**
-     （模型挑不到、客服還沒補時就是留空，FR-015）。不放寬的話 typecheck 會逼人
-     把「留空」實作成某個真實選項，而那正是憲法 4.6 禁止的事。
+  ⚠️ 刻意放寬成 `string[]`：`config/categories.ts` 的 `as const` 會把型別窄化成
+     那幾個字面值，而受控詞彙欄位**允許空字串**（模型挑不到、客服還沒補時就是留空，
+     FR-015）。不放寬的話 typecheck 會逼人把「留空」實作成某個真實選項，
+     而那正是憲法 4.6 禁止的事。
      ⚠️ 值域仍然只有這一份來源 —— 放寬的是型別，不是清單。
 */
 const categoryItems: string[] = [...CATEGORIES]
@@ -115,10 +119,54 @@ const draftAt = computed(() => {
   }).format(new Date())
 })
 
+/**
+ * 「接手時間」的**顯示**值。⚠️ 只換顯示，寫進 Data Board 的值不動。
+ *
+ * ⚠️ 這一格原本把 server 給的字串原樣印出來（`2026-09-08T02:13:19.700Z`）。
+ *    那是 UTC，而客服在 UTC+8 讀它 —— 螢幕上是 02:13、
+ *    他記得自己十點多才接手，於是這個「由系統計算、不可修改」的欄位變成沒人會去看的字。
+ *
+ * ⚠️ **Board 的值不受這裡影響，而且結構上不可能受影響**：`joined_at` 由
+ *    `commit.post.ts` 以 server 端的 `computeReadonlyFields()` 重算，
+ *    request body 帶來的一律忽略（契約 R3.7）。跨時區的比對基準因此恆為 UTC，
+ *    這也是刻意不把「易讀版本」寫進 Board 的原因 —— 存進去的字串一旦帶了
+ *    產生它的那台瀏覽器的時區，之後就再也無法確定它到底是哪個時刻。
+ */
+const joinedAtLabel = computed(() => {
+  const iso = readonlyFields.value?.joinedAt
+  return iso ? formatAbsolute(iso, locale.value) : ''
+})
+
+/**
+ * 情緒三數值留空時那句說明（`sentimentNote`）裡的時間戳，一併換成易讀版本。
+ *
+ * ⚠️ **這是「就地改寫」而不是「重組句子」**：`sentimentNote` 是 server 在
+ *    `sentiment-range.ts` 組好的一整句中文，句型有四種（沒有評分點／起點無法解析／
+ *    評分未涵蓋第一則客戶發言／區間起點之後沒有評分點）。要在前端重組就得把那四句
+ *    拆成 i18n key ＋ 參數，連帶改動契約欄位、Board schema 與四份規格文件 ——
+ *    而客服要的只是「那個時間我看得懂」。因此只挑句子裡的 ISO 時間戳換掉，
+ *    其餘一個字都不動。
+ *
+ * ⚠️ **只換畫面，Board 的 `period_sentiment_note` 仍存原始 ISO** ——
+ *    理由同 `joinedAtLabel`：存進去的字串帶了瀏覽器時區之後就無法還原成確切時刻。
+ *    這是刻意讓畫面與 Board／後端日誌在字面上不一致（2026-09-08 使用者裁示：
+ *    前端以客服好比對為主，不強求與後端日誌逐字相同）。
+ *
+ * ⚠️ 比對不到就整段留原樣 —— 其中一句正是「區間起點無法解析（…）」，
+ *    那一句裡的字串本來就不是合法時間，**它必須維持原樣**才說得通。
+ */
+const sentimentNoteLabel = computed(() => {
+  const note = readonlyFields.value?.sentimentNote
+  if (!note) return ''
+  return humanizeTimestamps(note, locale.value)
+})
+
 // ── 編輯 ───────────────────────────────────────────────────────────────
 
-const set = (key: Parameters<typeof store.updateField>[1], value: string | string[] | ClosureFollowUp[]): void =>
-  store.updateField(props.conversationId, key, value)
+const set = (
+  key: Parameters<typeof store.updateField>[1],
+  value: string | string[] | ClosureFollowUp[] | ClosureCitedSop[],
+): void => store.updateField(props.conversationId, key, value)
 
 function addFollowUp(): void {
   set('followUps', [...(draft.value?.followUps ?? []), { action: '' }])
@@ -133,7 +181,7 @@ function patchFollowUp(i: number, over: Partial<ClosureFollowUp>): void {
 }
 
 function removeSop(id: string): void {
-  set('citedSopIds', (draft.value?.citedSopIds ?? []).filter(x => x !== id))
+  set('citedSops', (draft.value?.citedSops ?? []).filter(s => s.id !== id))
 }
 
 /**
@@ -188,6 +236,14 @@ const failKind = computed(() => session.value?.error?.failKind ?? null)
  *    最醒目的藍鍵，等於在推客服直接寫入已經過期的摘要（2026-09-04 比對畫布時發現）。
  */
 const BTN = 'flex h-[30px] items-center justify-center gap-1.5 rounded-[7px] text-[0.9063rem] transition-colors'
+
+/**
+ * B7 那一列次要文字鈕的樣式（畫布 `hasFailSecond` 分支逐字）——
+ * 無框無底、`--navy-2`、底線。⚠️ **底線不可省**：這一列沒有框也沒有底色，
+ * 底線是它唯一「看得出來可以按」的訊號，而它出現的時機正是客服最慌的那一刻。
+ */
+const LINK_BTN = 'cursor-pointer border-none bg-transparent p-0 text-[0.8438rem] underline'
+
 
 const regenBtnStyle = computed(() => {
   if (status.value === 'writing') {
@@ -309,6 +365,57 @@ const failFallback = computed(() => {
     category: draft.value?.category || '—',
   })
 })
+
+/**
+ * 「複製摘要文字」（B7 的次鈕之一）——照 `failFallback` 那句話，
+ * 讓客服把手上這份草稿貼到 CRM 手動建檔。
+ *
+ * ⚠️ **這裡 MUST 複製草稿內文，與 `reportToIt` 正好相反。**
+ *    `reportToIt` 的收件人是 IT，草稿內文是客戶對話個資、不該給他們（憲法 1.5）；
+ *    這一顆的目的地是**客服自己的剪貼簿**，而他本來就正在螢幕上讀這些內容。
+ *    寫入已經失敗了，此刻擋住他手動建檔只會讓那次服務完全沒有紀錄。
+ *
+ * ⚠️ 內容是**客服眼前這一份**（含他自己改過的欄位），不是 AI 的原始草稿 ——
+ *    貼進 CRM 的必須跟他按下寫入時想寫的那一份相同。
+ * ⚠️ 唯讀區的三個情緒數值與 `sentimentNote` 也帶上：CRM 那幾欄要填什麼，
+ *    只有這裡看得到。時間一律用**易讀版本**（`formatAbsolute`）——
+ *    這份文字的唯一讀者是人。
+ */
+async function copySummaryText(): Promise<void> {
+  const d = draft.value
+  if (!d) return
+  const ro = d.readonly
+  const line = (label: string, value: string): string => `${label}：${value || '—'}`
+  const lines = [
+    line(t('closure.fields.summary'), d.summary),
+    line(t('closure.fields.intent'), d.intent),
+    line(t('closure.fields.category'), d.category),
+    line(t('closure.fields.resolution'), resolutionItems.value.find(o => o.value === d.resolution)?.label ?? ''),
+    line(t('closure.fields.sentimentOutcome'), sentimentOutcomeItems.value.find(o => o.value === d.sentimentOutcome)?.label ?? ''),
+    line(t('closure.fields.actionsTaken'), d.actionsTaken.join('、')),
+    line(t('closure.fields.citedSops'), d.citedSops.map(c => c.title).join('、')),
+    line(
+      t('closure.fields.followUps'),
+      d.followUps.map(f => [f.action, f.owner, f.dueHint].filter(Boolean).join(' / ')).join('；'),
+    ),
+    line(t('closure.fields.operators'), ro.operatorLabels.join('、')),
+    line(t('closure.fields.joinedAt'), formatAbsolute(ro.joinedAt, locale.value)),
+    ro.sentimentStart === null
+      ? line(t('closure.fields.sentimentStart'), humanizeTimestamps(ro.sentimentNote ?? '', locale.value))
+      : [
+          line(t('closure.fields.sentimentStart'), String(ro.sentimentStart)),
+          line(t('closure.fields.sentimentEnd'), String(ro.sentimentEnd)),
+          line(t('closure.fields.sentimentTrough'), String(ro.sentimentTrough)),
+        ].join('\n'),
+  ].join('\n')
+  try {
+    await navigator.clipboard.writeText(lines)
+    toast.add({ title: t('closure.fail.summaryCopied'), color: 'neutral' })
+  }
+  catch {
+    // 剪貼簿被瀏覽器擋下（非安全來源、未授權）—— 靜默降級，不要再彈一個錯誤蓋住原本的失敗
+  }
+}
 
 /**
  * 「回報 IT」（B7 的次鈕）。畫布只定義了按鈕文字，行為由本規格補上。
@@ -506,166 +613,309 @@ async function onCommit(): Promise<void> {
       <!-- ⑤ 草稿本體 -->
       <template v-if="draft">
         <label class="flex flex-col gap-1">
-          <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+          <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
             {{ $t('closure.fields.summary') }}
           </span>
           <!--
-            ⚠️ **畫布的 `regen` 淡出（`opacity:0.45`）在這裡做不到，刻意不做。**
-               畫布 B4 讓舊的摘要正文淡出，但契約 R2.2 要求發請求前先把 `draft` 清空
-               （理由：保留舊內容的話畫面顯示的是上一個區間的摘要，而兩份長得一樣、
-               客服看不出來）。`draft` 是 `null` 時這個 textarea 根本不會渲染，
-               沒有正文可以淡出 —— 綁上 opacity 只會是死程式碼。
-               這個規格衝突已記入 `DESIGN_FEEDBACK.md` D-8，等 Design 與 R2.2 二選一。
+            ⚠️ **`regen` 期間不做淡出，這是契約 R2.2 的直接結果，不是省略。**
+               R2.2 要求發請求前先把 `draft` 清空（理由：保留舊內容的話畫面顯示的是
+               上一個區間的摘要，而兩份長得一樣、客服看不出來）。`draft` 是 `null` 時
+               這個 textarea 根本不會渲染，沒有正文可以淡出 —— 綁 opacity 只會是死程式碼。
+               ✅ 2026-09-08 版畫布已採納此決議：舊的 `sumOpacity`（B4 的 `opacity:0.45`）
+               整個移除，B4 改為「重算期間整份表單不存在 ＋ 單一忙碌鍵」，並逐字加註
+               「舊內容不留半透明殘影」。畫布與 R2.2 現在同義，`DESIGN_FEEDBACK.md` D-8 已結清。
           -->
-          <UTextarea
-            :model-value="draft.summary"
-            :rows="5"
-            autoresize
-            @update:model-value="set('summary', String($event))"
+          <textarea
+            class="ac-field min-h-[104px] resize-y px-[11px] py-[9px] text-[0.9375rem] leading-[1.7]"
+            :value="draft.summary"
+            @input="set('summary', ($event.target as HTMLTextAreaElement).value)"
           />
         </label>
 
         <label class="flex flex-col gap-1">
-          <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+          <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
             {{ $t('closure.fields.intent') }}
           </span>
-          <UInput
-            :model-value="draft.intent"
-            @update:model-value="set('intent', String($event))"
-          />
+          <input
+            class="ac-field h-[34px] px-[11px]"
+            :value="draft.intent"
+            @input="set('intent', ($event.target as HTMLInputElement).value)"
+          >
         </label>
 
+        <!--
+          ⚠️ **三個受控詞彙欄位是原生 `<select>`，不是 `USelect`**（2026-09-08 照畫布改）。
+             畫布 §7.2 ⑥ 訂的是 34px／radius 9px／`--surface-2` 底／`--border-strong` 框
+             ＋ 右側絕對定位的 `chevron-down`，而 `USelect` 走的是 Nuxt UI 自己的預設尺寸
+             與色盤 —— 對不上，且不會有任何錯誤或型別問題。
+             這也讓第 6 區塊與專案其餘部分一致：全 repo 的表單控制項都是手刻 ＋ 畫布 token。
+          ⚠️ **首項固定是 `value=""` 的「請選擇」**，且文字色依有無值切換
+             （有值 `--text`／留空 `--text-2`）—— 留空是合法的寫入值，
+             它必須看得出來是「還沒填」而不是「填了空白」。
+        -->
         <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-          <label class="flex flex-col gap-1">
-            <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+          <label class="flex min-w-0 flex-col gap-1">
+            <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
               {{ $t('closure.fields.category') }}
             </span>
-            <USelect
-              :model-value="draft.category"
-              :items="categoryItems"
-              :placeholder="$t('closure.fields.choose')"
-              @update:model-value="set('category', String($event))"
-            />
+            <span class="relative block">
+              <select
+                class="ac-field h-[34px] cursor-pointer appearance-none py-0 pl-[11px] pr-7"
+                :style="{ color: draft.category ? 'var(--text)' : 'var(--text-2)' }"
+                :value="draft.category"
+                @change="set('category', ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ $t('closure.fields.choose') }}</option>
+                <option v-for="c in categoryItems" :key="c" :value="c">{{ c }}</option>
+              </select>
+              <UIcon
+                name="i-lucide-chevron-down"
+                class="pointer-events-none absolute right-[9px] top-1/2 size-3.5 -translate-y-1/2"
+                :style="{ color: 'var(--text-3)' }"
+              />
+            </span>
           </label>
-          <label class="flex flex-col gap-1">
-            <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+          <label class="flex min-w-0 flex-col gap-1">
+            <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
               {{ $t('closure.fields.resolution') }}
             </span>
-            <USelect
-              :model-value="draft.resolution"
-              :items="resolutionItems"
-              :placeholder="$t('closure.fields.choose')"
-              @update:model-value="set('resolution', String($event))"
-            />
+            <span class="relative block">
+              <select
+                class="ac-field h-[34px] cursor-pointer appearance-none py-0 pl-[11px] pr-7"
+                :style="{ color: draft.resolution ? 'var(--text)' : 'var(--text-2)' }"
+                :value="draft.resolution"
+                @change="set('resolution', ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ $t('closure.fields.choose') }}</option>
+                <option v-for="r in resolutionItems" :key="r.value" :value="r.value">
+                  {{ r.label }}
+                </option>
+              </select>
+              <UIcon
+                name="i-lucide-chevron-down"
+                class="pointer-events-none absolute right-[9px] top-1/2 size-3.5 -translate-y-1/2"
+                :style="{ color: 'var(--text-3)' }"
+              />
+            </span>
           </label>
-          <label class="flex flex-col gap-1">
-            <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+          <label class="flex min-w-0 flex-col gap-1">
+            <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
               {{ $t('closure.fields.sentimentOutcome') }}
             </span>
-            <USelect
-              :model-value="draft.sentimentOutcome"
-              :items="sentimentOutcomeItems"
-              :placeholder="$t('closure.fields.choose')"
-              @update:model-value="set('sentimentOutcome', String($event))"
-            />
+            <span class="relative block">
+              <select
+                class="ac-field h-[34px] cursor-pointer appearance-none py-0 pl-[11px] pr-7"
+                :style="{ color: draft.sentimentOutcome ? 'var(--text)' : 'var(--text-2)' }"
+                :value="draft.sentimentOutcome"
+                @change="set('sentimentOutcome', ($event.target as HTMLSelectElement).value)"
+              >
+                <option value="">{{ $t('closure.fields.choose') }}</option>
+                <option v-for="o in sentimentOutcomeItems" :key="o.value" :value="o.value">
+                  {{ o.label }}
+                </option>
+              </select>
+              <UIcon
+                name="i-lucide-chevron-down"
+                class="pointer-events-none absolute right-[9px] top-1/2 size-3.5 -translate-y-1/2"
+                :style="{ color: 'var(--text-3)' }"
+              />
+            </span>
           </label>
         </div>
 
-        <!-- 模型留空的受控詞彙欄位：明白要求客服補上（FR-015） -->
-        <p
-          v-if="!draft.category || !draft.resolution || !draft.sentimentOutcome"
-          class="text-[0.8125rem]"
-          :style="{ color: 'var(--open)' }"
-        >
-          {{ $t('closure.fields.chooseHint') }}
-        </p>
-
         <label class="flex flex-col gap-1">
-          <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+          <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
             {{ $t('closure.fields.actionsTaken') }}
           </span>
+          <!--
+            ⚠️ **這一顆刻意保留 `USelectMenu`，不像另外三個那樣手刻。**
+               畫布對它要的正是 `aria-haspopup="listbox"` ＋ `aria-multiselectable`
+               ＋ `role="option"` ＋ 鍵盤操作與焦點管理 —— 那些 `USelectMenu` 現成就有，
+               而手刻重寫最容易出錯的也正是這一段，且**無障礙壞掉不會報錯**。
+               外觀差異用 `:ui` 對到畫布的 token 即可（`ac-field` 與另外三個共用）。
+          -->
           <USelectMenu
             :model-value="draft.actionsTaken"
             multiple
             :items="actionItems"
+            :placeholder="$t('closure.fields.choose')"
+            :search-input="{ placeholder: $t('closure.fields.actionSearch') }"
+            :ui="{
+              base: 'ac-field h-[34px] py-0 pl-[11px] pr-[9px] cursor-pointer',
+              placeholder: 'text-[var(--text-2)]',
+              content: 'rounded-[10px] border border-[var(--border-strong)] bg-[var(--surface)]',
+            }"
             @update:model-value="set('actionsTaken', ($event as string[]))"
-          />
+          >
+            <!--
+              ⚠️ **搜尋框與空結果的文案 MUST 自己給。** `USelectMenu` 內建的字串走
+                 `@nuxt/ui` 自己的 locale，而本專案沒有設定 `UApp` 的 `locale` ——
+                 於是它落回英文預設（`Search…`／`No matching data`），在一個全中文的
+                 內部工具裡漏出兩句英文。**這不會報錯，也不在我方的 i18n 檔裡**，
+                 因此 grep 自己的語系檔永遠找不到它（2026-09-08 比對畫布時才發現）。
+              ⚠️ 逐字取畫布：placeholder「搜尋行動…」、空結果「沒有符合的行動」。
+              ⚠️ **畫布另外要 `aria-label="搜尋行動"`，這裡沒有給** —— `searchInput` 的型別是
+                 `InputProps`，而它用 `@vue-ignore` 把 `InputHTMLAttributes` 從 props 型別裡拿掉了，
+                 傳 `aria-label` 會是型別錯誤。執行期其實會落到 `<input>` 上
+                 （`UInput` 是 `inheritAttrs: false` ＋ `v-bind="{ ...$attrs, ...ariaAttrs }"`），
+                 但為此加一個「型別說不行、實際可以」的 cast 不划算：
+                 那個 aria-label 的字與 placeholder 完全相同，少了它並不會讓這個控制項失去名稱。
+                 ⚠️ 要補的話**連同 cast 的理由一起寫**，不要只加一個 `as any`。
+            -->
+            <template #empty>
+              <span class="text-[0.875rem]" :style="{ color: 'var(--text-3)' }">
+                {{ $t('closure.fields.actionEmpty') }}
+              </span>
+            </template>
+          </USelectMenu>
         </label>
 
-        <div v-if="draft.citedSopIds.length" class="flex flex-col gap-1">
-          <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+        <!--
+          模型留空的受控詞彙欄位：明白要求客服補上（FR-015、FR-020a）。
+
+          ⚠️ **四個欄位共用這一句，因此位置在四個欄位之後**（2026-09-08 從三個單選
+             之間移到這裡）—— 三個單選並排時每欄僅約 120px，逐欄各掛一句排不下。
+          ⚠️ **`actionsTaken` 也算留空**：`ai/schemas.ts` 用 `filter` 濾掉白名單外的值，
+             因此「模型挑不到」與「客服真的沒採取任何行動」都會得到空陣列，
+             在資料上**不可區分**；而後者在結案流程裡幾乎不存在（都結案了總做了什麼）。
+             既然分不出來就一律提醒，代價只是偶爾多一句提示 —— 反過來漏提醒的代價是
+             一筆行動欄空白的紀錄直接進了正式報表，而寫入本身不會擋（`enumOrEmpty` 允許空）。
+        -->
+        <p
+          v-if="!draft.category || !draft.resolution || !draft.sentimentOutcome || !draft.actionsTaken.length"
+          class="flex items-start gap-[5px] text-[0.8125rem] leading-relaxed"
+          :style="{ color: 'var(--open)' }"
+        >
+          <UIcon name="i-lucide-info" class="mt-[3px] size-3 shrink-0" />
+          {{ $t('closure.fields.chooseHint') }}
+        </p>
+
+        <!--
+          ⚠️⚠️ **chip 上顯示的 MUST 是 `title`（清理過的檔名），MUST NOT 是 `id`。**
+               知識庫沒有正式的 SOP 編號制度，檔案 id 對客服不對應任何外部識別
+               —— 002 research #2「二次訂正」逐字撤銷過「用檔案 id 當顯示編號」這個做法，
+               `shared/types/knowledge.ts` 的 `KnowledgeHit.id` 也註明「MUST NOT 顯示於 UI」。
+               這一欄在 2026-09-08 之前渲染的正是 `id`：客服看到 `knowledge-fallback-1a2b3c`
+               這種字串，等於要他認得檔案 id 才能判斷該不該刪掉這筆來源。
+          ⚠️ `:key` 用 id 而非 title —— 兩份不同文件清理後可能同名（版本後綴被去掉了）。
+             來源清單本身已在 server 端依 id 去重（`cited-sops.ts`）。
+        -->
+        <div class="flex flex-col gap-[5px]">
+          <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
             {{ $t('closure.fields.citedSops') }}
           </span>
           <div class="flex flex-wrap gap-1.5">
             <span
-              v-for="id in draft.citedSopIds"
-              :key="id"
-              class="flex items-center gap-1 rounded-full px-2 py-0.5 text-[0.8125rem]"
-              :style="{ background: 'var(--navy-soft)', color: 'var(--info)' }"
+              v-for="sop in draft.citedSops"
+              :key="sop.id"
+              class="ac-mono flex h-[26px] min-w-0 max-w-full items-center gap-1.5 rounded-[7px] py-0 pl-[9px] pr-1.5 text-[0.8438rem]"
+              :style="{
+                background: 'var(--navy-soft)',
+                border: '1px solid var(--navy-soft-bd)',
+                color: 'var(--navy-2)',
+              }"
             >
-              {{ id }}
+              <span class="min-w-0 truncate">{{ sop.title }}</span>
               <button
                 type="button"
+                class="flex size-[18px] shrink-0 items-center justify-center rounded-[5px] transition-colors hover:bg-[var(--navy-soft-bd)]"
                 :aria-label="$t('closure.fields.sopRemove')"
                 :title="$t('closure.fields.sopRemove')"
-                @click="removeSop(id)"
+                @click="removeSop(sop.id)"
               >
                 <UIcon name="i-lucide-x" class="size-3" />
               </button>
             </span>
+            <!--
+              ⚠️ **刪光之後這一欄不消失**（2026-09-08 照畫布改；先前是整塊 `v-if` 隱藏）。
+                 整欄消失會讓客服以為自己弄壞了什麼，而且看不出「這次寫入不帶來源」
+                 是他自己造成的 —— 那正是他下一步要確認的事。
+            -->
+            <span
+              v-if="!draft.citedSops.length"
+              class="text-[0.8438rem]"
+              :style="{ color: 'var(--text-3)' }"
+            >
+              {{ $t('closure.fields.sopsAllRemoved') }}
+            </span>
           </div>
         </div>
 
-        <div class="flex flex-col gap-1">
-          <span class="text-[0.8125rem] font-medium" :style="{ color: 'var(--text-3)' }">
+        <div class="flex flex-col gap-[5px]">
+          <span class="text-[0.8438rem]" :style="{ color: 'var(--text-2)' }">
             {{ $t('closure.fields.followUps') }}
           </span>
-          <div v-for="(f, i) in draft.followUps" :key="i" class="flex items-center gap-1.5">
-            <!--
-              ⚠️ 空白的「要做什麼」會讓寫入被 server 擋下（見 script 區的
-                 `invalidFollowUpRows`）。錯誤 MUST 標在客服打字的那一格上 ——
-                 只把寫入鍵停用而不指出是哪一列，等於換一種方式卡住他。
-            -->
-            <UInput
-              class="flex-1"
-              :model-value="f.action"
-              :placeholder="$t('closure.fields.followUpAction')"
-              :color="invalidFollowUpRows.has(i) ? 'error' : undefined"
-              :aria-invalid="invalidFollowUpRows.has(i)"
-              @update:model-value="patchFollowUp(i, { action: String($event) })"
-            />
-            <UInput
-              class="w-28"
-              :model-value="f.owner ?? ''"
-              :placeholder="$t('closure.fields.followUpOwner')"
-              @update:model-value="patchFollowUp(i, { owner: String($event) })"
-            />
-            <UInput
-              class="w-28"
-              :model-value="f.dueHint ?? ''"
-              :placeholder="$t('closure.fields.followUpDueHint')"
-              @update:model-value="patchFollowUp(i, { dueHint: String($event) })"
-            />
-            <UButton
-              size="xs" color="neutral" variant="ghost" icon="i-lucide-x"
-              :aria-label="$t('closure.fields.followUpRemove')"
-              @click="removeFollowUp(i)"
-            />
-          </div>
-          <p
-            v-if="hasInvalidFollowUps"
-            class="text-[0.8125rem]"
-            :style="{ color: 'var(--danger)' }"
+          <!--
+            ⚠️ **每列兩行，不是三欄並排**（2026-09-08 照畫布改）——
+               面板寬 420px 時三欄並排每欄只剩約 120px，「負責人」與時間都塞不下。
+               第一行是整列寬的「待辦事項」，第二行才是負責人／時間／移除。
+            ⚠️ 空白的「要做什麼」會讓寫入被 server 擋下（見 script 區的
+               `invalidFollowUpRows`）。錯誤 MUST 標在客服打字的那一格上，
+               且說明 MUST 就地放在**該列下方** —— 只把寫入鍵停用、或把說明統一放在
+               整組之後，客服都得自己一列一列找是哪一列空著。
+          -->
+          <div
+            v-for="(f, i) in draft.followUps"
+            :key="i"
+            class="flex flex-col gap-[3px] pb-0.5"
           >
-            {{ $t('closure.fields.followUpActionRequired') }}
-          </p>
-          <UButton
-            size="xs" color="neutral" variant="ghost" icon="i-lucide-plus"
-            class="self-start"
+            <div class="flex flex-col gap-1.5">
+              <input
+                class="ac-field h-[34px] px-[11px]"
+                :style="invalidFollowUpRows.has(i) ? { borderColor: 'var(--danger)' } : undefined"
+                :value="f.action"
+                :placeholder="$t('closure.fields.followUpAction')"
+                :aria-invalid="invalidFollowUpRows.has(i)"
+                @input="patchFollowUp(i, { action: ($event.target as HTMLInputElement).value })"
+              >
+              <div class="flex items-center gap-1.5">
+                <input
+                  class="ac-field h-[34px] min-w-0 flex-1 px-[11px]"
+                  :value="f.owner ?? ''"
+                  :placeholder="$t('closure.fields.followUpOwner')"
+                  @input="patchFollowUp(i, { owner: ($event.target as HTMLInputElement).value })"
+                >
+                <input
+                  class="ac-field h-[34px] min-w-0 flex-1 px-[11px]"
+                  :value="f.dueHint ?? ''"
+                  :placeholder="$t('closure.fields.followUpDueHint')"
+                  @input="patchFollowUp(i, { dueHint: ($event.target as HTMLInputElement).value })"
+                >
+                <!-- 畫布逐字：30×30、無框透明底、radius 7px、`--text-3`；hover 轉 `--surface-3` 底 ＋ `--text` 字 -->
+                <button
+                  type="button"
+                  class="flex size-[30px] shrink-0 items-center justify-center rounded-[7px] border-none bg-transparent transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text)]"
+                  :style="{ color: 'var(--text-3)' }"
+                  :aria-label="$t('closure.fields.followUpRemove')"
+                  @click="removeFollowUp(i)"
+                >
+                  <UIcon name="i-lucide-x" class="size-3.5" />
+                </button>
+              </div>
+            </div>
+            <p
+              v-if="invalidFollowUpRows.has(i)"
+              class="text-[0.8125rem] leading-relaxed"
+              :style="{ color: 'var(--danger)' }"
+            >
+              {{ $t('closure.fields.followUpActionRequired') }}
+            </p>
+          </div>
+          <!--
+            ⚠️ **虛線框是這顆鈕的語意，不只是裝飾**（畫布 §7.2 ⑥ 逐字）——
+               它與上方那幾列實線框的輸入框放在一起，虛線是「這裡還沒有東西、按了才會長出來」
+               的既有視覺語彙（同 `ClosureScopePicker` 未選中的安全網列）。
+               用 `variant="ghost"` 的話它就只是一段可以點的文字，跟旁邊的欄位失去關係。
+          -->
+          <button
+            type="button"
+            class="flex h-[28px] cursor-pointer items-center gap-[5px] self-start rounded-[7px] border border-dashed border-[var(--border-strong)] bg-transparent pl-1.5 pr-2.5 text-[0.875rem] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text)]"
+            :style="{ color: 'var(--text-2)' }"
             @click="addFollowUp"
           >
+            <UIcon name="i-lucide-plus" class="size-[13px] shrink-0" />
             {{ $t('closure.fields.followUpAdd') }}
-          </UButton>
+          </button>
         </div>
 
         <!-- ⑥ 唯讀區 —— 由系統計算，客服改不了（FR-010a，寫入時 server 會重算） -->
@@ -680,11 +930,11 @@ async function onCommit(): Promise<void> {
           <dl class="grid grid-cols-2 gap-x-3 gap-y-1">
             <div class="contents">
               <dt>{{ $t('closure.fields.operators') }}</dt>
-              <dd class="ac-mono truncate">{{ readonlyFields.operators.join('、') }}</dd>
+              <dd class="ac-mono truncate" :title="readonlyFields.operators.join('、')">{{ readonlyFields.operatorLabels.join('、') }}</dd>
             </div>
             <div class="contents">
               <dt>{{ $t('closure.fields.joinedAt') }}</dt>
-              <dd class="ac-mono truncate">{{ readonlyFields.joinedAt }}</dd>
+              <dd class="ac-mono truncate" :title="readonlyFields.joinedAt">{{ joinedAtLabel }}</dd>
             </div>
             <!--
               ⚠️ 三個數值為 null 時**顯示原因，不顯示 0**（FR-022b）。
@@ -720,7 +970,7 @@ async function onCommit(): Promise<void> {
                 <UIcon name="i-lucide-loader-2" class="mt-0.5 size-3 shrink-0 animate-spin" />
                 {{ $t('closure.fields.sentimentPending') }}
               </span>
-              <span v-else :style="{ color: 'var(--text-3)' }">{{ readonlyFields.sentimentNote }}</span>
+              <span v-else :style="{ color: 'var(--text-3)' }" :title="readonlyFields.sentimentNote ?? undefined">{{ sentimentNoteLabel }}</span>
             </div>
           </dl>
         </div>
@@ -791,15 +1041,6 @@ async function onCommit(): Promise<void> {
             {{ $t('closure.buttons.regenerate') }}
           </button>
 
-          <!-- ⚠️ 次鈕只有 B7 有 —— B8 的出路是人工查驗後重試，不是回報 -->
-          <UButton
-            v-if="showFailure && failKind === 'failed'"
-            color="neutral"
-            variant="outline"
-            @click="reportToIt"
-          >
-            {{ $t('closure.buttons.reportIt') }}
-          </UButton>
 
           <button
             type="button"
@@ -822,6 +1063,28 @@ async function onCommit(): Promise<void> {
                   ? $t('closure.buttons.retryWriteUnverified')
                   : $t('closure.buttons.retryWrite'))
                 : session?.stale ? $t('closure.buttons.commitStale') : $t('closure.buttons.commit') }}
+          </button>
+        </div>
+
+        <!--
+          ⑧-b 次要文字鈕列（畫布 `hasFailSecond` 分支）——**只有 B7 有**。
+          B8 的出路是「人工查驗後重試」，多給兩個出口只會讓人繞過那個查驗。
+
+          ⚠️ **兩顆的內容不同，不可互相取代**：
+             - 「複製摘要文字」複製的是**草稿內文**，供客服照 `failFallback` 那句話
+               貼到 CRM 手動建檔 —— 目的地是他自己的剪貼簿，不外流。
+             - 「回報 IT」複製的是 `failMeta` ＋ `draftId` ＋ `conversationId`，
+               **刻意不含草稿內文**（憲法 1.5）—— IT 拿 `reqId` 就能串起三步寫入。
+          ⚠️ 2026-09-08 之前這一列只有「回報 IT」，而且做成按鈕列裡的 outline 按鈕：
+             錯誤區塊逐字要客服「複製摘要並貼到 CRM 手動建檔」，畫面上卻沒有那顆鈕。
+        -->
+        <div v-if="showFailure && failKind === 'failed'" class="flex items-center gap-[7px]">
+          <button type="button" :class="LINK_BTN" :style="{ color: 'var(--navy-2)' }" @click="copySummaryText">
+            {{ $t('closure.buttons.copySummary') }}
+          </button>
+          <span class="text-[0.8438rem]" :style="{ color: 'var(--border-strong)' }">·</span>
+          <button type="button" :class="LINK_BTN" :style="{ color: 'var(--navy-2)' }" @click="reportToIt">
+            {{ $t('closure.buttons.reportIt') }}
           </button>
         </div>
 
