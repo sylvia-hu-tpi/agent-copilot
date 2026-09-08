@@ -304,6 +304,7 @@ Task: "T028 ClosureLeaveFailedBanner.vue"
 |---|---|---|
 | T003／T007／T020 | `summarizeClosure({ …, knowledgeHits, signal })`；`citedSopIds` 取 `knowledgeHits` 前兩個 | **不再收 `knowledgeHits`**。結案 agent 的 system prompt 逐字禁止它輸出 `citedSopIds`，該欄位改由 route 以檢索命中直接填入，檢索與 AI 呼叫並行（契約 R2.7） |
 | T006 | `parseClosureDraftAiPart(raw, vocabulary, knowledgeHitIds)`；`citedSopIds` 不在命中內者丟棄 | 簽章去掉第三個參數，schema 也不再含 `citedSopIds` —— 那道後驗永遠在過濾一個空清單 |
+| T027 | 可編輯欄位 `citedSopIds`（可移除的 chip） | 欄位改名 **`citedSops: { id, title }[]`**，chip 顯示的是 `title`（清理過的檔名）。原本渲染的是 `id`，客服看到 `knowledge-fallback-1a2b3c` 這種字串 —— 而 002 research #2「二次訂正」早就撤銷過「用檔案 id 當顯示編號」的做法（契約 R2.7a）。⚠️ 走查沒抓到：R2.7 的舊做法讓正式環境的清單恆為空、這一區塊根本不出現。同時補上依 id 去重（同一份文件命中多段會產生重複 chip 與重複 `:key`） |
 | T011 | `sentimentRange(timeline, periodStart)`；最早一點晚於 **`periodStart`** 即判未涵蓋 | 改比 **區間內第一則客戶文字發言**（`period.firstCustomerAt`，第三個參數）。比 `periodStart` 會讓回頭客的三個情緒欄恆為空（契約 R2.4） |
 | T020 | `signal` 綁 `event.node.req.on('close')` | 改綁 **`event.node.res`** 的 `close` 並以 `writableEnded` 排除正常結束。Node 24 實測：`req` 的 `close` 在 body 讀完當下就發出，`readBody()` 之後掛的 listener 永遠不會觸發，取消從未生效過（契約 R2.9） |
 

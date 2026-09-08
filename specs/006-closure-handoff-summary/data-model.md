@@ -98,7 +98,10 @@ export interface ClosureDraft {
   resolution: ClosureResolution     // 受控詞彙
   actionsTaken: string[]            // 受控詞彙（多選）
   sentimentOutcome: ClosureSentimentOutcome  // 受控詞彙
-  citedSopIds: string[]              // ⚠️ 由 server 以檢索命中填入，非模型輸出（2026-09-08）
+  // ⚠️ 由 server 以檢索命中填入，非模型輸出（2026-09-08）。
+  //    帶 title 是因為 chip 顯示的 MUST 是檔名、MUST NOT 是檔案 id（契約 R2.7a）；
+  //    Board 的 cited_sops 仍只存 id，commit 時 `.map(s => s.id)` 落回去。
+  citedSops: Array<{ id: string, title: string }>
   followUps: Array<{ action: string, owner?: string, dueHint?: string }>
 
   // ── 唯讀欄位（FR-010a）——由系統計算，客服 MUST NOT 能改 ──
@@ -114,7 +117,8 @@ export interface ClosureDraft {
  *    前端送什麼都不影響結果。
  */
 export interface ClosureDraftReadonly {
-  operators: string[]
+  operators: string[]                // 客服 id（u_…）——**這是寫進 Board 的值**
+  operatorLabels: string[]           // 🆕 上面每個 id 的顯示名，逐一對位；查不到回原 id
   joinedAt: string
   closedAt: string | null           // 寫入當下才有值
   /** 三者同區間（FR-022）；區間內評分點不齊時**三個一起**為 null（FR-022b） */
@@ -135,7 +139,7 @@ export interface ClosureDraftReadonly {
 |---|---|---|
 | `category`／`resolution`／`actionsTaken`／`sentimentOutcome` | MUST ∈ `config/categories.ts` 的白名單 | 模型給的值不在白名單 → **該欄位留空**並要求客服選擇（憲法 4.6、FR-015）。MUST NOT 寫入模型自由生成的值 |
 | `summary`／`intent` | 非空字串 | 模型回空 → 整份草稿視為產生失敗（FR-046），比照 `ConversationSummary` 的 `intent.min(1)` |
-| `citedSopIds` | **由 server 以本次知識庫檢索命中直接填入**（2026-09-08 改，契約 R2.7） | 不適用 —— 值不再來自模型，因此沒有可丟棄的 id。⚠️ 舊規則是「以檢索命中為白名單過濾模型輸出」，但結案 agent 的 system prompt 逐字禁止它輸出這個欄位，那道後驗永遠在過濾一個空清單：正式環境的欄位恆為空，只有退回 Mock 的環境看得到值 |
+| `citedSops` | **由 server 以本次知識庫檢索命中直接填入**（2026-09-08 改，契約 R2.7）；MUST 依 id 去重、保留第一次出現的順序（R2.7a） | 不適用 —— 值不再來自模型，因此沒有可丟棄的 id。⚠️ 舊規則是「以檢索命中為白名單過濾模型輸出」，但結案 agent 的 system prompt 逐字禁止它輸出這個欄位，那道後驗永遠在過濾一個空清單：正式環境的欄位恆為空，只有退回 Mock 的環境看得到值。⚠️ 不去重的話同一份文件命中兩段就有兩顆一模一樣的 chip、`:key` 重複、按一次 `×` 兩顆一起消失、Board 寫進重複 id —— 四個症狀都不會讓測試變紅 |
 | `sentimentStart/End/Trough` | 三者**同時**有值或**同時**為 null | 只有部分有值 → 視為實作錯誤，三者一律轉 null 並填 `sentimentNote` |
 | `followUps[].action` | 非空字串 | 丟棄該筆 |
 
@@ -235,11 +239,11 @@ export interface AIProvider {
 
 ⚠️ **2026-09-08 起不再收 `knowledgeHits`。** 結案 agent 的 system prompt 逐字要求
 「不要輸出 `citedSopIds` —— 由系統填入」，把命中交給模型也不會有人引用它；
-`ClosureDraft.citedSopIds` 改由 `closure/draft.post.ts` 以檢索命中直接填入（契約 R2.7），
+`ClosureDraft.citedSops` 改由 `closure/draft.post.ts` 以檢索命中直接填入（契約 R2.7），
 檢索與這支呼叫因此互不相依、一律並行。
 
 `ClosureDraftAiPart` ＝ `ClosureDraft` 去掉 `draftId`／`conversationId`／`period`／`readonly`
-**與 `citedSopIds`** —— **模型只產內容欄位**，其餘一律由系統填（比照 `analyzeSentiment()`
+**與 `citedSops`** —— **模型只產內容欄位**，其餘一律由系統填（比照 `analyzeSentiment()`
 不信任模型給的 `messageId`／`at`、`suggest()` 不信任模型給的 `id`，是同一條既有原則）。
 
 ### 4.3 `config/categories.ts`（research #19）

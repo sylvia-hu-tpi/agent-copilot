@@ -133,7 +133,8 @@
 - **R2.5（FR-015、憲法 4.6）** 模型回的受控詞彙不在 `config/categories.ts` 白名單內時，
   **該欄位留空**（空字串／空陣列），MUST NOT 寫入模型自由生成的值。
 - **R2.6（FR-046）** 產生失敗 MUST 回 **502**，MUST NOT 回一份欄位全空的 200。
-- **R2.7（憲法 4.3、2026-09-08 改）** `citedSopIds` MUST **由 server 以本次知識庫檢索命中直接填入**，
+- **R2.7（憲法 4.3、2026-09-08 改）** 草稿的知識庫來源欄位（`citedSops`，寫入後落成 Board 的
+  `cited_sops`）MUST **由 server 以本次知識庫檢索命中直接填入**，
   MUST NOT 取自模型輸出。理由：結案 agent 的 system prompt 逐字列出
   「不要輸出 `citedSopIds` —— 由系統填入」，因此舊做法（把命中當白名單去過濾模型輸出）
   永遠在過濾一個空清單 —— 正式環境的欄位恆為空、面板區塊恆不顯示，
@@ -142,6 +143,19 @@
   ⚠️ 對外文案 MUST 是「**相關的**知識庫來源」而非「引用的」—— 模型沒看過這份清單，
   寫成「引用」是在稽核紀錄上宣稱一件沒有發生過的事。
   ⚠️ 檢索與 AI 呼叫因此互不相依，MUST 併行（舊寫法是串行 await，白等一次檢索）。
+- **R2.7a（2026-09-08 補）** 草稿的欄位是 **`citedSops: { id, title }[]`**，
+  MUST NOT 只回 id 陣列。畫面上的 chip 顯示 `title`（清理過的檔名），
+  `id` **MUST NOT 出現在 UI** —— 知識庫沒有正式的 SOP 編號制度，
+  002 research #2「二次訂正」已逐字撤銷「用檔案 id 頂替顯示編號」的做法，
+  `shared/types/knowledge.ts` 的 `KnowledgeHit.id` 也註明同一條。
+  ⚠️ 本欄位落地時渲染的正是 `id`，客服看到 `knowledge-fallback-1a2b3c` 這種字串。
+  走查沒抓到，因為當時 R2.7 的舊做法讓正式環境的清單恆為空、區塊根本不出現 ——
+  **「畫面上沒看到」不等於「沒有問題」。**
+  ⚠️ 同一份文件命中多段是**多筆 `KnowledgeHit`**（002 research #1 決策 2），
+  進入本欄位前 MUST 依 `id` 去重並保留第一次出現的順序（`services/closure/cited-sops.ts`）。
+  ⚠️ **Board 的 `cited_sops` 仍只存 id**（見 R3 系列與 board schema）——
+  稽核要的是穩定識別，而檔名帶版本／可見範圍後綴、會變。
+  兩者形狀不同是刻意的，MUST NOT 為了「一致」而在草稿上另存一份平行的 id 陣列。
   ⚠️ 要改成「讓模型自己挑」的話，MUST 先改 iMBrace 後台的 system prompt ——
   那不在這個 repo 裡，改了不會有 commit（CLAUDE.md 地雷 4）。
 - **R2.8（憲法 1.5）** 錯誤訊息與日誌 MUST NOT 含訊息全文。
@@ -174,6 +188,8 @@
   "periodFirstCustomerAt": "2026-09-04T02:00:00.000Z",
   "summary": "…", "intent": "…", "category": "…",
   "resolution": "resolved", "actionsTaken": ["…"],
+  // ⚠️ 寫入端只收 **id 陣列**，由前端從草稿的 citedSops 就地 `.map(s => s.id)`（R2.7a）。
+  //    標題只活在草稿裡供客服判斷該不該刪；Board 的 cited_sops 要的是穩定識別。
   "sentimentOutcome": "appeased", "citedSopIds": ["…"], "followUps": [],
   "baselineAt": "…", "closureBaseline": ["rec_a1"]
 }
@@ -209,7 +225,7 @@
 - **R3.5（FR-031）** 回查不到 MUST 當作**失敗**（502），MUST NOT 因為寫入回了 200 就報成功。
 - **R3.6（FR-013）** `reviewed_by`／`reviewed_at` **由 server 依 session 填**，
   MUST NOT 取自 request body —— 從 body 取等於讓稽核欄位可偽造。
-- **R3.7（FR-010a）** `operators`／`joinedAt`／`sentiment*`／`channel`／`contactId`
+- **R3.7（FR-010a）** `operators`／`operatorLabels`／`joinedAt`／`sentiment*`／`channel`／`contactId`
   **由 server 重新計算**，request body 帶來的一律忽略。
   ⚠️ 這是唯讀欄位「真的唯讀」的實作方式 —— 只靠前端 disabled 是擋不住的，
   而被改掉之後 SC-006b 的重算驗證會永遠對不起來。

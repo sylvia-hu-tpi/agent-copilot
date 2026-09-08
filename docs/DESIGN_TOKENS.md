@@ -26,7 +26,14 @@
 > 對象是 `DESIGN_FEEDBACK.md` 的每一條回饋 ＋ 其對應章節：⛔ 表全項、§1 的 token 值、
 > §7.2 區塊①②⑥、§7.5、以及 2b 的決策卡。結果：**⛔ 表有五條早就被畫布採納**
 > （見表下說明）、§7.2 ⑥ 的置頂列與過期提示位置**兩處敘述是錯的**（已就地訂正），
-> 另發現畫布的第 6 區塊**缺人審欄位的規格**（`DESIGN_FEEDBACK.md` A-2）。
+> 另發現畫布的第 6 區塊**缺人審欄位的規格**（舊 `DESIGN_FEEDBACK.md` A-2，已於當天結清）。
+>
+> ⚠️ **2026-09-08 重新擷取了第 6 區塊（§7.2 ⑥），當天兩輪**：
+> 上午 Design 補上整組人審欄位、`zeroTop` 的提示、情緒分析中的提示（新增 2b 的 C3 畫板），
+> 並把 B4 的 `sumOpacity` 移除；下午再補「相關的知識庫來源」chip 列、四欄的空值態、
+> 「採取的行動」改為多選 listbox、「後續待辦」的已填列，另新增 **D1／D2／E1／E2** 四張畫板。
+> §7.2 ⑥ 的欄位表、樣式值與 §7.5 已依最新版就地訂正。
+> ⚠️ **第 6 區塊自此以畫布為準，`DESIGN_FEEDBACK.md` 已無該區塊的待辦。**
 > **其餘章節（§2～§6、§8～§10）仍是 2026-09-03 版的擷取結果**，動工前照第二條紀律重新核對。
 >
 > ⚠️ **本文件不留變更沿革。** 畫布改版後就地訂正即可 —— ①本身就是真相來源，
@@ -94,9 +101,11 @@
 
 > ⚠️ **`--danger` 系反過來要以畫布為準**：畫布定義了這三個 token，實作先前自訂的值已改為對齊（見 §1）。
 
-> ⚠️ 另有數處**畫布畫得到、但平台資料拿不到**因而實作缺席或改寫的（各種「N 則」數字、
-> 客服姓名、未讀則數、「只看未回覆」、OTP「還可嘗試 N 次」）。
+> ⚠️ 另有數處**畫布畫得到、但平台資料拿不到**因而實作缺席或改寫的
+> （客服姓名、未讀則數、對話清單列的「最後一則訊息」、客戶輸入狀態）。
 > 那些不是取捨而是沒有資料，清單見 `DESIGN_FEEDBACK.md` B 段。
+> ⚠️ 原本列在這裡的「只看未回覆」與 OTP「還可嘗試 N 次」，
+> **畫布已於 2026-09-08 13:18 版改掉**，兩者不再是落差。
 
 下表的 artboard 編號是**畫布內的 section id**（`<section id="…">`）。
 ⚠️ 引用畫面時一律用「artboard 編號 ＋ 狀態名稱」，不要用檔名 —— 備存截圖已於 2026-09-03 刪除。
@@ -136,7 +145,7 @@
 | 左側對話清單收合 | `toggleLeft` | 收合為窄直條，保留展開鈕與未讀數徽章 |
 | Copilot 面板收合 | `toggleRightCollapsed` | 收合為窄直條，保留 COPILOT 直排標籤與展開鈕。⚠️ 收合鈕**只在已接手時存在**（003 FR-017） |
 | 撞單攔截 | `toggleIntercept` | 憲法 3.3① 的封閉集合之一。Composer 轉為「已攔截」，三個處置選項＋「草稿已保留 · 送出鍵已鎖定」 |
-| **結案中**（唯一的結案基準態） | 畫面上按「結案」（`startClosing`），`cancelClosing` 復原 | **① Composer 維持可輸入**（畫布未對結案狀態做任何停用，唯一的 `disabled` 綁在撞單攔截上）＋上方常駐橫幅，逐字：「**結案中** —— 摘要內容為按下結案當下的對話快照，不含此後的新訊息。送出新訊息後，可按「重新產生」把它納入摘要。」（✅ 2026-09-04 版畫布已改掉舊尾句「要送出訊息請先取消結案。」—— 它與同狀態下可用的 composer 矛盾，Design 已採納）。**② 標題列換成兩顆按鈕**，⚠️ **「離開對話」在此狀態不顯示**（`closing` 分支只有這兩顆）：`取消結案`（height 29px、padding 0 10px、`1px solid --border-strong`、透明底、radius 7px、0.9063rem `--text-2`、`undo-2` 13px、hover `--surface-2`、`title="回到已接手狀態，不寫入任何紀錄"`）＋ `結案中…`（**disabled 的 `--navy` 實心鍵**：height 29px、padding 0 12px、無框、radius 7px、`--navy-fg` 字／0.9063rem／500、`cursor:default`、`opacity:.85`，內含 `animation:spin 1s linear infinite` 的 `loader-2` 13px）＋ 其下輔助說明「取消結案＝回到已接手狀態，不會留下任何紀錄」（0.7813rem `--text-3`）。`writing` 時「取消結案」轉 disabled（`1px solid --border` ＋ `--surface-3` 底 ＋ `--text-3` 字 ＋ `cursor:not-allowed` ＋ `opacity:.6`，icon 仍是 `undo-2`）＋ `title="寫入請求已送出，此時無法取消"`，輔助說明同時換成 `lock` icon 11px ＋「寫入請求已送出，此時無法取消」。**③ 對話資訊列（收合態）另有一顆狀態 pill**：`--navy-soft` 底 ＋ `1px solid --navy-soft-bd` ＋ **radius 20px** ＋ padding 2px 9px ＋ 0.8438rem `--navy-2`，內含旋轉 `loader-2` **11px** ＋「結案中…」（未結案時同位置是 `--navy` 實心的「結案」鍵，height 27px）—— ⚠️ 與 ② 的標題列按鈕是**兩個不同位置**，不要只做一個。**④** 服務模式轉唯讀並提示「結案中無法切換服務模式，請先取消結案」；左側清單該列顯示「結案未完成」；右欄 `panelVariant` 轉 `closing`（第 6 區塊置頂、其餘五塊收合）。⚠️ **摘要過期與寫入中兩個子狀態已移到 2b**，1c 不再各開一個變體 |
+| **結案中**（唯一的結案基準態） | 畫面上按「結案」（`startClosing`），`cancelClosing` 復原 | **① Composer 維持可輸入**（畫布未對結案狀態做任何停用，唯一的 `disabled` 綁在撞單攔截上）＋上方常駐橫幅，逐字：「**結案中** —— 摘要內容為按下結案當下的對話快照，不含此後的新訊息。送出新訊息後，可按「重新產生」把它納入摘要。」（✅ 2026-09-04 版畫布已改掉舊尾句「要送出訊息請先取消結案。」—— 它與同狀態下可用的 composer 矛盾，Design 已採納）。**② 標題列換成兩顆按鈕**，⚠️ **「離開對話」在此狀態不顯示**（`closing` 分支只有這兩顆）：`取消結案`（height 29px、padding 0 10px、`1px solid --border-strong`、透明底、radius 7px、0.9063rem `--text-2`、`undo-2` 13px、hover `--surface-2`、`title="回到已接手狀態，不寫入任何紀錄"`）＋ `結案中…`（**disabled 的 `--navy` 實心鍵**：height 29px、padding 0 12px、無框、radius 7px、`--navy-fg` 字／0.9063rem／500、`cursor:default`、`opacity:.85`，內含 `animation:spin 1s linear infinite` 的 `loader-2` 13px）＋ 其下輔助說明「取消結案＝回到已接手狀態，不會留下任何紀錄」（0.7813rem `--text-3`）。`writing` 時「取消結案」轉 disabled（`1px solid --border` ＋ `--surface-3` 底 ＋ `--text-3` 字 ＋ `cursor:not-allowed` ＋ `opacity:.6`，icon 仍是 `undo-2`）＋ `title="寫入請求已送出，此時無法取消"`，輔助說明同時換成 `lock` icon 11px ＋「寫入請求已送出，此時無法取消」。**③ 對話資訊列（收合態）另有一顆狀態 pill**：`--navy-soft` 底 ＋ `1px solid --navy-soft-bd` ＋ **radius 20px** ＋ padding 2px 9px ＋ 0.8438rem `--navy-2`，內含旋轉 `loader-2` **11px** ＋「結案中…」（未結案時同位置是 `--navy` 實心的「結案」鍵，height 27px）—— ⚠️ 與 ② 的標題列按鈕是**兩個不同位置**，不要只做一個。⚠️ **這條警告本身就漏接過一次**：實作到 2026-09-08 手動驗收前只做了 ②，收合態在結案中仍顯示「結案」鍵，客服會以為沒按到而再按一次（那是一次無效操作，不會報錯、不留痕跡）。已補上，並由 `test/closure-ui-honesty.test.ts` ⑪ 守住。**④** 服務模式轉唯讀並提示「結案中無法切換服務模式，請先取消結案」；左側清單該列顯示「結案未完成」；右欄 `panelVariant` 轉 `closing`（第 6 區塊置頂、其餘五塊收合）。⚠️ **摘要過期與寫入中兩個子狀態已移到 2b**，1c 不再各開一個變體 |
 | 同事視角 — 有人正在結案 | `toggleColleague` | presence 列顯示「〈某人〉正在結案／你仍可回覆或自行結案」。⚠️ **不阻擋**同事回覆或自行結案，純提示 |
 | 摘要已寫入但離開失敗 | `toggleLeaveFailed` | 頂端橫幅「結案摘要已寫入，但離開對話失敗」＋「重試離開」；⚠️ 該 handler 會設 `closing:false`，因此**右欄回到 `expanded`、第 6 區塊已消失** —— 結案本身已完成（`specs/006` FR-047b）。左側「結案未完成」標記也已消失 |
 | 訊息載入完成 | `toggleMsgs` | 「載入較早的訊息」按鈕與「已載入 N 則」的兩態 |
@@ -353,7 +362,9 @@ box-shadow: var(--shadow)
   > 這是本文件**兩處**「畫布錯、實作對」的落差之一，另一處是 §4.2 的 OTP 字元集。
 - 按鈕「驗證並登入」
 - 「沒收到？」＋「{{mm:ss}} 後可重新寄送」／按鈕「重新寄送」
-- 錯誤「驗證碼不正確，還可嘗試 {{n}} 次。」
+- 錯誤「驗證碼不正確，請確認後再試一次。」
+  > ⚠️ 畫布 2026-09-08 13:18 版之前逐字寫著「還可嘗試 {{n}} 次」，**已依我方回饋改掉**：
+  > 驗證 API 的回應沒有剩餘次數欄位，那個數字只能用猜的。不要把它加回來。
 
 ### 1b
 - 徽章「選擇組織」
@@ -502,18 +513,123 @@ box-shadow: var(--shadow)
    `--text`／500 強調。2b 的「決策 · 置頂時的提示」卡片補的是**為什麼只說這一句**：
    「收合與還原是可預期的模式切換，不需要在每次結案時解釋一遍。」
 
-   內容由上到下：（過期提示）＋ **涵蓋範圍選擇器（§7.5）** ＋ 可編輯文字區塊（AI 生成的草稿）
-   ＋ 三個分類 pill（「意圖：…」／「處理結果：…」／「情緒結果：…」）
-   ＋ 時間戳逐字「**草稿產生於 HH:MM:SS**」＋ 兩個按鈕
+   展開後的容器是 `padding:0 12px 12px` ＋ `flex-direction:column` ＋ **`gap:10px`**。
+   內容由上到下：（過期提示）＋ **涵蓋範圍選擇器（§7.5）** ＋ **人審欄位組（見下表）**
+   ＋ 時間戳逐字「**草稿產生於 HH:MM:SS**」（`0.8125rem` `--text-3`，時間用 IBM Plex Mono）
+   ＋ 兩個按鈕
    ＋ 一行提醒文字：「「一鍵寫入 CRM」是本面板唯一會寫入資料庫的動作，寫入後不可自動回復。」
 
-   ⚠️ **畫布到此為止，但人審面板要的欄位不只這些**（`DESIGN_FEEDBACK.md` A-2，🔴 待 Design 補）。
-   `specs/006` FR-010a 要求分類／處理結果／實際採取的行動／情緒結果 MUST 是**白名單選單**
-   （模型挑不到時留空並顯示「請選擇」），另有引用的 SOP、後續待辦，以及一塊唯讀區
-   （參與的客服、接手時間、三個情緒數值或 `sentimentNote`）。
-   畫布那三顆 pill 只能看不能改，而本規格的核心正是「寫進 CRM 的是客服確認過的版本」。
-   **這幾組欄位目前是實作照面板既有 token 自行組出來的**（標籤 `0.8125rem` `--text-3`、
-   唯讀區 `--surface-2` 底 ＋ `--border` 框），畫布定稿後照改 —— 在那之前它們不算落差。
+   **人審欄位組**（⚠️ 2026-09-08 版畫布才補上，先前只有三顆唯讀 pill；
+   欄位清單與受控詞彙的選項逐字等同我方 `config/categories.ts`，順序也相同）：
+
+   | 順序 | 欄位 | 控制項與樣式 |
+   |---|---|---|
+   | 1 | 摘要正文 | `textarea`：`min-height:104px`、`resize:vertical`、`1px solid --border-strong`、radius **9px**、`--surface-2` 底、`padding:9px 11px`、`0.9375rem`／`line-height:1.7`／`--text` |
+   | 2 | 意圖 | `input`：`height:34px`、同上框線／底色／radius、`padding:0 11px`、`0.9063rem` |
+   | 3 | 分類 · 處理結果 · 情緒結果 | 一列三欄 `grid-template-columns:repeat(3,minmax(0,1fr))` ＋ `gap:8px`；每個是 `select`：`height:34px`、`appearance:none`、同上框線／底色／radius、`padding:0 28px 0 11px`、`0.9063rem`；右側絕對定位 `chevron-down` 14px `--text-3`（`right:9px`、`pointer-events:none`） |
+   | 4 | 採取的行動（**多選**） | 觸發鈕：`height:34px`、同上框線／底色／radius、`padding:0 9px 0 11px`；label `0.9063rem`，多值以「、」串接並 `text-overflow:ellipsis`；右側 `chevron-down` 14px `--text-3`。展開的面板 `position:absolute; top:38px; z-index:25`：`--surface` 底 ＋ `1px solid --border-strong` ＋ radius 10px ＋ `box-shadow:0 10px 28px rgba(16,24,40,.18)`；頂部搜尋框 `height:34px`、無框只有 `border-bottom:1px solid --border`、placeholder 逐字「搜尋行動…」；選項列 `padding:8px 11px`、hover `--surface-3`、右側勾號 14px `--navy-2`（`stroke-width:2.5`，未選以 `opacity` 隱藏）；清單 `max-height:198px` ＋ `overflow-y:auto`；無結果逐字「沒有符合的行動」（`0.875rem` `--text-3`、`padding:9px 11px`）。無障礙：觸發鈕 `aria-haspopup="listbox"` ＋ `aria-expanded`，面板 `role="listbox"` ＋ `aria-multiselectable`，選項 `role="option"` ＋ `aria-selected` |
+   | 5 | 相關的知識庫來源 | chip 列（`flex-wrap` ＋ `gap:6px`）。每顆：`height:26px`、`padding:0 6px 0 9px`、`1px solid --navy-soft-bd`、radius **7px**、`--navy-soft` 底；文字 `0.8438rem` `--navy-2` **IBM Plex Mono** ＋ `ellipsis`；`×` 鈕 18×18、radius 5px、透明底、`--navy-2`、hover `--navy-soft-bd`、`aria-label="移除這筆知識庫來源"`。⚠️ **只能移除、沒有新增** —— 內容由系統檢索填入。⚠️ **刪光之後欄位不消失**，改顯示逐字「已全部移除，寫入時不帶知識庫來源」（`0.8438rem` `--text-3`） |
+   | 6 | 後續待辦 | **每列兩行**（⚠️ 不是三欄並排 —— 420px 下每欄只剩約 120px）。外層 `flex-col gap:3px` ＋ `padding-bottom:2px`；內層 `flex-col gap:6px`。第一行：「待辦事項」input **整列寬**、`height:34px`、radius 9px、`--surface-2` 底，框線**依內容變色**（有字 `--border-strong`／空 **`--danger`**）。第二行 `flex gap:6px`：「負責人（選填）」與「時間（選填）」各 `flex:1 1 0`（同樣式），列尾移除鈕 30×30、透明底、radius 7px、`--text-3`、`aria-label="移除這一列待辦"`。該列未填時，其下一行 `0.8125rem` `--danger` 逐字「有待辦事項還沒填內容，請補上或移除該列後再寫入」。所有列之後才是虛線新增鈕：`height:28px`、`padding:0 10px 0 6px`、`1px dashed --border-strong`、radius 7px、透明底、`0.875rem` `--text-2`、內含 `plus` 13px；hover 轉 `--surface-2` 底 ＋ `--text` 字。⚠️ **待辦事項空白時「一鍵寫入 CRM」鎖住**（2b 的 **D1** 畫板），補上內容或移除該列即解鎖 |
+   | 7 | 唯讀區 | `--surface-2` 底 ＋ `1px solid --border` ＋ radius **9px** ＋ `padding:9px 11px` ＋ `gap:5px`；首行逐字「由系統計算，不可修改」（`0.8125rem` `--text-3`）；其下每列左為標籤、右為值（右對齊、`0.8125rem` `--text-2`、IBM Plex Mono、`overflow-wrap:anywhere`）：參與的客服／接手時間／區間起點情緒／區間終點情緒／區間最低情緒。⚠️ **這一區的值有兩套：畫面看到的與寫進 Board 的刻意不同**（見下方兩條註）|
+
+   ⚠️ **唯讀區的時間一律轉成本地時區 ＋ 時區標記**（`2026/09/08 10:13 [GMT+8]`），
+   涵蓋「接手時間」與情緒留空說明（`sentimentNote`）句子裡的時間戳；原始值留在 `title`。
+   ✅ **畫布已於 2026-09-08 14:12 版改採同一格式**（`sysHandover` 與 `sysSentiment` 逐字元相同），
+   因此這**不再**是實作偏離；此前畫布寫的是原始 UTC ISO `2026-09-08T02:13:19.700Z`。
+   當初改的理由留在這裡防回退：客服在 UTC+8 讀 `02:13` 對不上自己十點多接手的記憶，
+   而這一區的用途正是事後核對。
+   ⚠️ **時區標記不可省** —— 沒有它，畫面的 10:13 與 Board 的 02:13Z 看起來會像兩筆不同的紀錄。
+   ⚠️ **只換顯示。** 寫進 Data Board 的 `joined_at`／`period_sentiment_note` 與後端日誌
+   都仍是原始 UTC ISO —— 存進去的字串一旦帶了產生它的那台瀏覽器的時區，
+   之後就再也無法確定它是哪個時刻。兩者由 `commit.post.ts` 以 server 端
+   `computeReadonlyFields()` 重算、忽略 body（契約 R3.7），前端格式化結構上碰不到它們。
+   ⚠️ 情緒說明是**就地換掉句子裡的時間戳**，不重組句子 —— 那四句是 server 在
+   `sentiment-range.ts` 組好的，要重組就得拆成 i18n key ＋ 參數並改動契約與 Board schema。
+   其中「區間起點無法解析（…）」那一句裡的字串本來就不是合法時間，**維持原樣**。
+   共用實作在 `app/utils/absolute-time.ts`，守衛見 `test/closure-ui-honesty.test.ts` ⑦。
+
+   ⚠️ **「參與的客服」顯示的是名字，不是 id**（2026-09-08）。經 `server/services/directory.ts`
+   查到的顯示名（平台沒有人名，名冊 `display_name` 實測 12/12 全是 email，因此實際上是 email），
+   多人以「、」串接，原始 id 留在 `title`。
+   ✅ **畫布已於 2026-09-08 14:31 版改採同樣的呈現**（`sysAgents` 逐字
+   `agent.lin@company.com、agent.chen@company.com`，連分隔符都相同），因此這**不再**是實作偏離；
+   此前畫布寫的是原始 `u_df56079c-7df4-41c6-9ce0-5f57f29df534`。
+   當初改的理由留在這裡防回退：這一區要回答的是「誰服務過這位客戶」，
+   而 `u_` 開頭那串字對客服不對應任何他認得的東西。
+   ⚠️⚠️ **登入者自己的名字來自 session（`session.operatorName`），不是名冊。**
+   名冊只裝 `conversations.get()` 的 `users[]`（團隊名冊），**登入者自己不保證在裡面**，
+   而且沒有任何路徑會把自己寫進去（JOIN 走 presence 的 `reportViewing({ id, name })`，
+   不是 `rememberOperators()`）。2026-09-08 手動驗收時整欄都顯示原始 `u_` id，就是這個原因 ——
+   它走的是「查不到就誠實顯示 id」那條**合法**路徑，因此不報錯、也沒有紅燈。
+   ⚠️ **查不到名字的那一個回傳原本的 id**，MUST NOT 留空、MUST NOT 編一個名字 ——
+   「知道有這個人但不知道他叫什麼」與「沒有這個人」在畫面上必須不同（§10.2）。
+   ⚠️ **同事（`watchers`）目前只有名冊可查**，名冊沒收錄的同事仍會顯示 id。
+   要一併解掉的話來源是 presence 條目（`reportViewing()` 存過 `operatorName`），
+   但那要把 store 傳進 `computeReadonlyFields()` 並改成 async —— **尚未做**。
+   ⚠️ **寫進 Board 的 `operators` 仍是 id。** id 穩定，email 會隨帳號改名變動，
+   改完之後舊紀錄就指不回任何人；這也與 `reviewed_by` 存 id 的既有做法一致。
+   契約上因此是兩個欄位：`operators`（id、進 Board）與 `operatorLabels`（顯示名、只給畫面），
+   由同一個 `map` 產生所以必然對位。守衛見 `test/closure-operator-labels.test.ts`。
+
+   **欄位標籤一律 `0.8438rem` `--text-2`**（不加粗），標籤與控制項之間 `gap:4px`
+   （後續待辦與唯讀區是 `5px`）。✅ 實作已於 2026-09-08 照改（原為 `0.8125rem` `--text-3` ＋ 500）。
+
+   **實作對齊狀態（2026-09-08 收尾）**：手刻的部分已逐字照畫布 ——
+   欄位標籤、知識庫 chip（含「已全部移除」的空態）、共用提示句（含 `info` icon）、
+   後續待辦的兩行式與**就地**的錯誤說明、按鈕列的六種組合。
+   `UInput`／`USelect` 已於本日改成原生 `<input>`／`<select>` ＋ `ac-field`
+   （`height:34px`／radius 9px／`--surface-2` 底／`1px solid --border-strong`），
+   後續待辦的兩顆 `UButton` 也改成原生 `<button>` ＋ 畫布的 token
+   （新增鈕 `1px dashed --border-strong`／`height:28px`；移除鈕 30×30／radius 7px）。
+
+   ⚠️ **仍是 `USelectMenu` 的只剩「採取的行動」一顆**，那是**刻意保留**的：
+   畫布對它要的 `aria-haspopup="listbox"` ＋ `aria-multiselectable` ＋ `role="option"`
+   ＋ 鍵盤與焦點管理，正是手刻最容易做壞、而且**壞掉不會報錯**的一段。
+   觸發鈕與面板外框以 `:ui` 對到畫布的 token。
+   ⚠️⚠️ **它內建的文案走 `@nuxt/ui` 自己的 locale，不是我方的 i18n 檔。**
+   本專案沒有設定 `UApp` 的 `locale`，因此搜尋框與空結果會落回**英文**
+   （`Search…`／`No matching data`）—— 在一個全中文的內部工具裡漏出兩句英文，
+   而且 grep `i18n/locales/zh-TW.json` 永遠找不到它（那兩句根本不在我方的語系檔裡）。
+   已於 2026-09-08 以 `:search-input` 與 `#empty` 覆寫成畫布的
+   「搜尋行動…」／「沒有符合的行動」。**日後再引入任何 Nuxt UI 的複合元件時，
+   先確認它有沒有自己的內建字串。**
+   ⚠️ 畫布另外要 `aria-label="搜尋行動"`，**目前沒有給**：`searchInput` 的型別是
+   `InputProps`，而它以 `@vue-ignore` 把 `InputHTMLAttributes` 從 props 型別裡拿掉，
+   傳 `aria-label` 會是型別錯誤（執行期其實會落到 `<input>` 上）。
+   那個 aria-label 的字與 placeholder 完全相同，因此沒有為它加一個
+   「型別說不行、實際可以」的 cast。
+   ⚠️ 面板內部尚未逐字對的還有：`box-shadow:0 10px 28px rgba(16,24,40,.18)`、
+   選項列 `padding:8px 11px` ＋ hover `--surface-3`、勾號 14px `--navy-2`
+   （`stroke-width:2.5`）、清單 `max-height:198px`。
+
+   唯讀區裡三個情緒數值留空時的兩種替代呈現：
+
+   - 留空且**不是**在分析中 → 一行 `sentimentNote`：`0.8125rem` `--text-3`／`line-height:1.6`。
+     ⚠️ **句子裡的時間戳在畫面上換成本地時區的易讀版本**（原始整句留在 `title`），
+     理由與下方「接手時間」同一條
+   - 留空且情緒為 `analyzing`／`retrying` → 旋轉的 `loader-2` 13px `--open`
+     ＋ 文字 `0.8125rem` `--open`／`line-height:1.65`，逐字
+     「情緒分析仍在進行，此刻寫入的紀錄情緒欄位會留空。等它完成後按「重新產生」即可補上。」
+     （對應 2b 的 **C3** 畫板。⚠️ 寫入本身**不封鎖** —— 情緒欄位留空是合法紀錄）
+
+   #### 四個受控詞彙欄位的空值態（2b 的 **E1**／**E2** 畫板）
+
+   模型挑不到白名單值時該欄位就是**空的**（`ai/schemas.ts` 會把白名單外的值換成空，
+   FR-020a），而空值**是合法的寫入值**（`commit.post.ts` 的 `enumOrEmpty` 允許空字串）——
+   不會被擋、不會報錯。因此這一態必須靠文案講清楚，不能只靠視覺。
+
+   - **三個單選**：首項是 `<option value="">請選擇</option>`；
+     文字色依有無值切換 —— 有值 `--text`、**留空 `--text-2`**（淡一階，但仍過 AA）。
+   - **採取的行動**：未選時觸發鈕的 label 逐字「請選擇」，色同樣是 `--text-2`。
+   - **共用提示句**：四欄**任一個**留空就顯示，**只出現一次**，位置在四個欄位之後 ——
+     `info` icon 12px（`margin-top:3px`）＋ 文字 `0.8125rem` `--open`／`line-height:1.6`／`gap:5px`，
+     逐字「AI 沒有從清單中選到合適的值，請自行選擇」。
+   - ⚠️ **寫入按鈕維持可用**（E2 逐字：「客服有權留空結案」）——
+     MUST NOT 因為欄位留空而封鎖寫入。這與 C3（情緒分析未完成）是同一條原則。
+   - ⚠️ **`actionsTaken` 為空陣列也算留空**：`filter` 濾掉白名單外的值之後，
+     「模型挑不到」與「真的沒採取行動」在資料上不可區分，而漏提醒的代價是
+     一筆行動欄空白的紀錄直接進正式報表。
+     觸發條件因此是 `!分類 || !處理結果 || !情緒結果 || 採取的行動為空`。
 
    **按鈕的六種組合**（畫布的 `freshIdle`／`staleIdle`／`scopeRegen`／`writing`／
    `writeFail="failed"`／`writeFail="unverified"`）：
@@ -524,7 +640,7 @@ box-shadow: var(--shadow)
    | `staleIdle` 摘要過期 | **重新產生**（升為主要） | 仍要寫入 CRM（降為次要） |
    | `scopeRegen` 改了涵蓋範圍 | — | 重新產生中，請稍候 |
    | `writing` 寫入中 | **文字不變**「重新產生」，轉 `disabled` ＋ `--surface-3` 底 ＋ `opacity:.6` | 文字轉為「**寫入中…**」＋ 旋轉 `loader-2`，`disabled` ＋ `--navy` 底 ＋ `opacity:.85` |
-   | **B7** `failed` 寫入失敗 | 「重新產生」**降為次要** | **紅色**主鈕「重試寫入 CRM」＋ `rotate-cw`；另有次鈕「回報 IT」 |
+   | **B7** `failed` 寫入失敗 | 「重新產生」**降為次要** | **紅色**主鈕「重試寫入 CRM」＋ `rotate-cw`；另有次要文字鈕列「複製摘要文字」·「回報 IT」 |
    | **B8** `unverified` 回報成功但查不到 | 同上 | **紅色**主鈕「已確認沒有，重試寫入」＋ `shield-check`；**無次鈕** |
 
    ⚠️ 摘要過期時，**選擇器上方**多一列「對話有新內容，建議重新產生」（2026-09-07 訂正：先前寫成「下方」）—— 它講的是這份草稿整體過期了，不是涵蓋範圍選錯了，擺在選擇器下方會讀成在解釋剛剛那個選擇。
@@ -554,7 +670,15 @@ box-shadow: var(--shadow)
 | `failFallback` | 備援：複製摘要並貼到 CRM 手動建檔，或回報 IT。 | 查驗方式：CRM 客戶頁 › 服務紀錄，比對「9/4 14:36 發票補寄」是否存在。 |
 | `failBtn` | 重試寫入 CRM | 已確認沒有，重試寫入 |
 | `failBtnIcon` | `rotate-cw` | `shield-check` |
-| `failSecond` | 回報 IT | （無） |
+| 次要文字鈕列（`hasFailSecond`／`failSecond`） | **「複製摘要文字」· 「回報 IT」** 兩顆（`0.8438rem`／`--navy-2`／底線，位於按鈕列之下） | （無） |
+
+⚠️ **兩顆的內容相反，MUST NOT 互相取代**（2026-09-08 補上「複製摘要文字」，此前只有「回報 IT」）：
+`回報 IT` 複製的是 `failMeta` ＋ `draftId` ＋ `conversationId`，**刻意不含草稿內文**
+（憲法 1.5 —— IT 拿 `reqId` 就能串起三步寫入，不需要看到客戶對話）；
+`複製摘要文字` 複製的**正是**草稿內文，那是 `failFallback` 逐字要客服做的事
+（「複製摘要並貼到 CRM 手動建檔」），目的地是他自己的剪貼簿，不外流。
+⚠️ 這一列**只有 B7 有**：B8 的出路是「先到 CRM 查驗、確認沒有再重試」，
+多給兩個出口只會讓人繞過那個查驗。守衛見 `test/closure-ui-honesty.test.ts` ⑧。
 
 ⚠️ **`failMeta` 裡的 `req 8f2c-41` 是我方要提供的請求識別碼**（`specs/006` FR-035a）——
 它是三步寫入（搜尋 → 建立／更新 → 回查）在日誌裡的串接鍵，客服看不懂也不需要懂，
@@ -653,9 +777,9 @@ box-shadow: var(--shadow)
 
 | `t`（起點） | `label` | `n` |
 |---|---|---|
-| `9/2 14:30` | 上次結案 · 分類：發票補寄（林佩君） | 25 |
-| `9/1 09:12` | 上次結案 · 分類：帳單金額疑義（陳彥廷） | 112 |
-| `8/14 11:05` | 上次結案 · 分類：會員資料變更（林佩君） | 203 |
+| `9/2 14:30` | 上次結案 · 分類：發票補寄（agent.lin@company.com） | 25 |
+| `9/1 09:12` | 上次結案 · 分類：帳單金額疑義（agent.chen@company.com） | 112 |
+| `8/14 11:05` | 上次結案 · 分類：會員資料變更（agent.lin@company.com） | 203 |
 | `第一則對話` | 自 2026/03/06 首次進線起算 · 完整對話 | 398 |
 
 ⚠️ **安全網那一列的起點逐字是「第一則對話」，不是時間戳** —— 客服要的是「這是完整對話」
@@ -709,7 +833,7 @@ box-shadow: var(--shadow)
 |---|---|
 | `never` 從未結案過 | 無候選，只有安全網。提示為**有框的告知卡**：`--navy-soft` 底 ＋ `1px solid --navy-soft-bd` ＋ radius 7px ＋ padding 7px 9px ＋ `info` 13px `--navy-2`；文字 0.875rem `--text-2`，逐字「這則對話從未被結案，預設**從第一則起算**。若只想涵蓋某段時間，可自訂起算時間。」（「從第一則起算」以 `--text`／500 強調） |
 | `overflow` 候選超過 5 個 | 只列最近 5 次。提示**無底色無框**（padding 2px 2px 0）、`ellipsis` 13px `--text-3`；文字 0.8438rem `--text-3`，逐字「另有 3 個更早的結案起點未列出（僅顯示最近 5 次）。需要更早的區間請用**自訂起算時間**。」（後四字以 `--navy-2` 強調） |
-| `zeroTop` 最上候選 0 則 | 示範 label 逐字：「林佩君已於 11:20 結案 · 此後尚無新訊息」，`n:0`。該列不可選，預設自動落到下一個。⚠️ **這個狀態沒有任何提示文字** —— 灰掉的那一列自己就是說明 |
+| `zeroTop` 最上候選 0 則 | 示範 label 逐字：「林佩君已於 11:20 結案 · 此後尚無新訊息」，`n:0`。該列不可選，預設自動落到下一個。⚠️ **2026-09-08 版起有一句提示**（先前沒有）：與 `overflow` 同一種**無框旁注**（`info` 13px `--text-3` ＋ padding 0 2px 2px），文字 0.8438rem **`--text-2`**，逐字「最近一次結案之後尚無新訊息，已自動改選下一個起點。」⚠️ 我方實作目前整行都用 `--text-3`，**待照畫布改為 `--text-2`**（尚未改） |
 | `regen` 改了選擇 | 見下 |
 
 #### `regen`（改了選擇、正在重新產生）
@@ -724,7 +848,12 @@ box-shadow: var(--shadow)
 
    ⚠️ **兩者的空格不同**：安全網版「已改為」後**不空格**（「已改為第一則對話起」），
    一般版空格（「已改為 9/2 14:30 起」）。
-2. **摘要 textarea `opacity:0.45`** —— ⚠️ 逐字只有那一個 textarea 淡出，其餘欄位不變。
+2. **整組人審欄位不存在** —— ⚠️ 2026-09-08 版起 `sumBody = !firstGen && !regen`，
+   重算期間摘要正文與所有欄位都不渲染。畫布的說明卡逐字加註「舊內容不留半透明殘影，
+   避免被誤讀成還可編輯」。
+   ⚠️ **舊版畫布是「摘要 textarea `opacity:0.45`、其餘欄位不變」** —— 該做法與我方契約
+   R2.2（發請求前先清空草稿）不能同時成立，且淡出範圍比實際被替換的範圍小，
+   已由 Design 於 2026-09-08 移除。看到任何文件仍在講「淡出」的，都是過期敘述。
 3. **按鈕列收成單一忙碌鍵**：一顆 `flex:1` 的 disabled 灰鍵 —— `1px solid --border` ＋
    `--surface-3` 底 ＋ `--text-3` 字 ＋ radius 7px ＋ height 30px ＋ `cursor:not-allowed`，
    內容為旋轉 `loader-2` 13px ＋「重新產生中，請稍候」。⚠️ **不是** primary 色。
@@ -744,9 +873,12 @@ box-shadow: var(--shadow)
 
 展開為 `role="dialog"` ＋ `aria-label="自訂起算時間"` 的彈窗（Esc 關閉，`stopPropagation`）：
 月曆（上／下月，超出範圍 `opacity:0.4` ＋ `cursor:not-allowed`；選中日 `--navy` 框 ＋
-`--navy-soft` 底 ＋ `--navy-2` 字 ＋ 700）＋ 時／分輸入 ＋ 預估則數逐字「**約 N 則**」
+`--navy-soft` 底 ＋ `--navy-2` 字 ＋ 700）＋ 時／分輸入
 ＋ 一行「可選範圍：`2026/03/06`（首次進線）至今」＋「取消」／「以此起算並重新產生」
 （後者 `flex:1`、height 28px、`--navy` 底、hover `--navy-2`）。
+
+⚠️ **2026-09-08 版起彈窗裡沒有「約 N 則」預估**（舊版的 `customEst` 已移除）——
+實際則數由套用後的涵蓋說明呈現。✅ 2b「B1 從未結案過」的說明卡也已同步刪掉該描述（舊 `DESIGN_FEEDBACK.md` D-4，已結清）。
 
 ⚠️ 自訂起點的 `label` 逐字為「**自訂起算時間（非結案起點）**」—— 誠實標示它不對應任何真實的結案事件。
 
@@ -847,7 +979,7 @@ wrapper 副標（逐字）：
   > ⚠️ 收合狀態的識別 MUST 用**日期本身**，不可用顯示文字 —— 「今天」那一組明天就叫「昨天」，
   > 用文字當 key 的話收合狀態會留在「今天」這個位置上，而不是跟著那批對話走。
   >
-  > ⚠️ 實作**多顯示一個該組的對話數**（收合時才出現，見 `DESIGN_FEEDBACK.md` C-8）——
+  > ⚠️ 實作**多顯示一個該組的對話數**（收合時才出現，舊 `DESIGN_FEEDBACK.md` C-8，已結清）——
   > 收起來之後那批對話從畫面上消失，只剩一個箭頭的話這一列等於在說「這裡什麼都沒有」。
 - 列項：**兩行**（⚠️ **2026-09-01 畫布改版，整個第二行都換掉了**）
 
@@ -1058,7 +1190,7 @@ wrapper 副標：「初次載入骨架 · 未選擇對話 · 對話清單為空 
 | 訊息流載入中 | 「正在載入訊息…」（⚠️ 畫布已拿掉則數）／Composer「連線建立後才可輸入」 |
 | 左欄品牌區 | 「台灣客服中心」／「已連線」（⚠️ 比 1c 少了「· 即時同步」） |
 | 對話清單為空 | 「找不到符合的對話」／「客戶僅有代號，請輸入完整代號片段（例：GW4772）或清除篩選。」／按鈕「清除搜尋與篩選」 |
-| 未選擇對話 | 「尚未選擇對話」／「從左側列表選擇一個對話開始處理。標記 ●&nbsp;active 的對話代表客戶正在等待回覆，建議優先處理。」／按鈕「處理最舊的 active 對話」「只看未回覆」 |
+| 未選擇對話 | 「尚未選擇對話」／「從左側列表選擇一個對話開始處理。標記 ●&nbsp;active 的對話代表客戶正在等待回覆，建議優先處理。」／按鈕「處理最舊的 active 對話」（⚠️ 只有這一顆） |
 | 右欄佔位 | 「選擇對話後提供輔助內容」／「面板內容於下一階段設計。」 |
 
 ⚠️ 最後一列是 **1d 自己的右欄佔位文字**，已由 §7 的 2a 取代——實作不應照抄這兩句。

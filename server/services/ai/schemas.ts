@@ -189,7 +189,7 @@ export function parseSuggestionCards(raw: unknown): SuggestionCard[] {
  * ⚠️ **本 schema 刻意不含 `citedSopIds`**（2026-09-08）。結案 agent 的 system prompt
  *    逐字要求它不要輸出這個欄位（「由系統填入」），因此原本那道「以檢索命中為白名單」的
  *    後驗永遠在過濾一個空清單 —— 看起來在保護什麼，實際上什麼都沒發生。
- *    `ClosureDraft.citedSopIds` 現在由 `closure/draft.post.ts` 直接以檢索命中填入。
+ *    `ClosureDraft.citedSops` 現在由 `closure/draft.post.ts` 直接以檢索命中填入。
  *    ⚠️ 要改回「模型自己挑」的話，MUST 先改 iMBrace 後台的 system prompt，
  *    再把欄位與白名單一起加回來 —— 只加回其中一半就是回到 2026-09-08 之前的狀態。
  */
