@@ -99,7 +99,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 樣式 | Tailwind CSS v4 | |
 | 元件庫 | Nuxt UI | v4 起 Pro 已併入主套件，125+ 元件全免費 MIT，商用無需額外授權 |
 | 圖示 | `@nuxt/icon` + Lucide | 按需載入 |
-| 深色模式 | `@nuxtjs/color-mode` | Nuxt UI 內建 |
+| 深色模式 | `@nuxtjs/color-mode` | Nuxt UI 內建。切換入口是頂列的主題鈕（`app/layouts/console.vue`，畫布規格見 `DESIGN_TOKENS.md` §8.1）。⚠️ `preference: 'light'` 是**刻意覆寫**模組預設的 `'system'`（使用者裁示：首次進入固定淺色）；持久化走模組的 `localStorage`，我方不另外存 |
 | i18n | `@nuxtjs/i18n`，預設 `zh-TW` | 第一版即導入 |
 | 工具函式 | VueUse | `useVirtualList`、`useEventSource`、`useDebounceFn` |
 | 驗證 | Zod | API 邊界與 AI 輸出的 schema 驗證 |
@@ -489,7 +489,9 @@ presence 列的「誰在這個對話裡」（`server/services/directory.ts`）�
    （`directory.ts`）是同一條規則。
 2. **頭像縮寫可以用 email，那是縮寫不是名字。** `avatarLabel()` 取前兩碼只是一個視覺錨點，
    不宣稱那是誰的姓名，因此不受上一條約束。
-   ⚠️ 頂列（`app/layouts/console.vue`）因此**只放頭像**，姓名／email 文字收進下拉選單 ——
+   ⚠️ 頂列（`app/layouts/console.vue`）的**身分區因此只放頭像**，姓名／email 文字收進下拉選單 ——
+   （⚠️ 「只放頭像」講的是**身分**這一格，不是整個右上角：頭像左側的分隔線外
+   還有一顆主題切換鈕，見 `DESIGN_TOKENS.md` §8.1）——
    畫布畫的是頭像＋常駐姓名，但我們沒有人名可放，把一串 email 攤在頂列上
    既佔寬度、又讓「身分」看起來像一個沒設定好的欄位。這是刻意偏離畫布的決定。
 3. **這是待對方回覆的問題，不是待實作的功能** —— 見 `IMBRACE_QUESTIONS.md` 的 **H-9**：
