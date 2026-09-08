@@ -32,7 +32,29 @@ import { MOCK_CONV_BARE, startMockGateway, type MockGateway } from './mock-gatew
 import { errorHaystack, leakedSecrets } from './redact-assert.js'
 
 const RUNS = 10
+/**
+ * 只給「逾時」那一組（①）用 —— 那一組**要的就是**逾時先發生。
+ */
 const SHORT_TIMEOUT_MS = 300
+
+/**
+ * 給「不是在測逾時」的那幾組（②④）用。
+ *
+ * ⚠️⚠️ **MUST NOT 讓這幾組沿用 300ms**（2026-09-08 修）。
+ *      `timeoutMs` 是 `commitClosure()` 用 `Promise.race` 罩住**整個三步寫入**
+ *      （欄位對照 → search → create → verify）的預算，不是單次 HTTP 的預算。
+ *      機器負載重時那三步跑不完 300ms，於是先觸發的是逾時 ——
+ *      拿到 `504`、斷言 `502` 失敗。
+ *
+ *      這正是下方 ③ 那段註解警告過的同一種病，只是 ② 的餘裕更小所以更常發作：
+ *      **綠燈時它根本沒有驗到 4xx／unverified 那一格**，紅燈時看起來又像是產品壞了。
+ *      實測單次約 40–55ms，10 秒是「絕不會是逾時先到」的餘裕。
+ *
+ * ⚠️ 這**不是放寬驗收門檻**：這幾組的門檻是 `failKind` 與 `status`，
+ *    不是「多快失敗」。真的卡住時 `attempt()` 仍會因為沒有拋錯而紅
+ *    （「MUST NOT 成功」那一行），不會被這個數字蓋掉。
+ */
+const NO_TIMEOUT_PRESSURE_MS = 10_000
 
 let gateway: MockGateway | undefined
 
@@ -105,7 +127,7 @@ describe('SC-003 ②：平台 4xx ×10 → failKind: failed、502', () => {
   it(`${RUNS} 次全部以 failed／502 失敗，且不外洩憑證`, async () => {
     gateway = await startMockGateway({ board: { failWith: { create: 422 } } })
     for (let i = 0; i < RUNS; i++) {
-      const err = await attempt(gateway, `http4xx-${i}`)
+      const err = await attempt(gateway, `http4xx-${i}`, NO_TIMEOUT_PRESSURE_MS)
       expect(err.failKind).toBe('failed')
       expect(err.status).toBe(502)
       assertClean(err, '4xx')
@@ -157,7 +179,7 @@ describe('SC-003 ④：200 但回查不存在 ×10 → failKind: unverified、50
   it('⚠️ 本規格最重要的一條：平台說成功但查不到，MUST 當作失敗', async () => {
     gateway = await startMockGateway({ board: { createButHideFromGet: true } })
     for (let i = 0; i < RUNS; i++) {
-      const err = await attempt(gateway, `unverified-${i}`)
+      const err = await attempt(gateway, `unverified-${i}`, NO_TIMEOUT_PRESSURE_MS)
       // ⚠️ 這一格與其他三種刻意不同，因為客服接下來該做的事不同：
       //    其餘三種可直接重試；這一種 MUST 先請客服到 CRM 查驗（畫布 B8）
       expect(err.failKind).toBe('unverified')
