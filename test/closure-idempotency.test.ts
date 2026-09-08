@@ -180,6 +180,39 @@ describe('R3.13（反例）：q 命中但 draft_id 不符時 MUST 建新的，MU
     expect(rows.find(r => r.draft_id === 'draft-shared-prefix-OTHER-2')!.summary).toBe('同事的摘要 2')
     expect(rows.filter(r => r.draft_id === 'draft-shared-prefix')).toHaveLength(1)
   })
+
+  it('draft_id 逐字相符但屬於別通對話 → MUST NOT 更新那筆，且留一行警告', async () => {
+    gateway = await startMockGateway()
+    const client = clientFor(gateway)
+
+    // 同事對**另一通對話**的紀錄，draft_id 與我方送出的完全相同
+    // （合法流程不會發生 —— draftId 是 server 對某通對話產生的；這裡模擬拿著它打別通對話）
+    const OTHER_CONV = '11111111-2222-4333-8444-555555555555'
+    gateway.seedBoardItem({
+      draft_id: 'draft-stolen',
+      conversation_id: OTHER_CONV,
+      summary: '同事的摘要',
+      closed_at: '2026-09-02T09:00:00.000Z',
+      reviewed_by: 'u_other',
+      record_id: 'rec_other',
+    })
+
+    const warn = vi.fn()
+    const result = await commitClosure(
+      client, gateway.boardId(),
+      summaryFor('draft-stolen', { summary: '我的摘要' }),
+      { reqId: 'r1', log: { info: () => {}, warn } },
+    )
+
+    expect(result.created, 'draft_id 相符但對話不同 MUST 視為 0 筆、走 createItem').toBe(true)
+    expect(gateway.boardCallCount('update')).toBe(0)
+    const other = gateway.boardItems().find(r => r.record_id === 'rec_other')!
+    expect(other.conversation_id, '別通對話的紀錄 MUST 原封不動').toBe(OTHER_CONV)
+    expect(other.summary).toBe('同事的摘要')
+    expect(other.reviewed_by).toBe('u_other')
+    expect(warn.mock.calls.some(([msg]) => String(msg).includes('別通對話')),
+      '不一致只有一種來源（拿著別通對話的 draft_id 打進來），MUST 留下警告').toBe(true)
+  })
 })
 
 describe('R3.4：同一 draft_id 命中 ≥2 筆 → 更新最早建立的那筆，並留一行警告', () => {
