@@ -81,6 +81,7 @@ iMBrace 平台的 Conversations 模組允許客服瀏覽所有進行中的對話
 | 持久層 | **iMBrace Data Boards（業務資料）+ 記憶體／Redis（熱狀態）** | Boards 是 CRM 資料庫，不適合高頻寫入的 session 狀態 |
 | 分散式狀態 | **介面 day-1 設計為 async，M4 換 Redis 實作** | SSE 連線表、presence、輪詢鎖在多副本下必須共享 |
 | 多對話 | **分頁籤切換，背景重算情緒與建議卡、不重算摘要** | 客服未 LEAVE 即代表客戶可能仍在發言，背景不重算會讓切回時從頭等待；成本改由並行上限與較長 debounce 控制（憲法 6.2，v3.0.0 修訂） |
+| 部署 | **單容器 image；SIT 走單機 compose ＋ nginx TLS 終端，K8s 留 M4**（§16.1、§18 M3.5） | 單副本、記憶體狀態下，K8s 的前置（namespace、ingress、Jenkins deploy job）換不到任何東西；image 與 env 鍵清單兩種形態共用，之後上 K8s 沒有丟棄式工作。HTTPS 是登入的硬前提（cookie `Secure`），反向代理必須對 SSE 關緩衝 |
 
 ---
 
@@ -218,11 +219,14 @@ JOIN 有兩個來源，**同一個動作可能兩邊都收到**：
 
 ## 5. 目錄結構
 
-以實際檔案為準（2026-09-08 快照）；標 **（M4）** 的尚未建立，隨對應功能一起產生。⚠️ 此樹只列與架構決策相關的檔案，不是完整清單——要知道現在有什麼，`ls` 比讀這裡準。
+以實際檔案為準（2026-09-08 快照）；標 **（M3.5）**／**（M4）** 的尚未建立，隨對應功能一起產生。⚠️ 此樹只列與架構決策相關的檔案，不是完整清單——要知道現在有什麼，`ls` 比讀這裡準。
 
 ```
 AgentCopilot/
 ├── nuxt.config.ts                   # §6：ssr:false、.env 橋接、typeCheck 關閉的理由
+├── Dockerfile / .dockerignore       # （M3.5）§16.1；.dockerignore MUST 排除 .env* 與 scripts/spike/out/
+├── deploy/                          # （M3.5）§16.1 單機 compose 形態：docker-compose.sit.yml、nginx.conf、
+│                                    # agent-copilot.env.example（鍵清單、值全空）、redeploy.sh、verify-image.sh、README.md
 ├── config/
 │   └── categories.ts                # 結案分類受控詞彙（specs/006）
 │   （supervisors.yaml —— 主管 email 白名單，隨主管接管功能建立，尚未建立）
@@ -815,6 +819,8 @@ interface PresenceSnapshot {
 **② 斷線補齊不靠 `Last-Event-ID`，靠對帳。** 「已送出事件」的儲存放在單一副本記憶體裡，M4 上多副本後重連到別的副本就補不到——那正是「偶爾少一則訊息」這類最難追查的 bug。改採**對帳式補齊**：前端重連後以自己的 `lastMessageId` 打 `GET /api/messages?conversationId=…&since=…` 重新對帳，與 §9.4「webhook 上線後仍要保留對帳輪詢」同一原則——**真相一律回源頭取，不依賴傳輸層的可靠性假設。** 事件仍帶 `id`，但只用於排序與除錯。
 
 **③ `messages.appended` 不代表「有新訊息」，去重責任在消費端。** 該事件會整批重送已知訊息——pipeline 每次因 `{priority, joined}` 改變被拆掉重建（分頁切到背景、切到別的對話、SSE 重連），輪詢錨點就歸零，於是整段歷史被當成新訊息推上來，**而對話本身什麼都沒發生**。凡要回答「有沒有新訊息」的消費端 MUST 以自己的去重結果為準，MUST NOT 以「事件到了」代替。這個坑踩過兩次：訊息列表當年為此去重了，結案的過期標記沒跟上，症狀是「按下結案後憑空冒出『對話有新內容，建議重新產生』且抓不到規律」（2026-09-07 修，見 `app/utils/message-merge.ts`）。
+
+**④ 代理層的要求不在本契約裡，但沒做對本契約整個失效**：TLS 終端／反向代理 MUST 對 `/api/stream` 關閉回應緩衝、read timeout 大於 25 秒的心跳，見 §16.1 前提 2。症狀是連得上但永遠沒有事件，不報錯。
 
 ---
 
@@ -1830,9 +1836,25 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ### 16.1 部署形態
 
-Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 安裝文件，若能同集群部署可省一段網路跳躍，延遲會明顯改善。
+Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**（2026-09-08，M3.5）：`node:24.x-alpine` 鎖精確版本、禁 `:latest`；執行階段只複製 `.output`；`USER node`；只監聽 3000；設定值全部由 `NUXT_*` 環境變數在執行期注入，同一份 image 跨環境不重建。建置與推送走公司 Jenkins 的 `select-to-build-image` pipeline（加一個 case），推 Docker Hub `systalk/agent-copilot`，tag 用 commit 短 sha 這類不可變標籤。
 
-> ⚠️ **一旦上 K8s 多副本，Redis 即為必需品**（見 §8.3）。單副本才可使用記憶體實作。
+> ⚠️ **`.dockerignore` MUST 排除 `.env*`（只放行 `.env.example`）與 `scripts/spike/out/`。** 前者是因為 `nuxt.config.ts` 在建置時會 `loadEnvFile`，本機憑證會被讀進建置程序；後者裝著真實對話樣本，可能含個資。兩者都不會報錯，只會安靜地把不該進 image 的東西帶進去。
+
+**兩個所有環境都適用的前提**：
+
+1. **瀏覽器到本服務之間 MUST 是 HTTPS。** session cookie 的 `Secure` 旗標（§7.2）是建置期決定（`server/utils/session.ts` 的 `secure: !import.meta.dev`），純 HTTP 下瀏覽器會丟掉 cookie，症狀是「OTP 驗證成功但下一頁又回到登入」。因此任何環境都需要一個 TLS 終端，「demo 先走 HTTP」不是選項——那不是偏好，是登不進去。
+2. **TLS 終端就是反向代理，它 MUST 對 `/api/stream` 關閉回應緩衝，並把 read timeout 拉到大於心跳間隔**（`STREAM_HEARTBEAT_MS`，25 秒）。代理一開緩衝，SSE 會連得上但永遠收不到事件，不報錯。nginx 對應 `proxy_buffering off`、`proxy_cache off`、`proxy_http_version 1.1`、清空 `Connection` 標頭、`proxy_read_timeout` 遠大於 25 秒；K8s nginx ingress 對應 `proxy-buffering: "off"` 與 `proxy-read-timeout` 兩個 annotation。
+
+**兩種部署形態**：
+
+| 形態 | 適用 | 組成 |
+|---|---|---|
+| **單機 compose**（M3.5，SIT demo） | 單副本、記憶體狀態 | 一台有 Docker 的 VM；`deploy/docker-compose.sit.yml` 跑 `app` ＋ `proxy`（nginx：TLS 終端與上述 SSE 設定，設定檔進版控）；設定值走 `env_file`，鍵清單在 `deploy/agent-copilot.env.example`（進版控、值全空，部署現場複製後才填值）；換版為 `pull` ＋ `up -d`，刻意不設 `pull_policy`，少了 `pull` 就不會換版。healthcheck 用 node 自己發請求——alpine 沒有 curl／wget |
+| **K8s**（M4） | 多副本 | iMBrace 提供 K8s 安裝文件，若能同集群部署可省一段網路跳躍。⚠️ **一旦多副本，Redis 即為必需品**（§8.3），且 §18 M2 那八份 process-local 狀態要逐一處置。ingress 承擔 TLS 與 SSE 設定；Secret 以 `--from-env-file` 直接吃同一份鍵清單 |
+
+**單副本的部署策略 MUST 是 Recreate**（或等價的先停後起）：session 與分析狀態在記憶體，兩個實例並存會出現「隨機被登出」與重複輪詢。部署現場的操作步驟不寫在本文件，見 repo 內 `deploy/README.md`。
+
+> 為什麼 SIT 不直接上 K8s：見附錄 B「部署形態」。
 
 ### 16.2 秘密管理
 
@@ -1855,7 +1877,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 | 環境 | 用途 |
 |---|---|
 | local | 開發，缺憑證時自動退回 `MockKnowledgeProvider` + mock AI |
-| staging | 對接 iMBrace 測試環境 |
+| **SIT**（M3.5） | 公司內網單機 compose，給客戶 demo。⚠️ **對接的仍是 iMBrace `stable`，也就是正式客戶資料**——iMBrace 尚未提供 sandbox（`IMBRACE_QUESTIONS.md`「測試資源」一題未回）。demo 的 JOIN、送訊息、結案寫入都是真寫入；結案 MUST 寫進 demo 專用 Board（另跑一次 `npm run board:setup`），demo 用的組織與對話要事先選定並讓客戶知情 |
+| staging | 對接 iMBrace 測試環境——**尚不存在**，取決於 sandbox 是否提供 |
 | production | `env: 'stable'` |
 
 以 `runtimeConfig` 切換，不寫死於程式碼。
@@ -2010,21 +2033,45 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 - [x] 按下「結案」產生結案摘要 —— ⚠️ 觸發條件不是對話狀態變更，結案也不變更平台對話狀態（§13.4 ②）
 - [ ] ~~LEAVE 產生交接摘要，兩者不混用~~ —— **不適用**（交接摘要不實作，§13.4 ②）。「不混用」在只有一種摘要時自動成立卻什麼都沒驗到，勾起會讓下一個人以為驗過了
 - [x] 結案摘要的涵蓋區間由客服選定，且區間與則數隨紀錄寫入（`ClosureScopePicker.vue` ＋ `period_start`／`period_message_count`／`period_origin`；§13.4 ④ 已列三種自動推導的反例，不要重新提案）
-- [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）
-- [ ] 圖片／PDF 的描述不得依賴 `caption` 欄位
-- [ ] **429 由全域退避佇列統一處理**，摘要／情緒分析與輪詢等呼叫端不再各自重試；`classifyFailure()` 的 `'rate-limited'` 分類改接佇列，並回頭修訂 `specs/001-sentiment-panel/spec.md` FR-014 的 429 分支與 Assumptions
+- [ ] 圖片／PDF 附件能顯示縮圖與描述文字，且同一份檔案不重複送給模型（結果需快取）—— ⚠️【卡外部回覆·已安置 2026-09-08】縮圖與下載已有，缺的是描述文字（vision）。重啟條件：E-3（合規）、H-2d（URL 時效）、0-1（可用模型）三題得到回覆
+- [ ] 圖片／PDF 的描述不得依賴 `caption` 欄位 —— ⚠️【卡外部回覆·已安置 2026-09-08】與上一條同進退
+- [ ] **429 由全域退避佇列統一處理**，摘要／情緒分析與輪詢等呼叫端不再各自重試；`classifyFailure()` 的 `'rate-limited'` 分類改接佇列，並回頭修訂 `specs/001-sentiment-panel/spec.md` FR-014 的 429 分支與 Assumptions —— ⚠️【卡外部回覆·已安置 2026-09-08】現況「429 直接轉錯誤、不重試」是刻意的下限（§15.2），重啟條件：G-2 書面 rate limit 規格
 
 > 結案相關各條的手動驗收於 2026-09-07 第二輪通過（第一輪走查是在有六個缺陷的畫面上進行的，`specs/006/quickstart.md` §6.4.2、§6.8）。綠燈基線 2026-09-07：`typecheck` ✅、`vitest` 58 檔 726 項 ✅、`build` ✅、`smoke` ✅。
 >
-> ⚠️ **M3 尚未完成，MUST NOT 因為結案那幾條齊了就押 `m3-done`**：仍有四條未勾，皆不屬 `specs/006` 範圍——① Viki provider（本期不換）；②③ 附件 vision／文件分析；④ 429 全域佇列（卡 G-2 🔴）。②③④ 的處置待 `specs/006` 合回 `main` 後，於 007 的規格範圍討論時一併決定。收尾時 MUST 比照 M2：綠燈基線之外另審一次跨 spec 的熱點檔案。
+> ⚠️ **M3 尚未完成，MUST NOT 因為結案那幾條齊了就押 `m3-done`**：仍有四條未勾，皆不屬 `specs/006` 範圍——① Viki provider（本期不換）；②③ 附件 vision／文件分析；④ 429 全域佇列（卡 G-2 🔴）。②③④ **於 2026-09-08 決定安置**（比照 M2「未達標·已安置」）：三者卡的都是 `IMBRACE_QUESTIONS.md` 尚無回覆的題目，不進 M3.5、不開 007，重啟條件寫在各條。安置完成後押 `m3-done` 由使用者裁定，是 M3.5 的前提。收尾時 MUST 比照 M2：綠燈基線之外另審一次跨 spec 的熱點檔案。
 
 **外部依賴**：Data Board schema 需先建立（✅ `npm run board:setup`）；429 全域佇列需 `IMBRACE_QUESTIONS.md` G-2 的書面 rate limit 規格。
 
 ---
 
+### M3.5 — SIT 展示就緒
+
+**為什麼有這一段**：`IMBRACE_QUESTIONS.md` 的題目截至 2026-09-08 全部沒有回覆，M3 剩餘的三條與 M4 的多數項目卡的都是同一批回覆，而專案必須先進到能在公司 SIT 環境對客戶 demo 的狀態。本段只收「不依賴任何外部回覆就能關閉」的項目：把 M4 的「Docker 部署」提前為單容器、單副本形態；Redis、多副本、webhook 整批留在 M4。**不開 spec**——比照 M0／M1，地基工作直接開發（§20.4）。
+
+**內容**：`Dockerfile` ＋ `.dockerignore`；`deploy/`（單機 compose、nginx TLS 終端、env 鍵清單、換版與 image 檢查腳本、部署步驟）；Jenkins build pipeline 的 case；demo 專用 Data Board；SIT 走查。部署形態與兩個前提見 §16.1，環境定位見 §16.5。
+
+**前提**：`specs/006` 已合回 `main`（✅ 2026-09-08）；M3 的 ②③④ 已安置並押 `m3-done`。
+
+**驗收**（全部可在本 repo 內關閉）：
+- [ ] image 從 `main` 建置，容器以 `USER node` 啟動，`GET /api/health` 回 200
+- [ ] image 內不含 `.env*` 與 `scripts/spike/out/`（`deploy/verify-image.sh` 掃描；這兩條不會報錯，只會靜默帶進去，見 §16.1）
+- [ ] 本機以 `deploy/docker-compose.sit.yml` 同一份組成（app ＋ nginx）走完：登入、列表、JOIN、摘要／情緒／建議卡三區塊、送出、結案寫入。⚠️ VM 沒有任何本機測不到的東西，除了網路位置——交付前 MUST 先在本機通過
+- [ ] SIT 上以 HTTPS 完成同一條走查；結案寫入落在 demo 專用 Board（`npm run board:setup` 另建，id 進 env），MUST NOT 寫進客戶的正式 Board
+- [ ] SSE 穿過 nginx：JOIN 後面板有事件進來、閒置 ≥ 2 分鐘連線不斷（驗 §16.1 前提 2；代理 timeout 設錯時症狀是連得上但沒事件）
+- [ ] 換版走 `deploy/redeploy.sh`（`pull` ＋ `up -d`），image 以不可變 tag（commit 短 sha）指定；`develop` 這類可變標籤 MUST NOT 用於 SIT
+- [ ] demo 前 `npm run spike:agent-prompts` 無漂移（§8.2b：量測數字是間接證據，快照 diff 是直接證據）
+- [ ] 可選，需使用者決定，未決前 MUST NOT 自行納入：清單分頁防禦（M4 那條的 ② 分頁，先查 demo 組織的對話數，> 100 才做）；主管強制介入白名單版（§10.6 順位 2，從未被任何里程碑認領）
+
+**外部依賴**：公司 SI 提供 VM、對外連線（iMBrace 兩個網域與 Docker Hub 的 443）、內網主機名稱與憑證。⚠️ 這些是環境，不是 iMBrace 的回覆——本段刻意設計成一題都不用等。
+
+> ⚠️ **記憶體狀態的代價在這裡第一次真的付出**：每次換版所有客服被登出、分析結果歸零（§8.3、§18 M2 那八份 process-local）。demo 前不換版即可，但這是 M4 換 Redis 的直接證據，不要在 SIT 上用「多開一個副本」擋負載——那會直接觸發 §16.1 說的「隨機被登出」。
+
+---
+
 ### M4 — 生產化
 
-**內容**：Redis 實作換入（`RedisStateStore` / `RedisEventBus`）；`WebhookEventSource` 接入（規格到位後）+ HMAC 驗簽；30s 對帳輪詢；監控指標、健康檢查；Docker / K8s 部署。
+**內容**：Redis 實作換入（`RedisStateStore` / `RedisEventBus`）；`WebhookEventSource` 接入（規格到位後）+ HMAC 驗簽；30s 對帳輪詢；監控指標；K8s 多副本部署（單容器 image、compose 單副本形態與 `/api/health` 已於 M3.5 交付，§16.1）。
 
 **驗收**：
 - [ ] **雙副本部署下：webhook 打到 A 副本、客服 SSE 連在 B 副本，仍能推達**
@@ -2112,7 +2159,8 @@ Docker 多階段建置 → `node .output/server/index.mjs`。iMBrace 提供 K8s 
 |---|---|---|
 | 未達標·已安置（**不是未決**） | 摘要 10 秒、情緒 15 秒、建議卡第一段 20 秒——三項皆未達 90%，門檻一律**不放寬**；成因為平台側 agent 推論延遲、我方槓桿已用盡、已對外回報 0-4、最終判定歸屬 M4 | §18 M2、§18 M4、§8.2b |
 | 待拍板（已與里程碑脫鉤） | 分析結果的持久化 ＋ 冷啟動的 50 則上限（同一個立案，涉及隱私姿態） | §11.8 ①③ |
-| 未決（M3 剩餘） | 圖片／PDF 的 vision／文件分析（兩條驗收）；429 全域退避佇列（卡 G-2）；三者待 006 合回 `main` 後在 007 範圍討論 | §18 M3 |
+| 卡外部回覆·已安置（M3 剩餘） | 圖片／PDF 的 vision／文件分析（兩條，卡 E-3／H-2d／0-1）；429 全域退避佇列（卡 G-2）。2026-09-08 決定安置、不進 M3.5、不開 007；重啟條件＝對應題目得到回覆 | §18 M3 |
+| 進行中 | M3.5「SIT 展示就緒」：image、`deploy/` 單機 compose、SIT 走查；⚠️ 對接的是 `stable` 正式資料 | §18 M3.5、§16.1、§16.5 |
 | 不適用（刻意不勾） | 換入 `VikiKnowledgeProvider`（本期不換，與 0-3f 脫鉤）；LEAVE 交接摘要（不實作） | §18 M3、§8.2、§13.4 ② |
 | M4 前必須處置 | 分析管線的八份執行期狀態皆為 process-local，**不在 `StateStore` 裡**，換 Redis 涵蓋不到 | §18 M2、§8.3 |
 | 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力（**一起關閉**） | §18 M4 |
@@ -2220,6 +2268,8 @@ grep -rn "<題號>" docs/IMBRACE_QUESTIONS.md   # 對外文件是否還在問已
 **M2「3 秒」的語意（§18 M2）**：原驗收寫「JOIN 後 3 秒內出現摘要與首批建議」，讀起來像要求 3 秒內產出實質內容，而 AI 單次呼叫中位就有 5 秒。經 `specs/001` clarify 收斂為兩條：3 秒衡量「面板已出現並標示分析中」，實質內容另訂門檻（摘要 10 秒、情緒 15 秒、建議卡 20 秒，皆 90 百分位）且允許逐欄漸進填入；切回已 JOIN 的對話時必須先顯示上次保留的結果而非重新 loading。
 
 **純附件輪不產生情緒點（§11.4、§11.5）**：原本只寫「情緒分析只在 `sender.type === 'customer'` 的訊息上產生情緒點」。客戶只傳圖片而不打字時若照樣給分，等於從「上傳檔案」這個中性動作推論情緒——客戶正在生氣時傳一張截圖，走勢會拉出一段看似好轉的折線。已改為純附件輪不產生評分點，只在時間軸留中性標記。⚠️ 這**不**代表附件不必文字化——文字化結果仍是摘要卡的事實來源，只是該管線延後至 M3。
+
+**部署形態（§16.1，2026-09-08）**：§16.1 原本只寫「Docker → K8s」。為 SIT demo 評估時先傾向沿用 viki 的 K8s ＋ Jenkins deploy 路線，理由是「與 SIT 慣例一致、compose 之後要重做」。同日參考 red-ap 後推翻：公司的 SIT 同時存在單機 compose 的先例；image 與 env 鍵清單兩種形態共用，compose 沒有丟棄式工作；對 SI 最少工、對我方掌控度最高的都是 compose。K8s 因此明確歸 M4 多副本。附帶釐清兩個曾被當成「之後再說」的前提：HTTPS 是登入的必要條件而非偏好（cookie `Secure` 為建置期決定），反向代理對 SSE 的緩衝設定是會靜默失效的一級風險。
 
 **`sendTextMessage()` 回應形狀（H-6a，已撤回）**：原評估「送出成功後必須立刻把版本錨點推到新訊息」理由過度陳述。撞單檢查的版本錨點實際取自 `GET /v1/conversation_messages` 的真實訊息 id，與送出端回應無關；唯一可能用到送出回應 id 的 `advanceAnchor()`／`copilotSessionOf()`／`seed()` 匯出後從未被任何呼叫端使用（`server/state/types.ts`、`session-manager.ts` 有註記）。除非有人開始真的依賴 `CopilotSession.lastMessageId`，才需重新評估。
 
