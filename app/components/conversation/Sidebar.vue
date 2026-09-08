@@ -358,8 +358,13 @@ function clockTime(iso?: string): string {
           :class="{ 'border-t': si > 0 }"
           :style="{ background: 'var(--surface-2)', borderColor: 'var(--border)' }"
         >
+          <!--
+            ⚠️ `0.78125rem` 是畫布值（12.5px），**不是 `.ac-status-label` 的 `0.8125rem`**。
+               文件曾把這裡記成 `10px`（2026-09-01 全面改 rem 之前的數字），
+               實作跟著長成 13px；2026-09-08 回畫布核對後對齊。
+          -->
           <span
-            class="text-[0.8125rem] font-bold tracking-[.08em]"
+            class="text-[0.78125rem] font-bold tracking-[.08em]"
             :style="{ color: 'var(--text-3)' }"
           >{{ section.label }}</span>
 
