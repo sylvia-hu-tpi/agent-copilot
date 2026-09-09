@@ -219,13 +219,13 @@ JOIN 有兩個來源，**同一個動作可能兩邊都收到**：
 
 ## 5. 目錄結構
 
-以實際檔案為準（2026-09-08 快照）；標 **（M3.5）**／**（M4）** 的尚未建立，隨對應功能一起產生。⚠️ 此樹只列與架構決策相關的檔案，不是完整清單——要知道現在有什麼，`ls` 比讀這裡準。
+以實際檔案為準（2026-09-08 快照）；標 **（M4）** 的尚未建立，隨對應功能一起產生。⚠️ 此樹只列與架構決策相關的檔案，不是完整清單——要知道現在有什麼，`ls` 比讀這裡準。
 
 ```
 AgentCopilot/
 ├── nuxt.config.ts                   # §6：ssr:false、.env 橋接、typeCheck 關閉的理由
-├── Dockerfile / .dockerignore       # （M3.5）§16.1；.dockerignore MUST 排除 .env* 與 scripts/spike/out/
-├── deploy/                          # （M3.5）§16.1 單機 compose 形態：docker-compose.sit.yml、nginx.conf、
+├── Dockerfile / .dockerignore       # §16.1；.dockerignore 是白名單式，MUST 排除 .env* 與 scripts/spike/out/
+├── deploy/                          # §16.1 單機 compose 形態（M3.5）：docker-compose.sit.yml、nginx.conf、
 │                                    # agent-copilot.env.example（鍵清單、值全空）、redeploy.sh、verify-image.sh、README.md
 ├── config/
 │   └── categories.ts                # 結案分類受控詞彙（specs/006）
@@ -1836,7 +1836,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ### 16.1 部署形態
 
-Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**（2026-09-08，M3.5）：`node:24.x-alpine` 鎖精確版本、禁 `:latest`；執行階段只複製 `.output`；`USER node`；只監聽 3000；設定值全部由 `NUXT_*` 環境變數在執行期注入，同一份 image 跨環境不重建。建置與推送走公司 Jenkins 的 `select-to-build-image` pipeline（加一個 case），推 Docker Hub `systalk/agent-copilot`，tag 用 commit 短 sha 這類不可變標籤。
+Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**（2026-09-08，M3.5）：`node:24.x-alpine` 鎖精確版本（目前 `24.20.0`，以 `Dockerfile` 為準）、禁 `:latest`；建置階段跑完整的 `npm run build`（含 typecheck），型別不過的程式碼建不出 image；執行階段只複製 `.output`；`USER node`；只監聽 3000；設定值全部由 `NUXT_*` 環境變數在執行期注入，同一份 image 跨環境不重建；build arg `GIT_SHA` 寫進 OCI label 與 `APP_REVISION`，`GET /api/health` 以 `revision` 回報，換版後憑它確認現在跑的是哪一版。實測 image 約 169 MB。建置與推送走公司 Jenkins 的 `select-to-build-image` pipeline（加一個 case），推 Docker Hub `systalk/agent-copilot`，tag 用 commit 短 sha 這類不可變標籤。
 
 > ⚠️ **`.dockerignore` MUST 排除 `.env*`（只放行 `.env.example`）與 `scripts/spike/out/`。** 前者是因為 `nuxt.config.ts` 在建置時會 `loadEnvFile`，本機憑證會被讀進建置程序；後者裝著真實對話樣本，可能含個資。兩者都不會報錯，只會安靜地把不該進 image 的東西帶進去。
 
@@ -2058,11 +2058,11 @@ Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**
 **前提**：只有一個——`specs/006` 已合回 `main`（✅ 2026-09-08，`m3-006-done`）。**不以 `m3-done` 為前提**：M3 的 ②③④ 卡外部回覆，M3.5 就是為了「M3 未完工也能先推上 SIT」而設的，等它等於自我否定（§18 M3 的第二段警語）。
 
 **驗收**（全部可在本 repo 內關閉）：
-- [ ] image 從 `main` 建置，容器以 `USER node` 啟動，`GET /api/health` 回 200
-- [ ] image 內不含 `.env*` 與 `scripts/spike/out/`（`deploy/verify-image.sh` 掃描；這兩條不會報錯，只會靜默帶進去，見 §16.1）
-- [ ] 本機以 `deploy/docker-compose.sit.yml` 同一份組成（app ＋ nginx）走完：登入、列表、JOIN、摘要／情緒／建議卡三區塊、送出、結案寫入。⚠️ VM 沒有任何本機測不到的東西，除了網路位置——交付前 MUST 先在本機通過
+- [x] image 從 `main` 建置，容器以 `USER node` 啟動，`GET /api/health` 回 200 —— 2026-09-08 本機建置（`5bd938d`）經 `deploy/verify-image.sh` 通過；⚠️ Jenkins 建置尚未接上，屆時 MUST 再跑一次
+- [x] image 內不含 `.env*` 與 `scripts/spike/out/`（`deploy/verify-image.sh` 掃描；這兩條不會報錯，只會靜默帶進去，見 §16.1）—— 2026-09-08 通過，且執行階段只有 `/app/.output`
+- [x] 本機以 `deploy/docker-compose.sit.yml` 同一份組成（app ＋ nginx）走完：登入、列表、JOIN、摘要／情緒／建議卡三區塊、送出、結案寫入。⚠️ VM 沒有任何本機測不到的東西，除了網路位置——交付前 MUST 先在本機通過。**2026-09-08 通過**：同一份 compose 在本機（自簽憑證）起，`nginx -t`、80→443 轉向、HTTPS 下 health 含 `revision`、11 個 `NUXT_*` 全注入且無 Mock 退回警告、SIGTERM 1 秒內停止；使用者以瀏覽器走完登入→列表→JOIN→三區塊→送出→結案寫入，app log 見 `[closure] step=create` 與 `step=verify verified=true`，無 error。⚠️ 寫入的是開發用 Board（`.env.local` 那份），SIT 上 MUST 換 demo 專用 Board（第 4 條）
 - [ ] SIT 上以 HTTPS 完成同一條走查；結案寫入落在 demo 專用 Board（`npm run board:setup` 另建，id 進 env），MUST NOT 寫進客戶的正式 Board
-- [ ] SSE 穿過 nginx：JOIN 後面板有事件進來、閒置 ≥ 2 分鐘連線不斷（驗 §16.1 前提 2；代理 timeout 設錯時症狀是連得上但沒事件）
+- [x] SSE 穿過 nginx：JOIN 後面板有事件進來、閒置 ≥ 2 分鐘連線不斷（驗 §16.1 前提 2；代理 timeout 設錯時症狀是連得上但沒事件） —— **2026-09-08 本機 nginx 通過**：JOIN 後面板有事件，閒置 ≥ 2 分鐘連線不斷、無重連。SIT 用的是同一份 `nginx.conf`；⚠️ 若 VM 前面另有負載平衡器或公司的反向代理，那一層要另外驗，它不在本 repo 的控制內
 - [ ] 換版走 `deploy/redeploy.sh`（`pull` ＋ `up -d`），image 以不可變 tag（commit 短 sha）指定；`develop` 這類可變標籤 MUST NOT 用於 SIT
 - [ ] demo 前 `npm run spike:agent-prompts` 無漂移（§8.2b：量測數字是間接證據，快照 diff 是直接證據）
 - [ ] ~~可選：清單分頁防禦；主管強制介入白名單版~~ —— **不適用，MUST NOT 打勾**（勾起會讓下一個人以為做過了）。**2026-09-08 使用者決策：兩者本輪皆不納入。** M3.5 的價值在「一題都不用等、盡快上 SIT」，多塞功能會稀釋它。兩者各自的歸屬不變：清單分頁防禦仍是 M4 那條的 ② 分頁（demo 組織對話數 > 100 時是 M4 提前處理，不是回到 M3.5）；主管強制介入白名單版仍是 §10.6 順位 2，從未被任何里程碑認領
@@ -2075,7 +2075,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**
 
 ### M4 — 生產化
 
-**內容**：Redis 實作換入（`RedisStateStore` / `RedisEventBus`）；`WebhookEventSource` 接入（規格到位後）+ HMAC 驗簽；30s 對帳輪詢；監控指標；K8s 多副本部署（單容器 image、compose 單副本形態與 `/api/health` 已於 M3.5 交付，§16.1）。
+**內容**：Redis 實作換入（`RedisStateStore` / `RedisEventBus`）；`WebhookEventSource` 接入（規格到位後）+ HMAC 驗簽；30s 對帳輪詢；監控指標；K8s 多副本部署（單容器 image、compose 單副本形態與 `/api/health` 已於 M3.5 交付，§16.1）；**多組織：server-to-server 呼叫的組織改從 session 帶**（見下方驗收）。
 
 **驗收**：
 - [ ] **雙副本部署下：webhook 打到 A 副本、客服 SSE 連在 B 副本，仍能推達**
@@ -2094,8 +2094,13 @@ Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**
       **關閉條件（三者任一）**：① 兩次獨立時段的 n=45 皆達 90%；② `IMBRACE_QUESTIONS.md` **0-4** 得到可承諾的 p90／SLA，據以重訂門檻；③ 明確裁定「不達標但不阻擋上線」，並在此寫下理由。
       ⚠️ **MUST NOT 用「放寬到通過為止」關閉本項**。生產環境重測 MUST 標註時段並先跑 `npm run spike:agent-prompts`（§8.2b）。
 - [ ] **分析管線的八份 process-local 狀態已逐一處置** —— 清單與各自的失效後果記在 §18 M2「分析管線拆檔」的 📌 註記。⚠️ 這一項 MUST NOT 被上面那條「雙副本下同一對話只有一個副本在輪詢」吸收——那條管的是**輪詢**，而去重與世代失效時輪詢完全正常，只是同一個對話在兩個副本上各跑一次分析，**不報錯**
+- [ ] **AI／知識庫的 server-to-server 呼叫以客服 session 選定的組織為準，不再讀 `IMBRACE_ORGANIZATION_ID`**（2026-09-08 列入）。現況是單組織假設：客服登入後選的組織只進 session，供對話、JOIN、送訊息、結案寫入使用（`imbraceClientFor(session)`）；而摘要／情緒／建議卡／知識庫／結案草稿走 API Key，組織來自 env（`server/services/ai/index.ts`、`server/services/knowledge/index.ts` 的 `createProvider()`），且 provider 是 process 級單例。客服若選到另一個組織，對話來自 A、AI 呼叫打向 B，**不報錯**，只會得到答非所問的摘要與檢索不到的知識庫。目前帳號只有一個組織所以不會觸發；多組織上線前 MUST 改為 provider 依 session 的 orgId 建 client（快取以 orgId 為鍵），關閉條件：以兩個組織的帳號實測，摘要引用的訊息與知識庫命中都來自所選組織。
+      📌 **附帶一個資料模型決策，MUST 在動手前先拍板，不可邊做邊定**：結案 Board 目前是「單一 Board、由 `IMBRACE_CLOSURE_BOARD_ID` 指定」，欄位清單（`specs/006/contracts/closure-board-schema.md` §2、`server/services/closure/board-schema.ts`）**沒有組織欄位**，冪等查詢只以 `conversation_id` 比對。兩個選項：
+      ① **每組織一個 Board**——env 的單一 id 變成「orgId → boardId」對照（需要新的設定形狀），`board:setup` 每組織跑一次；優點是 Board 契約與 006 的冪等寫入完全不動、各組織資料天然隔離；代價是設定與 setup 的維運成本隨組織數線性增加。
+      ② **單一 Board 加 `organization_id` 欄位**——契約 §2 加一欄、`board-repository` 的查詢與本地比對改成 `(organization_id, conversation_id)`、`--verify` 的比對表同步；優點是設定不變；代價是既有紀錄要回填、跨組織資料同 Board 需確認 iMBrace 的 Board 權限模型是否允許（`IMBRACE_QUESTIONS.md` 尚無此題，屆時要新增）。
+      ⚠️ 兩者都會動到 006 的契約或設定形狀，屬憲法 5.3 冪等寫入的範圍，決策與理由 MUST 寫回本節與 `closure-board-schema.md`，不能只留在 commit 訊息
 
-**外部依賴**：webhook 規格
+**外部依賴**：webhook 規格；多組織那條需要一個可切換兩個組織的測試帳號（`IMBRACE_QUESTIONS.md`「測試資源」）
 
 > ⚠️ 第一項驗收標準（雙副本 webhook 跨實例推達）是最容易被跳過、上線後最容易爆的一項，務必寫死在驗收清單中。
 
@@ -2167,6 +2172,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**
 | 進行中 | M3.5「SIT 展示就緒」：image、`deploy/` 單機 compose、SIT 走查；⚠️ 對接的是 `stable` 正式資料 | §18 M3.5、§16.1、§16.5 |
 | 不適用（刻意不勾） | 換入 `VikiKnowledgeProvider`（本期不換，與 0-3f 脫鉤）；LEAVE 交接摘要（不實作） | §18 M3、§8.2、§13.4 ② |
 | M4 前必須處置 | 分析管線的八份執行期狀態皆為 process-local，**不在 `StateStore` 裡**，換 Redis 涵蓋不到 | §18 M2、§8.3 |
+| 單組織假設（M4） | AI／知識庫的 API Key 呼叫以 env 的 `IMBRACE_ORGANIZATION_ID` 為組織，與客服 session 選定的組織無關；多組織下會靜默答非所問 | §18 M4 |
 | 未驗證 | 平台清單排序的**分頁邊界**（需要對話數 > 100 的組織）；第一層輪詢的分頁能力（**一起關閉**） | §18 M4 |
 | 未實測 | `ETag`／`If-None-Match` 是否可用 | §9.3 ④ |
 | 未證實的假設 | 背靠背量測會互相污染（被放棄的呼叫仍在平台側跑）；在證實前量測規程為兩輪之間 ≥30 分鐘冷卻、跨時段 | §8.2b 量測規程 9 |

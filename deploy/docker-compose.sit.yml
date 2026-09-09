@@ -1,0 +1,45 @@
+# 單機 compose（SIT demo）—— docs/ARCHITECTURE.md §16.1 的「單機 compose」形態、§18 M3.5。
+# 操作步驟見同目錄 README.md；換版一律走 ./redeploy.sh <commit-sha>，不要手打 docker compose。
+#
+# 單副本、記憶體狀態：`up -d` 對同名 service 是「先停舊、再起新」（Recreate），
+# MUST NOT 用 --scale 或第二台機器多開副本 —— session 與分析狀態在記憶體，
+# 兩個實例並存就是「隨機被登出」（§16.1、§8.3）。
+name: agent-copilot
+
+services:
+  app:
+    # ⚠️ tag 一律是 commit 短 sha 這類不可變標籤，由 redeploy.sh 寫進同目錄的 .env；
+    #    沒設就拒絕啟動，不會默默抓 latest。刻意不設 pull_policy：少了 `pull` 就不會換版（§16.1）。
+    image: systalk/agent-copilot:${AGENT_COPILOT_TAG:?AGENT_COPILOT_TAG 未設定 —— 用 ./redeploy.sh <commit-sha> 部署，不要直接 up}
+    # 鍵清單見 agent-copilot.env.example；實值檔在 .gitignore 裡，只存在部署現場。
+    env_file: ./agent-copilot.env
+    # node 當 PID 1 收不到 SIGTERM 的預設處置，用 tini 轉發，否則每次停容器都要等 10 秒被 SIGKILL。
+    init: true
+    restart: unless-stopped
+    # 只對 proxy 開放，不對主機開 port —— 瀏覽器到本服務 MUST 走 HTTPS（§16.1 前提 1）。
+    expose:
+      - "3000"
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  proxy:
+    # 與 app 同一原則：鎖精確版本（nginx stable 線）。
+    image: nginx:1.30.4-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"

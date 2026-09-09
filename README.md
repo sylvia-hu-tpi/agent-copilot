@@ -16,6 +16,7 @@ iMBrace 平台 Conversations 模組的即時客服輔助擴充。
 | [docs/SDK_FINDINGS.md](./docs/SDK_FINDINGS.md) | SDK 實測記錄（型別與實際 API 的落差） | 開發者 |
 | [docs/AGENT_PROMPTS.md](./docs/AGENT_PROMPTS.md) | 五個 iMBrace agent 的 system prompt 與模型**快照**。⚠️ 生成物，改它不會改變 agent 行為；動 AI 路徑前先跑 `npm run spike:agent-prompts` 比對漂移 | 開發者 |
 | [docs/DESIGN_TOKENS.md](./docs/DESIGN_TOKENS.md) | 設計規格。⚠️ 衍生自 Claude Design 畫布，可能與畫布脫鉤 | 開發者 |
+| [deploy/README.md](./deploy/README.md) | SIT 單機 compose 的**現場操作**：前置、首次部署、換版、除錯症狀表。形態與前提的正典在 ARCHITECTURE §16.1 | 部署者、SI |
 
 ## 參考素材
 
@@ -34,6 +35,17 @@ iMBrace 平台 Conversations 模組的即時客服輔助擴充。
 1. 閱讀 [docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) §2 核心決策摘要與 §8 抽象層
 2. 閱讀 [docs/CONSTITUTION.md](./docs/CONSTITUTION.md) 全文（不長，但每一條都會影響實作）
 3. 若 [docs/IMBRACE_QUESTIONS.md](./docs/IMBRACE_QUESTIONS.md) 仍有未確認項目，送交 iMBrace 團隊（P0 項目會影響 M3／M4）
+
+### 換一台機器繼續開發
+
+`git clone` 之後有**兩樣東西 git 補不回來**，都在 `.gitignore` 裡，要從舊機器手動搬：
+
+1. `.env.local` —— iMBrace 憑證、五個 agent 的 `assistant_id`、Board id、`SESSION_SECRET`。用加密管道搬，不走 Slack／Email 明文。
+2. `scripts/spike/out/` —— 所有實測結論的**原始證據**（CLAUDE.md：結論有疑慮時以此為準）。多數 spike 對接正式資料、部分含個資，**不能隨手重跑**；整個資料夾打包搬。
+
+其餘都可重產，不用搬：`node_modules/`、`.nuxt/`、`.output/`、docker image、`deploy/certs/`、`deploy/agent-copilot.env`（由 `.env.local` 抄成 `NUXT_*`）。
+
+新機器的順序：裝 Node **24.20.0**（與 `Dockerfile` 對齊）、Docker Desktop、Git ＋ SSH key → `git clone` → 放回 `.env.local` → `npm install` → `npm run typecheck && npm test` 綠燈即可開工；要起 compose 照 [deploy/README.md](./deploy/README.md) 本機那節。
 
 ### 三十秒理解這個專案
 

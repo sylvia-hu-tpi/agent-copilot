@@ -1,0 +1,29 @@
+# 白名單式：先全部排除，再放行建置需要的東西 —— docs/ARCHITECTURE.md §16.1
+# 這樣新增的目錄（docs/meeting-draft、.claude、specs、.codegraph…）預設不會進 build context。
+*
+
+!app/
+!server/
+!shared/
+!public/
+!i18n/
+!config/
+!scripts/
+!test/
+!package.json
+!package-lock.json
+!nuxt.config.ts
+!tsconfig.json
+!tsconfig.scripts.json
+!vitest.config.ts
+!.env.example
+
+# 放行的目錄底下再剔除 —— ⚠️ 這兩條不會報錯，只會靜默帶進 image（§16.1）：
+#   .env*：nuxt.config.ts 建置時會 loadEnvFile，本機憑證會被讀進建置程序
+#   scripts/spike/out/：真實對話樣本，可能含個資
+scripts/spike/out/
+**/.env
+**/.env.*
+!.env.example
+**/node_modules/
+**/*.tsbuildinfo

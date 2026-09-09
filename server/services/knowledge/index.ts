@@ -25,6 +25,7 @@ function envVar(nuxtKey: string, plainKey: string): string {
 
 function createProvider(): KnowledgeProvider {
   const apiKey = envVar('NUXT_IMBRACE_API_KEY', 'IMBRACE_API_KEY')
+  // ⚠️ 單組織假設（§18 M4 已列入）：同 server/services/ai/index.ts 的說明。
   const orgId = envVar('NUXT_IMBRACE_ORGANIZATION_ID', 'IMBRACE_ORGANIZATION_ID')
   const baseUrl = envVar('NUXT_IMBRACE_BASE_URL', 'IMBRACE_BASE_URL') || undefined
   const env = envVar('NUXT_PUBLIC_IMBRACE_ENV', 'IMBRACE_ENV') || 'stable'
