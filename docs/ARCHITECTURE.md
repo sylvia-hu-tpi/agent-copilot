@@ -1836,7 +1836,7 @@ boards.linkItems()                                      # 關聯至 Contact
 
 ### 16.1 部署形態
 
-Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**（2026-09-08，M3.5）：`node:24.x-alpine` 鎖精確版本（目前 `24.20.0`，以 `Dockerfile` 為準）、禁 `:latest`；建置階段跑完整的 `npm run build`（含 typecheck），型別不過的程式碼建不出 image；執行階段只複製 `.output`；`USER node`；只監聽 3000；設定值全部由 `NUXT_*` 環境變數在執行期注入，同一份 image 跨環境不重建；build arg `GIT_SHA` 寫進 OCI label 與 `APP_REVISION`，`GET /api/health` 以 `revision` 回報，換版後憑它確認現在跑的是哪一版。實測 image 約 169 MB。建置與推送走公司 Jenkins 的 `select-to-build-image` pipeline（加一個 case），推 Docker Hub `systalk/agent-copilot`，tag 用 commit 短 sha 這類不可變標籤。
+Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**（2026-09-08，M3.5）：`node:24.x-alpine` 鎖精確版本（目前 `24.20.0`，以 `Dockerfile` 為準）、禁 `:latest`；建置階段跑完整的 `npm run build`（含 typecheck），型別不過的程式碼建不出 image；執行階段只複製 `.output`；`USER node`；只監聽 3000；設定值全部由 `NUXT_*` 環境變數在執行期注入，同一份 image 跨環境不重建；build arg `GIT_SHA` 寫進 OCI label 與 `APP_REVISION`，`GET /api/health` 以 `revision` 回報，換版後憑它確認現在跑的是哪一版。實測 image 約 169 MB。建置與推送走公司 Jenkins 的 `select-to-build-image` pipeline（加一個 case），推 Docker Hub `systalk/agent-copilot`，tag 用不可變標籤：交付版用語意版本（`0.1.0`，與同名 git tag 指同一個 commit，**推上去就不再移動**），開發中的建置用 commit 短 sha；不論哪種，image 內的 `revision` 永遠是 commit 短 sha。
 
 > ⚠️ **`.dockerignore` MUST 排除 `.env*`（只放行 `.env.example`）與 `scripts/spike/out/`。** 前者是因為 `nuxt.config.ts` 在建置時會 `loadEnvFile`，本機憑證會被讀進建置程序；後者裝著真實對話樣本，可能含個資。兩者都不會報錯，只會安靜地把不該進 image 的東西帶進去。
 
@@ -2058,7 +2058,7 @@ Docker 多階段建置 → `node .output/server/index.mjs`。**image 的形狀**
 **前提**：只有一個——`specs/006` 已合回 `main`（✅ 2026-09-08，`m3-006-done`）。**不以 `m3-done` 為前提**：M3 的 ②③④ 卡外部回覆，M3.5 就是為了「M3 未完工也能先推上 SIT」而設的，等它等於自我否定（§18 M3 的第二段警語）。
 
 **驗收**（全部可在本 repo 內關閉）：
-- [x] image 從 `main` 建置，容器以 `USER node` 啟動，`GET /api/health` 回 200 —— 2026-09-08 本機建置（`5bd938d`）經 `deploy/verify-image.sh` 通過；⚠️ Jenkins 建置尚未接上，屆時 MUST 再跑一次
+- [x] image 從 `main` 建置，容器以 `USER node` 啟動，`GET /api/health` 回 200 —— 2026-09-08 本機建置（`5bd938d`）經 `deploy/verify-image.sh` 通過。**2026-09-09 交付版**：合併後從 `main` 建置並推上 Docker Hub `systalk/agent-copilot:0.1.0`（git tag `0.1.0` 同一個 commit，image 的 `revision` 為該 commit 短 sha），本機第二次 `verify-image.sh` 與 compose 走查皆通過；⚠️ Jenkins 建置尚未接上，屆時 MUST 再跑一次
 - [x] image 內不含 `.env*` 與 `scripts/spike/out/`（`deploy/verify-image.sh` 掃描；這兩條不會報錯，只會靜默帶進去，見 §16.1）—— 2026-09-08 通過，且執行階段只有 `/app/.output`
 - [x] 本機以 `deploy/docker-compose.sit.yml` 同一份組成（app ＋ nginx）走完：登入、列表、JOIN、摘要／情緒／建議卡三區塊、送出、結案寫入。⚠️ VM 沒有任何本機測不到的東西，除了網路位置——交付前 MUST 先在本機通過。**2026-09-08 通過**：同一份 compose 在本機（自簽憑證）起，`nginx -t`、80→443 轉向、HTTPS 下 health 含 `revision`、11 個 `NUXT_*` 全注入且無 Mock 退回警告、SIGTERM 1 秒內停止；使用者以瀏覽器走完登入→列表→JOIN→三區塊→送出→結案寫入，app log 見 `[closure] step=create` 與 `step=verify verified=true`，無 error。⚠️ 寫入的是開發用 Board（`.env.local` 那份），SIT 上 MUST 換 demo 專用 Board（第 4 條）
 - [ ] SIT 上以 HTTPS 完成同一條走查；結案寫入落在 demo 專用 Board（`npm run board:setup` 另建，id 進 env），MUST NOT 寫進客戶的正式 Board
