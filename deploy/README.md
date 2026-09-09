@@ -25,6 +25,9 @@
    純 HTTP 下瀏覽器直接丟掉 cookie，症狀是「OTP 驗證成功但下一頁又回到登入」（§16.1 前提 1）。
    內部 CA 簽的憑證可以，但 demo 用的瀏覽器要先信任那個 CA。
 4. Docker Hub `systalk/agent-copilot` 的**拉取**權限（VM 上 `docker login` 一次即可）。
+5. 對內開放辦公室網段到 VM 的 **443**（服務）、**80**（只做 301 轉向到 https）與 **22**（ssh）。
+   ssh 帳號給我方，加進 `docker` 群組即可、不需 sudo；請一併建立 `/opt/agent-copilot` 並把擁有者設為該帳號。
+   其餘埠不需開放：app 容器不對主機開埠，只有 nginx 監聽。
 
 ## 首次部署
 
